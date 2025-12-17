@@ -204,7 +204,8 @@ Tally::Tally(pugi::xml_node node)
 
     // Check for errors
     if (has_ifp_score) {
-      if (settings::run_mode == RunMode::EIGENVALUE) {
+      if (settings::run_mode == RunMode::EIGENVALUE ||
+          settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
         if (settings::ifp_n_generation < 0) {
           settings::ifp_n_generation = DEFAULT_IFP_N_GENERATION;
           warning(fmt::format(
@@ -1074,7 +1075,8 @@ void accumulate_tallies()
   if (mpi::master || !settings::reduce_tallies) {
     auto& gt = simulation::global_tallies;
 
-    if (settings::run_mode == RunMode::EIGENVALUE) {
+    if (settings::run_mode == RunMode::EIGENVALUE ||
+        settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
       if (simulation::current_batch > settings::n_inactive) {
         // Accumulate products of different estimators of k
         double k_col = gt(GlobalTally::K_COLLISION, TallyResult::VALUE) /

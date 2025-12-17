@@ -279,7 +279,9 @@ void Particle::event_advance()
   }
 
   // Score track-length estimate of k-eff
-  if (settings::run_mode == RunMode::EIGENVALUE && type().is_neutron()) {
+  if ((settings::run_mode == RunMode::EIGENVALUE ||
+        settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) &&
+      type().is_neutron()) {
     keff_tally_tracklength() += wgt() * distance * macro_xs().nu_fission;
   }
 
@@ -341,7 +343,9 @@ void Particle::event_collide()
 {
 
   // Score collision estimate of keff
-  if (settings::run_mode == RunMode::EIGENVALUE && type().is_neutron()) {
+  if ((settings::run_mode == RunMode::EIGENVALUE ||
+        settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) &&
+      type().is_neutron()) {
     keff_tally_collision() += wgt() * macro_xs().nu_fission / macro_xs().total;
   }
 
@@ -518,7 +522,8 @@ void Particle::event_death()
 
   // Record the number of progeny created by this particle.
   // This data will be used to efficiently sort the fission bank.
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if ((settings::run_mode == RunMode::EIGENVALUE ||
+        settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION)) {
     int64_t offset = id() - 1 - simulation::work_index[mpi::rank];
     simulation::progeny_per_particle[offset] = n_progeny();
   }
@@ -840,7 +845,8 @@ void Particle::write_restart() const
     write_dataset(file_id, "type", type().pdg_number());
 
     int64_t i = current_work();
-    if (settings::run_mode == RunMode::EIGENVALUE) {
+    if (settings::run_mode == RunMode::EIGENVALUE ||
+        settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
       // take source data from primary bank for eigenvalue simulation
       write_dataset(file_id, "weight", simulation::source_bank[i - 1].wgt);
       write_dataset(file_id, "energy", simulation::source_bank[i - 1].E);

@@ -50,6 +50,7 @@ void sample_reaction(Particle& p)
 
   if (model::materials[p.material()]->fissionable()) {
     if (settings::run_mode == RunMode::EIGENVALUE ||
+        (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) ||
         (settings::run_mode == RunMode::FIXED_SOURCE &&
           settings::create_fission_neutrons)) {
       create_fission_sites(p);
@@ -127,7 +128,9 @@ void create_fission_sites(Particle& p)
 
   // Determine whether to place fission sites into the shared fission bank
   // or the secondary particle bank.
-  bool use_fission_bank = (settings::run_mode == RunMode::EIGENVALUE);
+  bool use_fission_bank =
+    (settings::run_mode == RunMode::EIGENVALUE ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION);
 
   // Counter for the number of fission sites successfully stored to the shared
   // fission bank or the secondary particle bank

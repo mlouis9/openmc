@@ -131,7 +131,8 @@ int openmc_simulation_init()
     write_message("Resuming simulation...", 6);
   } else {
     // Only initialize primary source bank for eigenvalue simulations
-    if (settings::run_mode == RunMode::EIGENVALUE &&
+    if ((settings::run_mode == RunMode::EIGENVALUE ||
+          settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) &&
         settings::solver_type == SolverType::MONTE_CARLO) {
       initialize_source();
     }
@@ -151,6 +152,11 @@ int openmc_simulation_init()
       } else if (settings::solver_type == SolverType::RANDOM_RAY) {
         header("K EIGENVALUE SIMULATION (RANDOM RAY SOLVER)", 3);
       }
+      if (settings::verbosity >= 7)
+        print_columns();
+    } else if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+      header(
+        "FIXED SOURCE (SUBCRITICAL MULTIPLICATION) TRANSPORT SIMULATION", 3);
       if (settings::verbosity >= 7)
         print_columns();
     }
@@ -303,6 +309,7 @@ int current_batch;
 int current_gen;
 bool initialized {false};
 double keff {1.0};
+double kold {1.0};
 double keff_std;
 double k_col_abs {0.0};
 double k_col_tra {0.0};
@@ -331,7 +338,8 @@ vector<int64_t> work_index;
 
 void allocate_banks()
 {
-  if (settings::run_mode == RunMode::EIGENVALUE &&
+  if ((settings::run_mode == RunMode::EIGENVALUE ||
+        settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) &&
       settings::solver_type == SolverType::MONTE_CARLO) {
     // Allocate source bank
     simulation::source_bank.resize(simulation::work_per_rank);
@@ -435,7 +443,8 @@ void finalize_batch()
       !settings::cmfd_run) {
     if (contains(settings::sourcepoint_batch, simulation::current_batch) &&
         settings::source_write && !settings::source_separate) {
-      bool b = (settings::run_mode == RunMode::EIGENVALUE);
+      bool b = (settings::run_mode == RunMode::EIGENVALUE ||
+                settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION);
       openmc_statepoint_write(nullptr, &b);
     } else {
       bool b = false;
@@ -443,7 +452,8 @@ void finalize_batch()
     }
   }
 
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::run_mode == RunMode::EIGENVALUE ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     // Write out a separate source point if it's been specified for this batch
     if (contains(settings::sourcepoint_batch, simulation::current_batch) &&
         settings::source_write && settings::source_separate) {
@@ -505,7 +515,8 @@ void finalize_batch()
 
 void initialize_generation()
 {
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::run_mode == RunMode::EIGENVALUE ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     // Clear out the fission bank
     simulation::fission_bank.resize(0);
 
@@ -524,7 +535,8 @@ void finalize_generation()
   auto& gt = simulation::global_tallies;
 
   // Update global tallies with the accumulation variables
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::run_mode == RunMode::EIGENVALUE ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     gt(GlobalTally::K_COLLISION, TallyResult::VALUE) += global_tally_collision;
     gt(GlobalTally::K_ABSORPTION, TallyResult::VALUE) +=
       global_tally_absorption;
@@ -534,14 +546,16 @@ void finalize_generation()
   gt(GlobalTally::LEAKAGE, TallyResult::VALUE) += global_tally_leakage;
 
   // reset tallies
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::run_mode == RunMode::EIGENVALUE ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     global_tally_collision = 0.0;
     global_tally_absorption = 0.0;
     global_tally_tracklength = 0.0;
   }
   global_tally_leakage = 0.0;
 
-  if (settings::run_mode == RunMode::EIGENVALUE &&
+  if ((settings::run_mode == RunMode::EIGENVALUE ||
+        settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) &&
       settings::solver_type == SolverType::MONTE_CARLO) {
     // If using shared memory, stable sort the fission bank (by parent IDs)
     // so as to allow for reproducibility regardless of which order particles
@@ -552,7 +566,8 @@ void finalize_generation()
     synchronize_bank();
   }
 
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::run_mode == RunMode::EIGENVALUE ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
 
     // Calculate shannon entropy
     if (settings::entropy_on &&
@@ -573,7 +588,8 @@ void finalize_generation()
 void initialize_history(Particle& p, int64_t index_source)
 {
   // set defaults
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::run_mode == RunMode::EIGENVALUE ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     // set defaults for eigenvalue simulations from primary bank
     p.from_source(&simulation::source_bank[index_source - 1]);
   } else if (settings::run_mode == RunMode::FIXED_SOURCE) {

@@ -209,6 +209,7 @@ void get_run_parameters(pugi::xml_node node_base)
 
   // Get number of inactive batches
   if (run_mode == RunMode::EIGENVALUE ||
+      run_mode == RunMode::SUBCRITICAL_MULTIPLICATION ||
       solver_type == SolverType::RANDOM_RAY) {
     if (check_for_node(node_base, "inactive")) {
       n_inactive = std::stoi(get_node_value(node_base, "inactive"));
@@ -492,6 +493,8 @@ void read_settings_xml(pugi::xml_node root)
         run_mode = RunMode::EIGENVALUE;
       } else if (temp_str == "fixed source") {
         run_mode = RunMode::FIXED_SOURCE;
+      } else if (temp_str == "subcritical multiplication") {
+        run_mode = RunMode::SUBCRITICAL_MULTIPLICATION;
       } else if (temp_str == "plot") {
         run_mode = RunMode::PLOTTING;
       } else if (temp_str == "particle restart") {
@@ -525,12 +528,17 @@ void read_settings_xml(pugi::xml_node root)
   // Check solver type
   if (check_for_node(root, "random_ray")) {
     solver_type = SolverType::RANDOM_RAY;
+    if (run_mode == RunMode::SUBCRITICAL_MULTIPLICATION)
+      fatal_error("random ray solver not currently supported in subcritical "
+                  "multiplication mode");
     if (run_CE)
       fatal_error("multi-group energy mode must be specified in settings XML "
                   "when using the random ray solver.");
   }
 
-  if (run_mode == RunMode::EIGENVALUE || run_mode == RunMode::FIXED_SOURCE) {
+  if (run_mode == RunMode::EIGENVALUE ||
+      run_mode == RunMode::SUBCRITICAL_MULTIPLICATION ||
+      run_mode == RunMode::FIXED_SOURCE) {
     // Read run parameters
     get_run_parameters(node_mode);
 

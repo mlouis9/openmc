@@ -264,7 +264,8 @@ double get_nuclide_neutron_heating(
   if (kerma == 0.0)
     return 0.0;
 
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::run_mode == RunMode::EIGENVALUE ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     // Determine kerma for fission as (EFR + EB)*sigma_f
     double kerma_fission =
       nuc.fragments_
