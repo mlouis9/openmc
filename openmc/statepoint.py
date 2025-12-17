@@ -212,7 +212,7 @@ class StatePoint:
 
     @property
     def entropy(self):
-        if self.run_mode == 'eigenvalue':
+        if self.run_mode == 'eigenvalue' or self.run_mode == 'subcritical multiplication':
             return self._f['entropy'][()]
         else:
             return None
@@ -233,7 +233,7 @@ class StatePoint:
 
     @property
     def generations_per_batch(self):
-        if self.run_mode == 'eigenvalue':
+        if self.run_mode == 'eigenvalue' or self.run_mode == 'subcritical multiplication':
             return self._f['generations_per_batch'][()]
         else:
             return None
@@ -268,14 +268,14 @@ class StatePoint:
 
     @property
     def k_generation(self):
-        if self.run_mode == 'eigenvalue':
+        if self.run_mode == 'eigenvalue' or self.run_mode == 'subcritical multiplication':
             return self._f['k_generation'][()]
         else:
             return None
 
     @property
     def keff(self):
-        if self.run_mode == 'eigenvalue':
+        if self.run_mode == 'eigenvalue' or self.run_mode == 'subcritical multiplication':
             return ufloat(*self._f['k_combined'][()])
         else:
             return None
@@ -290,21 +290,21 @@ class StatePoint:
 
     @property
     def k_col_abs(self):
-        if self.run_mode == 'eigenvalue':
+        if self.run_mode == 'eigenvalue' or self.run_mode == 'subcritical multiplication':
             return self._f['k_col_abs'][()]
         else:
             return None
 
     @property
     def k_col_tra(self):
-        if self.run_mode == 'eigenvalue':
+        if self.run_mode == 'eigenvalue' or self.run_mode == 'subcritical multiplication':
             return self._f['k_col_tra'][()]
         else:
             return None
 
     @property
     def k_abs_tra(self):
-        if self.run_mode == 'eigenvalue':
+        if self.run_mode == 'eigenvalue' or self.run_mode == 'subcritical multiplication':
             return self._f['k_abs_tra'][()]
         else:
             return None
@@ -329,7 +329,7 @@ class StatePoint:
 
     @property
     def n_inactive(self):
-        if self.run_mode == 'eigenvalue':
+        if self.run_mode == 'eigenvalue' or self.run_mode == 'subcritical multiplication':
             return self._f['n_inactive'][()]
         else:
             return None

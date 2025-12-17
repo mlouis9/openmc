@@ -89,7 +89,7 @@ class TestHarness:
         statepoint = glob.glob(self._sp_name)[0]
         with openmc.StatePoint(statepoint) as sp:
             outstr = ''
-            if sp.run_mode == 'eigenvalue':
+            if sp.run_mode == 'eigenvalue' or sp.run_mode == 'subcritical multiplication':
                 # Write out k-combined.
                 outstr += 'k-combined:\n'
                 form = '{0:12.6E} {1:12.6E}\n'
@@ -286,7 +286,7 @@ class ParticleRestartTestHarness(TestHarness):
 
 
 class PyAPITestHarness(TestHarness):
-    def __init__(self, statepoint_name, model=None, inputs_true=None):
+    def __init__(self, statepoint_name, model=None, inputs_true=None, results_true=None):
         super().__init__(statepoint_name)
         if model is None:
             self._model = pwr_core()
@@ -294,7 +294,25 @@ class PyAPITestHarness(TestHarness):
             self._model = model
         self._model.plots = []
 
-        self.inputs_true = "inputs_true.dat" if not inputs_true else inputs_true
+        self.inputs_true = inputs_true if inputs_true else "inputs_true.dat"
+        self.results_true = results_true if results_true else "results_true.dat"
+
+    def _compare_results(self):
+        """Make sure the current results agree with the reference."""
+        compare = filecmp.cmp('results_test.dat', self.results_true)
+        if not compare:
+            expected = open(self.results_true).readlines()
+            actual = open('results_test.dat').readlines()
+            diff = unified_diff(expected, actual, self.results_true,
+                                'results_test.dat')
+            print('Result differences:')
+            print(''.join(colorize(diff)))
+            os.rename('results_test.dat', 'results_error.dat')
+        assert compare, 'Results do not agree'
+
+    def _overwrite_results(self):
+        """Overwrite the results_true with the results_test."""
+        shutil.copyfile('results_test.dat', self.results_true)
 
     def main(self):
         """Accept commandline arguments and either run or update tests."""
@@ -346,39 +364,31 @@ class PyAPITestHarness(TestHarness):
                 os.chdir(base_dir)
 
     def _build_inputs(self):
-        """Write input XML files."""
         self._model.export_to_model_xml()
 
     def _get_inputs(self):
-        """Return a hash digest of the input XML files."""
         xmls = ['model.xml', 'plots.xml']
-        return ''.join([open(fname).read() for fname in xmls
-                        if os.path.exists(fname)])
+        return ''.join([open(fname).read() for fname in xmls if os.path.exists(fname)])
 
     def _write_inputs(self, input_digest):
-        """Write the digest of the input XMLs to an ASCII file."""
         with open('inputs_test.dat', 'w') as fh:
             fh.write(input_digest)
 
     def _overwrite_inputs(self):
-        """Overwrite inputs_true.dat with inputs_test.dat"""
         shutil.copyfile('inputs_test.dat', self.inputs_true)
 
     def _compare_inputs(self):
-        """Make sure the current inputs agree with the _true standard."""
         compare = filecmp.cmp('inputs_test.dat', self.inputs_true)
         if not compare:
             expected = open(self.inputs_true, 'r').readlines()
             actual = open('inputs_test.dat', 'r').readlines()
-            diff = unified_diff(expected, actual, self.inputs_true,
-                                'inputs_test.dat')
+            diff = unified_diff(expected, actual, self.inputs_true, 'inputs_test.dat')
             print('Input differences:')
             print(''.join(colorize(diff)))
             os.rename('inputs_test.dat', 'inputs_error.dat')
         assert compare, 'Input files are broken.'
 
     def _cleanup(self):
-        """Delete XMLs, statepoints, tally, and test files."""
         super()._cleanup()
         output = ['materials.xml', 'geometry.xml', 'settings.xml',
                   'tallies.xml', 'plots.xml', 'inputs_test.dat', 'model.xml',
@@ -386,7 +396,6 @@ class PyAPITestHarness(TestHarness):
         for f in output:
             if os.path.exists(f):
                 os.remove(f)
-
 
 class HashedPyAPITestHarness(PyAPITestHarness):
     def _get_results(self):
