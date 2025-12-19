@@ -578,6 +578,8 @@ void finalize_generation()
     calculate_generation_keff();
     calculate_average_keff();
 
+    simulation::kold = simulation::keff;
+
     // Write generation output
     if (mpi::master && settings::verbosity >= 7) {
       print_generation();
@@ -592,15 +594,39 @@ void initialize_history(Particle& p, int64_t index_source)
       settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     // set defaults for eigenvalue simulations from primary bank
     p.from_source(&simulation::source_bank[index_source - 1]);
-  } else if (settings::run_mode == RunMode::FIXED_SOURCE) {
+  } else {
     // initialize random number seed
     int64_t id = (simulation::total_gen + overall_generation() - 1) *
                    settings::n_particles +
                  simulation::work_index[mpi::rank] + index_source;
     uint64_t seed = init_seed(id, STREAM_SOURCE);
-    // sample from external source distribution or custom library then set
-    auto site = sample_external_source(&seed);
-    p.from_source(&site);
+    if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+      double rnd = prn(&seed);
+      //   double k_avg = (simulation::keff + simulation::kold) / 2.0;
+      double k_avg = 0.0;
+      int n = simulation::k_generation.size();
+      if (n >= 2) {
+        // Average the last two values
+        double k_last = simulation::k_generation[n - 1];
+        double k_prev = simulation::k_generation[n - 2];
+        k_avg = (k_last + k_prev) / 2.0;
+      } else if (n == 1) {
+        // Only one generation exists, use it directly
+        k_avg = simulation::k_generation[0];
+      }
+      if (rnd < k_avg) {
+        // sample from fission source bank
+        p.from_source(&simulation::source_bank[index_source - 1]);
+      } else {
+        // sample from external source
+        auto site = sample_external_source(&seed);
+        p.from_source(&site);
+      }
+    } else if (settings::run_mode == RunMode::FIXED_SOURCE) {
+      // sample from external source distribution or custom library then set
+      auto site = sample_external_source(&seed);
+      p.from_source(&site);
+    }
   }
   p.current_work() = index_source;
 
