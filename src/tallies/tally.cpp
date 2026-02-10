@@ -213,7 +213,7 @@ Tally::Tally(pugi::xml_node node)
 
     // Check for errors
     if (has_ifp_score) {
-      if (settings::run_mode == RunMode::EIGENVALUE) {
+      if (settings::eigenvalue_like()) {
         if (settings::ifp_n_generation < 0) {
           settings::ifp_n_generation = DEFAULT_IFP_N_GENERATION;
           warning(fmt::format(
@@ -1090,7 +1090,7 @@ void accumulate_tallies()
     double kq_abs = 0.0;
     double kq_tra = 0.0;
 
-    if (settings::run_mode == RunMode::EIGENVALUE ||
+    if (settings::eigenvalue_like() ||
         (settings::run_mode == RunMode::FIXED_SOURCE &&
           settings::calculate_subcritical_k)) {
       if (simulation::current_batch > settings::n_inactive) {

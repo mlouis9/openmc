@@ -133,8 +133,8 @@ int openmc_simulation_init()
     load_state_point();
     write_message("Resuming simulation...", 6);
   } else {
-    // Only initialize primary source bank for eigenvalue simulations
-    if (settings::run_mode == RunMode::EIGENVALUE &&
+    // Only initialize primary source bank for eigenvalue-like simulations
+    if (settings::eigenvalue_like() &&
         settings::solver_type == SolverType::MONTE_CARLO) {
       initialize_source();
     }
@@ -156,6 +156,9 @@ int openmc_simulation_init()
         header("K EIGENVALUE SIMULATION", 3);
       } else if (settings::solver_type == SolverType::RANDOM_RAY) {
         header("K EIGENVALUE SIMULATION (RANDOM RAY SOLVER)", 3);
+      } else if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+        header(
+          "FIXED SOURCE (SUBCRITICAL MULTIPLICATION) TRANSPORT SIMULATION", 3);
       }
       if (settings::verbosity >= 7)
         print_columns();
@@ -309,6 +312,7 @@ int current_batch;
 int current_gen;
 bool initialized {false};
 double keff {1.0};
+double kold {1.0};
 double keff_std;
 double k;
 double k_std;
@@ -356,7 +360,7 @@ std::array<double, 3> kq_combined_weights;
 
 void allocate_banks()
 {
-  if (settings::run_mode == RunMode::EIGENVALUE &&
+  if (settings::eigenvalue_like() &&
       settings::solver_type == SolverType::MONTE_CARLO) {
     // Allocate source bank
     simulation::source_bank.resize(simulation::work_per_rank);
@@ -464,7 +468,7 @@ void finalize_batch()
       !settings::cmfd_run) {
     if (contains(settings::sourcepoint_batch, simulation::current_batch) &&
         settings::source_write && !settings::source_separate) {
-      bool b = (settings::run_mode == RunMode::EIGENVALUE);
+      bool b = (settings::eigenvalue_like());
       openmc_statepoint_write(nullptr, &b);
     } else {
       bool b = false;
@@ -472,7 +476,7 @@ void finalize_batch()
     }
   }
 
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::eigenvalue_like()) {
     // Write out a separate source point if it's been specified for this batch
     if (contains(settings::sourcepoint_batch, simulation::current_batch) &&
         settings::source_write && settings::source_separate) {
@@ -534,7 +538,7 @@ void finalize_batch()
 
 void initialize_generation()
 {
-  if (settings::run_mode == RunMode::EIGENVALUE ||
+  if (settings::eigenvalue_like() ||
       (settings::run_mode == RunMode::FIXED_SOURCE &&
         settings::calculate_subcritical_k)) {
     // Clear out the fission bank
@@ -566,7 +570,7 @@ void finalize_generation()
   auto& gt_first_gen = simulation::global_tallies_first_gen;
 
   // Update global tallies with the accumulation variables
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::eigenvalue_like()) {
     gt(GlobalTally::K_COLLISION, TallyResult::VALUE) += global_tally_collision;
     gt(GlobalTally::K_ABSORPTION, TallyResult::VALUE) +=
       global_tally_absorption;
@@ -598,7 +602,7 @@ void finalize_generation()
   gt(GlobalTally::LEAKAGE, TallyResult::VALUE) += global_tally_leakage;
 
   // reset tallies
-  if (settings::run_mode == RunMode::EIGENVALUE ||
+  if (settings::eigenvalue_like() ||
       (settings::run_mode == RunMode::FIXED_SOURCE &&
         settings::calculate_subcritical_k)) {
     global_tally_collision = 0.0;
@@ -626,7 +630,7 @@ void finalize_generation()
     synchronize_bank();
   }
 
-  if (settings::run_mode == RunMode::EIGENVALUE ||
+  if (settings::eigenvalue_like() ||
       (settings::run_mode == RunMode::FIXED_SOURCE &&
         settings::calculate_subcritical_k)) {
     // Calculate shannon entropy
@@ -654,6 +658,8 @@ void finalize_generation()
     //   simulation::ks_generation.back()[0],
     //   simulation::ks_generation.back()[1]);
 
+    simulation::kold = simulation::keff;
+
     // Write generation output
     if (mpi::master && settings::verbosity >= 7) {
       print_generation();
@@ -664,18 +670,42 @@ void finalize_generation()
 void initialize_history(Particle& p, int64_t index_source)
 {
   // set defaults
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::eigenvalue_like()) {
     // set defaults for eigenvalue simulations from primary bank
     p.from_source(&simulation::source_bank[index_source - 1]);
-  } else if (settings::run_mode == RunMode::FIXED_SOURCE) {
+  } else {
     // initialize random number seed
     int64_t id = (simulation::total_gen + overall_generation() - 1) *
                    settings::n_particles +
                  simulation::work_index[mpi::rank] + index_source;
     uint64_t seed = init_seed(id, STREAM_SOURCE);
-    // sample from external source distribution or custom library then set
-    auto site = sample_external_source(&seed);
-    p.from_source(&site);
+    if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+      double rnd = prn(&seed);
+      //   double k_avg = (simulation::keff + simulation::kold) / 2.0;
+      double k_avg = 0.0;
+      int n = simulation::k_generation.size();
+      if (n >= 2) {
+        // Average the last two values
+        double k_last = simulation::k_generation[n - 1];
+        double k_prev = simulation::k_generation[n - 2];
+        k_avg = (k_last + k_prev) / 2.0;
+      } else if (n == 1) {
+        // Only one generation exists, use it directly
+        k_avg = simulation::k_generation[0];
+      }
+      if (rnd < k_avg) {
+        // sample from fission source bank
+        p.from_source(&simulation::source_bank[index_source - 1]);
+      } else {
+        // sample from external source
+        auto site = sample_external_source(&seed);
+        p.from_source(&site);
+      }
+    } else if (settings::run_mode == RunMode::FIXED_SOURCE) {
+      // sample from external source distribution or custom library then set
+      auto site = sample_external_source(&seed);
+      p.from_source(&site);
+    }
   }
   p.current_work() = index_source;
 
