@@ -24,8 +24,7 @@ a subcritical core, producing additional neutrons.
 ----------------------------------
 Subcritical Multiplication Factors
 ----------------------------------
-In a fixed source simulation,
-the total neutron production (per source particle) is used to define
+In a fixed source simulation, the total neutron production (per source particle) is used to define
 
 .. math::
     :label: integral_multiplicity
@@ -56,7 +55,10 @@ picture for :math:`M` [Kobayashi]_:
         \implies \frac{k}{1-k} &= \frac{k_q}{1-k_s}\\
         k &= \frac{k_q}{1 - k_s + k_q}
     \end{align*}
+<<<<<<< HEAD
 
+=======
+>>>>>>> f540c8373 (Add documentation for subcritical multiplication methods and run_mode)
 Where :math:`k_q` is the multiplication factor of source neutrons, and :math:`k_s`
 is the multiplication factor of fission neutrons, which together define an overall
 subcritical multiplication factor :math:`k`. From the above it is clear that 
@@ -104,6 +106,23 @@ estimators, and simply stop before simulating any of the secondary fission neutr
 an estimate of the neutron production due to source neutrons alone, which can be used to compute
 :math:`k_q`. :math:`k_s` can then be computed from :math:`k` and :math:`k_q` using 
 :eq:`subcritical_k_factors`.
+.. _methods_subcritical-multiplication-methods:
+----------------------------------
+Subcritical Multiplication Methods
+----------------------------------
+The most straightforward method for performing a subcritical multiplication calculation is to perform a fixed source
+simulation. For near critical systems, however, excessive secondary particle production can result in memory issues if
+not properly managed. In very near critical systems, performing an eigenvalue simulation may be sufficient,
+as the flux distribution will be close to the fundamental mode, and :math:`k` will be close to :math:`k_{eff}`, just note that
+tally results must be multiplied by :math:`1/(1-k)`. For more deeply subcritical systems, there are several tailor-made methods
+for subcritical multiplication calculations that limit excessive secondary particle production while equivalent results to fixed source simulations.
+The method currently implemented in OpenMC is that of [Forget]_, which uses a modified power iteration to converge a source
+distribution taking into account the external source and all generations of fission neutrons, which is then sampled from in generations
+to accumulate statistics about the system. This method resembles the standard eigenvalue simulation (see :ref:`methods_eigenvalue`) in every way except 
+that tallies have a pre-defined normalization by :math:`1/(1-k)` (rather than normalized to an arbitrary power distribution), the :math:`k`-eigenvalue is the 
+subcritical multiplication factor (rather than the fundamental mode eigenvalue :math:`k_{eff}`), and the results are determined by the prescribed 
+source distribution.
+
 
 .. [Bowman] Bowman, Charles D. "Accelerator-driven systems for nuclear waste 
    transmutation." *Annual Review of Nuclear and Particle Science* 48.1 (1998): 
