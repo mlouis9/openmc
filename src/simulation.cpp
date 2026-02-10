@@ -619,13 +619,11 @@ void finalize_generation()
   }
   global_tally_leakage = 0.0;
 
-  // For fixed source mode, we need different handling
-  if (settings::run_mode == RunMode::FIXED_SOURCE &&
-      settings::calculate_subcritical_k) {
-
-  } else if (settings::run_mode == RunMode::EIGENVALUE &&
-             settings::solver_type == SolverType::MONTE_CARLO) {
-
+  if (settings::eigenvalue_like() &&
+      settings::solver_type == SolverType::MONTE_CARLO) {
+    // If using shared memory, stable sort the fission bank (by parent IDs)
+    // so as to allow for reproducibility regardless of which order particles
+    // are run in.
     sort_fission_bank();
     synchronize_bank();
   }
@@ -670,7 +668,7 @@ void finalize_generation()
 void initialize_history(Particle& p, int64_t index_source)
 {
   // set defaults
-  if (settings::eigenvalue_like()) {
+  if (settings::run_mode == RunMode::EIGENVALUE) {
     // set defaults for eigenvalue simulations from primary bank
     p.from_source(&simulation::source_bank[index_source - 1]);
   } else {
@@ -681,7 +679,6 @@ void initialize_history(Particle& p, int64_t index_source)
     uint64_t seed = init_seed(id, STREAM_SOURCE);
     if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
       double rnd = prn(&seed);
-      //   double k_avg = (simulation::keff + simulation::kold) / 2.0;
       double k_avg = 0.0;
       int n = simulation::k_generation.size();
       if (n >= 2) {
