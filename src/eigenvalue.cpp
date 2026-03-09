@@ -879,7 +879,7 @@ void write_eigenvalue_hdf5(hid_t group)
   if (settings::entropy_on) {
     write_dataset(group, "entropy", simulation::entropy);
   }
-  if (settings::run_mode == RunMode::EIGENVALUE) {
+  if (settings::eigenvalue_like()) {
     write_dataset(group, "k_col_abs", simulation::k_col_abs);
     write_dataset(group, "k_col_tra", simulation::k_col_tra);
     write_dataset(group, "k_abs_tra", simulation::k_abs_tra);

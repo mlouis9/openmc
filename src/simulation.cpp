@@ -647,15 +647,6 @@ void finalize_generation()
       calculate_average_keff(KeffType::ks);
     }
 
-    // fmt::print("Kq {} Kq std {}\n", simulation::kq, simulation::kq_std);
-    // fmt::print("Kq_generation {} Kq std {}\n",
-    // simulation::kq_generation_val[0],
-    //   simulation::kq_generation_val[1]);
-    // fmt::print("Ks {} Ks std {}\n", simulation::ks, simulation::ks_std);
-    // fmt::print("Ks_generation {} Ks std {}\n",
-    //   simulation::ks_generation.back()[0],
-    //   simulation::ks_generation.back()[1]);
-
     simulation::kold = simulation::keff;
 
     // Write generation output
@@ -683,12 +674,12 @@ void initialize_history(Particle& p, int64_t index_source)
       int n = simulation::k_generation.size();
       if (n >= 2) {
         // Average the last two values
-        double k_last = simulation::k_generation[n - 1];
-        double k_prev = simulation::k_generation[n - 2];
+        double k_last = simulation::k_generation[n - 1][0];
+        double k_prev = simulation::k_generation[n - 2][0];
         k_avg = (k_last + k_prev) / 2.0;
       } else if (n == 1) {
         // Only one generation exists, use it directly
-        k_avg = simulation::k_generation[0];
+        k_avg = simulation::k_generation[0][0];
       }
       if (rnd < k_avg) {
         // sample from fission source bank

@@ -346,7 +346,7 @@ void Particle::event_collide()
 {
 
   // Score collision estimate of keff
-  if ((settings::run_mode == RunMode::EIGENVALUE ||
+  if ((settings::eigenvalue_like() ||
         (settings::run_mode == RunMode::FIXED_SOURCE &&
           settings::calculate_subcritical_k)) &&
       type().is_neutron()) {
