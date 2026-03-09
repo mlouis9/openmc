@@ -138,6 +138,7 @@ void create_fission_sites(Particle& p)
     SourceSite site;
     site.r = p.r();
     site.particle = ParticleType::neutron();
+    site.generation_tag = p.generation_tag() + 1;
     site.time = p.time();
     site.wgt = 1. / weight;
 

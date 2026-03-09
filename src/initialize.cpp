@@ -157,7 +157,7 @@ void initialize_mpi(MPI_Comm intracomm)
 
   // Create bank datatype
   SourceSite b;
-  MPI_Aint disp[11];
+  MPI_Aint disp[12];
   MPI_Get_address(&b.r, &disp[0]);
   MPI_Get_address(&b.u, &disp[1]);
   MPI_Get_address(&b.E, &disp[2]);
@@ -166,10 +166,11 @@ void initialize_mpi(MPI_Comm intracomm)
   MPI_Get_address(&b.delayed_group, &disp[5]);
   MPI_Get_address(&b.surf_id, &disp[6]);
   MPI_Get_address(&b.particle, &disp[7]);
-  MPI_Get_address(&b.parent_nuclide, &disp[8]);
-  MPI_Get_address(&b.parent_id, &disp[9]);
-  MPI_Get_address(&b.progeny_id, &disp[10]);
-  for (int i = 10; i >= 0; --i) {
+  MPI_Get_address(&b.generation_tag, &disp[8]);
+  MPI_Get_address(&b.parent_nuclide, &disp[9]);
+  MPI_Get_address(&b.parent_id, &disp[10]);
+  MPI_Get_address(&b.progeny_id, &disp[11]);
+  for (int i = 11; i >= 0; --i) {
     disp[i] -= disp[0];
   }
 

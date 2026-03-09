@@ -106,6 +106,7 @@ void Particle::split(double wgt)
   auto& bank = secondary_bank().emplace_back();
   bank.particle = type();
   bank.wgt = wgt;
+  bank.generation_tag = generation_tag();
   bank.r = r();
   bank.u = u();
   bank.E = settings::run_CE ? E() : g();
@@ -158,6 +159,7 @@ void Particle::from_source(const SourceSite* src)
   time_last() = src->time;
   parent_nuclide() = src->parent_nuclide;
   delayed_group() = src->delayed_group;
+  generation_tag() = src->generation_tag;
 
   // Convert signed surface ID to signed index
   if (src->surf_id != SURFACE_NONE) {
@@ -455,6 +457,9 @@ void Particle::event_revive_from_secondary()
       return;
 
     from_source(&secondary_bank().back());
+    // fmt::print(
+    //   "Revive  particle {} from secondary bank with generation tag: {}\n",
+    //   id(), generation_tag());
     secondary_bank().pop_back();
     n_event() = 0;
     bank_second_E() = 0.0;
@@ -981,6 +986,7 @@ void add_surf_source_to_bank(Particle& p, const Surface& surf)
   site.delayed_group = p.delayed_group();
   site.surf_id = surf.id_;
   site.particle = p.type();
+  site.generation_tag = p.generation_tag();
   site.parent_id = p.id();
   site.progeny_id = p.n_progeny();
   int64_t idx = simulation::surf_source_bank.thread_safe_append(site);

@@ -47,6 +47,7 @@ struct SourceSite {
   int delayed_group {0};
   int surf_id {SURFACE_NONE};
   ParticleType particle;
+  int generation_tag {0};
 
   // Extra attributes that don't show up in source written to file
   int parent_nuclide {-1};
@@ -509,6 +510,8 @@ private:
   double time_last_ {0.0};
   double wgt_last_ {1.0};
 
+  int generation_tag_ {0};
+
   bool fission_ {false};
   TallyEvent event_;
   int event_nuclide_;
@@ -614,6 +617,10 @@ public:
   // is dead.
   double& wgt() { return wgt_; }
   double wgt() const { return wgt_; }
+
+  // Generation tag is used to identify which generation a particle belongs to
+  int& generation_tag() { return generation_tag_; }
+  int generation_tag() const { return generation_tag_; }
 
   // Statistic weight of particle at birth
   double& wgt_born() { return wgt_born_; }
