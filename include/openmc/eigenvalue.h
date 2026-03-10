@@ -22,7 +22,7 @@ namespace openmc {
 namespace simulation {
 
 extern array<double, 2>
-  keff_generation; //!<  Single-generation k on each processor
+  k_generation_val; //!<  Single-generation k on each processor
 extern array<double, 2>
   kq_generation_val;           //!<  Single-generation kq on each processor
 extern array<double, 2> k_sum; //!< Used to reduce sum and sum_sq
@@ -37,13 +37,13 @@ extern xt::xtensor<double, 1> source_frac; //!< Source fraction for UFS
 //==============================================================================
 
 //! Collect/normalize the tracklength keff from each process (keff)
-void calculate_generation_keff();
+void calculate_generation_k();
 
 //! Collect/normalize the tracklength keff from each process
 //!
-//! Depending on KeffType, this function will calculate either the kq or ks
+//! Depending on KType, this function will calculate either the kq or ks
 //! generation keff
-void calculate_generation_keff(KeffType type);
+void calculate_generation_k(KType type);
 
 std::pair<double, double> convert_m_to_k(double m, double m_std);
 std::pair<double, double> convert_k_to_m(double k, double k_std);
@@ -53,8 +53,8 @@ std::pair<double, double> convert_k_to_m(double k, double k_std);
 //! This function sets the global variables keff and keff_std which represent
 //! the mean and standard deviation of the mean of k-effective over active
 //! generations. It also broadcasts the value from the master process.
-void calculate_average_keff();
-void calculate_average_keff(KeffType type);
+void calculate_average_k();
+void calculate_average_k(KType type);
 
 //! Calculates a minimum variance estimate of k-effective
 //!

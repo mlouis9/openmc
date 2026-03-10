@@ -279,7 +279,7 @@ double get_nuclide_neutron_heating(
     // and deposition. See D. P. Griesheimer, S. J. Douglass, and M. H. Stedry,
     // "Self-consistent energy normalization for quasistatic reactor
     // calculations", Proc. PHYSOR, Cambridge, UK, Mar 29-Apr 2, 2020.
-    kerma = simulation::keff * kerma_non_fission + kerma_fission;
+    kerma = simulation::k_phys * kerma_non_fission + kerma_fission;
   }
   return kerma;
 }
@@ -403,7 +403,7 @@ void score_fission_eout(Particle& p, int i_tally, int i_score, int score_bin)
     auto g = bank.delayed_group;
 
     // determine score based on bank site weight and keff
-    double score = simulation::keff * bank.wgt;
+    double score = simulation::k_phys * bank.wgt;
 
     // Add derivative information for differential tallies.  Note that the
     // i_nuclide and atom_density arguments do not matter since this is an
@@ -558,11 +558,11 @@ double get_nuclide_xs(const Particle& p, int i_nuclide, int score_bin)
       // Determine non-fission kerma as difference
       double kerma_non_fission = xs - kerma_fission;
 
-      // Re-weight non-fission kerma by keff to properly balance energy release
-      // and deposition. See D. P. Griesheimer, S. J. Douglass, and M. H.
-      // Stedry, "Self-consistent energy normalization for quasistatic reactor
-      // calculations", Proc. PHYSOR, Cambridge, UK, Mar 29-Apr 2, 2020.
-      xs = simulation::keff * kerma_non_fission + kerma_fission;
+      // Re-weight non-fission kerma by k_phys to properly balance energy
+      // release and deposition. See D. P. Griesheimer, S. J. Douglass, and M.
+      // H. Stedry, "Self-consistent energy normalization for quasistatic
+      // reactor calculations", Proc. PHYSOR, Cambridge, UK, Mar 29-Apr 2, 2020.
+      xs = simulation::k_phys * kerma_non_fission + kerma_fission;
     }
     return xs;
   } else {
@@ -1268,7 +1268,7 @@ void score_general_ce_analog(Particle& p, int i_tally, int start_index,
         // number of particles that were banked in the fission bank. Since
         // this was weighted by 1/keff, we multiply by keff to get the proper
         // score.
-        score = simulation::keff * p.wgt_bank() * flux;
+        score = simulation::k_phys * p.wgt_bank() * flux;
       }
       break;
 
@@ -1307,7 +1307,7 @@ void score_general_ce_analog(Particle& p, int i_tally, int start_index,
         auto n_delayed = std::accumulate(
           p.n_delayed_bank(), p.n_delayed_bank() + MAX_DELAYED_GROUPS, 0);
         auto prompt_frac = 1. - n_delayed / static_cast<double>(p.n_bank());
-        score = simulation::keff * p.wgt_bank() * prompt_frac * flux;
+        score = simulation::k_phys * p.wgt_bank() * prompt_frac * flux;
       }
       break;
 
@@ -1372,7 +1372,7 @@ void score_general_ce_analog(Particle& p, int i_tally, int start_index,
           // Tally each delayed group bin individually
           for (auto d_bin = 0; d_bin < filt.n_bins(); ++d_bin) {
             auto d = filt.groups()[d_bin];
-            score = simulation::keff * p.wgt_bank() / p.n_bank() *
+            score = simulation::k_phys * p.wgt_bank() / p.n_bank() *
                     p.n_delayed_bank(d - 1) * flux;
             score_fission_delayed_dg(
               i_tally, d_bin, score, score_index, p.filter_matches());
@@ -1383,7 +1383,7 @@ void score_general_ce_analog(Particle& p, int i_tally, int start_index,
           auto n_delayed = std::accumulate(
             p.n_delayed_bank(), p.n_delayed_bank() + MAX_DELAYED_GROUPS, 0);
           score =
-            simulation::keff * p.wgt_bank() / p.n_bank() * n_delayed * flux;
+            simulation::k_phys * p.wgt_bank() / p.n_bank() * n_delayed * flux;
         }
       }
       break;
@@ -1457,7 +1457,7 @@ void score_general_ce_analog(Particle& p, int i_tally, int start_index,
             const auto& nuc {*data::nuclides[p.event_nuclide()]};
             const auto& rxn {*nuc.fission_rx_[0]};
             auto rate = rxn.products_[g].decay_rate_;
-            score += simulation::keff * bank.wgt * rate * flux;
+            score += simulation::k_phys * bank.wgt * rate * flux;
             if (tally.delayedgroup_filter_ != C_NONE) {
               auto i_dg_filt = tally.filters()[tally.delayedgroup_filter_];
               const DelayedGroupFilter& filt {
@@ -1895,7 +1895,7 @@ void score_general_mg(Particle& p, int i_tally, int start_index,
           // number of particles that were banked in the fission bank. Since
           // this was weighted by 1/keff, we multiply by keff to get the proper
           // score.
-          score = simulation::keff * p.wgt_bank() * flux;
+          score = simulation::k_phys * p.wgt_bank() * flux;
           if (i_nuclide >= 0) {
             score *= atom_density *
                      nuc_xs.get_xs(MgxsType::FISSION, p_g, nuc_t, nuc_a) /
@@ -1951,7 +1951,7 @@ void score_general_mg(Particle& p, int i_tally, int start_index,
           auto n_delayed = std::accumulate(
             p.n_delayed_bank(), p.n_delayed_bank() + MAX_DELAYED_GROUPS, 0);
           auto prompt_frac = 1. - n_delayed / static_cast<double>(p.n_bank());
-          score = simulation::keff * p.wgt_bank() * prompt_frac * flux;
+          score = simulation::k_phys * p.wgt_bank() * prompt_frac * flux;
           if (i_nuclide >= 0) {
             score *= atom_density *
                      nuc_xs.get_xs(MgxsType::FISSION, p_g, nuc_t, nuc_a) /
@@ -2042,7 +2042,7 @@ void score_general_mg(Particle& p, int i_tally, int start_index,
             // Tally each delayed group bin individually
             for (auto d_bin = 0; d_bin < filt.n_bins(); ++d_bin) {
               auto d = filt.groups()[d_bin];
-              score = simulation::keff * p.wgt_bank() / p.n_bank() *
+              score = simulation::k_phys * p.wgt_bank() / p.n_bank() *
                       p.n_delayed_bank(d - 1) * flux;
               if (i_nuclide >= 0) {
                 score *=
@@ -2059,7 +2059,7 @@ void score_general_mg(Particle& p, int i_tally, int start_index,
             auto n_delayed = std::accumulate(
               p.n_delayed_bank(), p.n_delayed_bank() + MAX_DELAYED_GROUPS, 0);
             score =
-              simulation::keff * p.wgt_bank() / p.n_bank() * n_delayed * flux;
+              simulation::k_phys * p.wgt_bank() / p.n_bank() * n_delayed * flux;
             if (i_nuclide >= 0) {
               score *=
                 atom_density *
@@ -2179,13 +2179,13 @@ void score_general_mg(Particle& p, int i_tally, int start_index,
             if (d != -1) {
               if (i_nuclide >= 0) {
                 score +=
-                  simulation::keff * atom_density * bank.wgt * flux *
+                  simulation::k_phys * atom_density * bank.wgt * flux *
                   nuc_xs.get_xs(MgxsType::DECAY_RATE, p_g, nullptr, nullptr, &d,
                     nuc_t, nuc_a) *
                   nuc_xs.get_xs(MgxsType::FISSION, p_g, nuc_t, nuc_a) /
                   macro_xs.get_xs(MgxsType::FISSION, p_g, macro_t, macro_a);
               } else {
-                score += simulation::keff * bank.wgt * flux *
+                score += simulation::k_phys * bank.wgt * flux *
                          macro_xs.get_xs(MgxsType::DECAY_RATE, p_g, nullptr,
                            nullptr, &d, macro_t, macro_a);
               }

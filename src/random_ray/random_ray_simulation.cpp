@@ -610,7 +610,7 @@ void RandomRaySimulation::print_results_random_ray(
   if (settings::verbosity >= 4 && settings::run_mode == RunMode::EIGENVALUE) {
     header("Results", 4);
     fmt::print(" k-effective                       = {:.5f} +/- {:.5f}\n",
-      simulation::keff, simulation::keff_std);
+      simulation::k_phys, simulation::k_phys_std);
   }
 }
 

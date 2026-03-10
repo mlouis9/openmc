@@ -37,7 +37,7 @@ namespace openmc {
 
 namespace simulation {
 
-array<double, 2> keff_generation;
+array<double, 2> k_generation_val;
 array<double, 2> kq_generation_val;
 array<double, 2> ks_generation_val;
 array<double, 2> k_sum;
@@ -101,47 +101,47 @@ void calculate_generation_ks()
   }
 }
 
-void calculate_generation_keff()
+void calculate_generation_k()
 {
-  calculate_generation_keff(KeffType::k);
+  calculate_generation_k(KType::k);
 }
 
-void calculate_generation_keff(KeffType type)
+void calculate_generation_k(KType type)
 {
   // Initialize variables
   xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>> gt;
-  array<double, 2>* keff_generation_ptr;
+  array<double, 2>* k_generation_val_ptr;
   vector<array<double, 2>>* k_generation_ptr;
   switch (type) {
-  case KeffType::k:
+  case KType::k:
     gt = simulation::global_tallies;
-    keff_generation_ptr = &simulation::keff_generation;
+    k_generation_val_ptr = &simulation::k_generation_val;
     k_generation_ptr = &simulation::k_generation;
     break;
-  case KeffType::kq:
+  case KType::kq:
     gt = simulation::global_tallies_first_gen;
-    keff_generation_ptr = &simulation::kq_generation_val;
+    k_generation_val_ptr = &simulation::kq_generation_val;
     k_generation_ptr = &simulation::kq_generation;
     break;
-  case KeffType::ks:
+  case KType::ks:
     calculate_generation_ks();
     return;
   }
 
-  (*keff_generation_ptr)[0] =
+  (*k_generation_val_ptr)[0] =
     gt(GlobalTally::K_TRACKLENGTH, TallyResult::VALUE) -
-    (*keff_generation_ptr)[0];
-  (*keff_generation_ptr)[1] =
+    (*k_generation_val_ptr)[0];
+  (*k_generation_val_ptr)[1] =
     gt(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE) -
-    (*keff_generation_ptr)[1];
+    (*k_generation_val_ptr)[1];
 
-  array<double, 2> keff_reduced;
+  array<double, 2> k_reduced;
 #ifdef OPENMC_MPI
   if (settings::solver_type != SolverType::RANDOM_RAY) {
     // Combine values across all processors
-    MPI_Allreduce(&(*keff_generation_ptr)[0], &keff_reduced[0], 1, MPI_DOUBLE,
+    MPI_Allreduce(&(*k_generation_val_ptr)[0], &k_reduced[0], 1, MPI_DOUBLE,
       MPI_SUM, mpi::intracomm);
-    MPI_Allreduce(&(*keff_generation_ptr)[1], &keff_reduced[1], 1, MPI_DOUBLE,
+    MPI_Allreduce(&(*k_generation_val_ptr)[1], &k_reduced[1], 1, MPI_DOUBLE,
       MPI_SUM, mpi::intracomm);
   } else {
     // If using random ray, MPI parallelism is provided by domain replication.
@@ -149,21 +149,21 @@ void calculate_generation_keff(KeffType type)
     // such that all ranks have identical scalar flux vectors, and will all
     // independently compute the same value of k. Thus, there is no need to
     // perform any additional MPI reduction here.
-    keff_reduced = *keff_generation_ptr;
+    k_reduced = *k_generation_val_ptr;
   }
 #else
-  keff_reduced = *keff_generation_ptr;
+  k_reduced = *k_generation_val_ptr;
 #endif
 
   // Normalize single batch estimate of k
   // TODO: This should be normalized by total_weight, not by n_particles
   if (settings::solver_type != SolverType::RANDOM_RAY) {
-    keff_reduced[0] /= settings::n_particles;
-    keff_reduced[1] /= settings::n_particles;
+    k_reduced[0] /= settings::n_particles;
+    k_reduced[1] /= settings::n_particles;
   }
-  double k_mean = keff_reduced[0];
+  double k_mean = k_reduced[0];
   double k_std = std::sqrt(
-    (keff_reduced[1] - std::pow(k_mean, 2)) / (settings::n_particles - 1));
+    (k_reduced[1] - std::pow(k_mean, 2)) / (settings::n_particles - 1));
   k_generation_ptr->push_back({k_mean, k_std});
 }
 
@@ -473,12 +473,12 @@ void synchronize_bank()
   simulation::time_bank.stop();
 }
 
-void calculate_average_keff()
+void calculate_average_k()
 {
-  calculate_average_keff(KeffType::k);
+  calculate_average_k(KType::k);
 }
 
-void calculate_average_keff(KeffType type)
+void calculate_average_k(KType type)
 {
   // Determine overall generation and number of active generations
   int i = overall_generation() - 1;
@@ -490,31 +490,31 @@ void calculate_average_keff(KeffType type)
     n = 0;
   }
   // Initialize variables
-  double keff;
-  double keff_std;
+  double k;
+  double k_std;
 
-  array<double, 2>* keff_generation_ptr;
+  array<double, 2>* k_generation_val_ptr;
   vector<array<double, 2>>* k_generation_ptr;
   array<double, 2>* k_sum_ptr;
   double* k_ptr;
   double* k_std_ptr;
   switch (type) {
-  case KeffType::k:
-    keff_generation_ptr = &simulation::keff_generation;
+  case KType::k:
+    k_generation_val_ptr = &simulation::k_generation_val;
     k_generation_ptr = &simulation::k_generation;
     k_sum_ptr = &simulation::k_sum;
     k_ptr = &simulation::k;
     k_std_ptr = &simulation::k_std;
     break;
-  case KeffType::kq:
-    keff_generation_ptr = &simulation::kq_generation_val;
+  case KType::kq:
+    k_generation_val_ptr = &simulation::kq_generation_val;
     k_generation_ptr = &simulation::kq_generation;
     k_sum_ptr = &simulation::kq_sum;
     k_ptr = &simulation::kq;
     k_std_ptr = &simulation::kq_std;
     break;
-  case KeffType::ks:
-    keff_generation_ptr = &simulation::ks_generation_val;
+  case KType::ks:
+    k_generation_val_ptr = &simulation::ks_generation_val;
     k_generation_ptr = &simulation::ks_generation;
     k_sum_ptr = &simulation::ks_sum;
     k_ptr = &simulation::ks;
@@ -525,14 +525,14 @@ void calculate_average_keff(KeffType type)
   if (n <= 0) {
     // For inactive generations, use current generation k as estimate for next
     // generation
-    keff = (*k_generation_ptr)[i][0];
+    k = (*k_generation_ptr)[i][0];
   } else {
-    // Sample mean of keff
+    // Sample mean of k
     (*k_sum_ptr)[0] += (*k_generation_ptr)[i][0];
     (*k_sum_ptr)[1] += std::pow((*k_generation_ptr)[i][0], 2);
 
     // Determine mean
-    keff = (*k_sum_ptr)[0] / n;
+    k = (*k_sum_ptr)[0] / n;
     if (n > 1) {
       double t_value;
       if (settings::confidence_intervals) {
@@ -544,8 +544,8 @@ void calculate_average_keff(KeffType type)
       }
 
       // Standard deviation of the sample mean of k
-      keff_std = t_value *
-                 std::sqrt(((*k_sum_ptr)[1] / n - std::pow(keff, 2)) / (n - 1));
+      k_std =
+        t_value * std::sqrt(((*k_sum_ptr)[1] / n - std::pow(k, 2)) / (n - 1));
 
       // In some cases (such as an infinite medium problem), random ray
       // may estimate k exactly and in an unvarying manner between iterations.
@@ -553,23 +553,23 @@ void calculate_average_keff(KeffType type)
       // power operations may cause an extremely small negative value to occur
       // inside the sqrt operation, leading to NaN. If this occurs, we check for
       // it and set the std dev to zero.
-      if (!std::isfinite(keff_std)) {
-        keff_std = 0.0;
+      if (!std::isfinite(k_std)) {
+        k_std = 0.0;
       }
     }
   }
-  (*k_ptr) = keff;
-  (*k_std_ptr) = keff_std;
-  if (settings::run_mode == RunMode::EIGENVALUE and type == KeffType::k) {
-    // Only set simulation::keff for eigenvalue mode, since it's used to bias
-    // physics
-    simulation::keff = keff;
-    simulation::keff_std = keff_std;
+  (*k_ptr) = k;
+  (*k_std_ptr) = k_std;
+  if (settings::run_mode == RunMode::EIGENVALUE and type == KType::k) {
+    // Only set simulation::k_phys for eigenvalue mode, since it's used to
+    // bias physics
+    simulation::k_phys = k;
+    simulation::k_phys_std = k_std;
   }
 }
 
 int get_combined_k_from_tallies(double* k_combined,
-  std::array<double, 3>& k_combined_weights, double keff, double keff_std,
+  std::array<double, 3>& k_combined_weights, double k, double k_std,
   xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>> gt,
   double k_col_abs, double k_col_tra, double k_abs_tra)
 {
@@ -580,8 +580,8 @@ int get_combined_k_from_tallies(double* k_combined,
   // there is a N-3 term in a denominator.
   if (simulation::n_realizations <= 3 ||
       settings::solver_type == SolverType::RANDOM_RAY) {
-    k_combined[0] = keff;
-    k_combined[1] = keff_std;
+    k_combined[0] = k;
+    k_combined[1] = k_std;
     if (simulation::n_realizations <= 1) {
       k_combined[1] = std::numeric_limits<double>::infinity();
     }
@@ -666,7 +666,7 @@ int get_combined_k_from_tallies(double* k_combined,
         k = 2;
         break;
       case 1:
-        // i = absortion, j = tracklength, k = collision
+        // i = absorption, j = tracklength, k = collision
         i = 1;
         j = 2;
         k = 0;

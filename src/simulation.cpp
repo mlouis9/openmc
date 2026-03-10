@@ -314,9 +314,10 @@ int ct_current_file;
 int current_batch;
 int current_gen;
 bool initialized {false};
-double keff {1.0};
-double kold {1.0};
-double keff_std;
+double k_phys {1.0};
+double k_phys_std;
+double k_current {1.0};
+double k_old {1.0};
 double k;
 double k_std;
 double kq;
@@ -557,7 +558,7 @@ void initialize_generation()
 
     // Store current value of tracklength k
     auto& gt = simulation::global_tallies;
-    simulation::keff_generation = {
+    simulation::k_generation_val = {
       gt(GlobalTally::K_TRACKLENGTH, TallyResult::VALUE),
       gt(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE)};
   }
@@ -658,18 +659,18 @@ void finalize_generation()
       shannon_entropy();
 
     // Collect results and statistics
-    calculate_generation_keff();
-    calculate_average_keff();
+    calculate_generation_k();
+    calculate_average_k();
     if ((settings::run_mode == RunMode::FIXED_SOURCE &&
           settings::calculate_subcritical_k) ||
         settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
-      calculate_generation_keff(KeffType::kq);
-      calculate_average_keff(KeffType::kq);
-      calculate_generation_keff(KeffType::ks);
-      calculate_average_keff(KeffType::ks);
+      calculate_generation_k(KType::kq);
+      calculate_average_k(KType::kq);
+      calculate_generation_k(KType::ks);
+      calculate_average_k(KType::ks);
     }
 
-    simulation::kold = simulation::keff;
+    simulation::k_old = simulation::k_current;
 
     // Write generation output
     if (mpi::master && settings::verbosity >= 7) {

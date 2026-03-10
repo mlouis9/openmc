@@ -153,7 +153,7 @@ int openmc_finalize()
   settings::write_all_tracks = false;
   settings::write_initial_source = false;
 
-  simulation::keff = 1.0;
+  simulation::k_phys = 1.0;
   simulation::need_depletion_rx = false;
   simulation::ssw_current_file = 1;
   simulation::total_gen = 0;
@@ -236,7 +236,7 @@ int openmc_hard_reset()
   reset_timers();
 
   // Reset total generations and keff guess
-  simulation::keff = 1.0;
+  simulation::k_phys = 1.0;
   simulation::total_gen = 0;
 
   // Reset the random number generator state

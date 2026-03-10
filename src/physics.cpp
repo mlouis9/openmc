@@ -179,7 +179,7 @@ void create_fission_sites(Particle& p, int i_nuclide, const Reaction& rx)
   // Determine the expected number of neutrons produced
   double nu_t {0};
   if (settings::run_mode == RunMode::EIGENVALUE) {
-    nu_t = p.wgt() / simulation::keff * weight *
+    nu_t = p.wgt() / simulation::k_phys * weight *
            p.neutron_xs(i_nuclide).nu_fission / p.neutron_xs(i_nuclide).total;
   } else {
     nu_t = p.wgt() * weight * p.neutron_xs(i_nuclide).nu_fission /
@@ -1223,7 +1223,7 @@ void sample_secondary_photons(Particle& p, int i_nuclide)
     // calculations", Proc. PHYSOR, Cambridge, UK, Mar 29-Apr 2, 2020.
     double wgt = photon_wgt;
     if (settings::eigenvalue_like() && !is_fission(rx->mt_)) {
-      wgt *= simulation::keff;
+      wgt *= simulation::k_phys;
     }
 
     // Create the secondary photon

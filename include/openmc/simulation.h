@@ -28,8 +28,10 @@ extern int ct_current_file;   //!< current collision track file index
 extern "C" int current_batch; //!< current batch
 extern "C" int current_gen;   //!< current fission generation
 extern "C" bool initialized;  //!< has simulation been initialized?
-extern "C" double keff;       //!< average k over batches
-extern "C" double keff_std;   //!< standard deviation of average k
+extern "C" double
+  k_phys; //!< average k over batches, used only for physics biasing
+extern "C" double k_phys_std; //!< standard deviation of average k, used only
+                              //!< for physics biasing
 extern "C" double
   k; //!< average k over batches, used for subcritical multiplication problems
 extern "C" double k_std; //!< standard deviation of average k, used for

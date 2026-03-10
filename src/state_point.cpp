@@ -372,9 +372,9 @@ void restart_set_keff()
       simulation::k_sum[1] += std::pow(simulation::k_generation[i][0], 2);
     }
     int n = settings::gen_per_batch * simulation::n_realizations;
-    simulation::keff = simulation::k_sum[0] / n;
+    simulation::k_phys = simulation::k_sum[0] / n;
   } else {
-    simulation::keff = simulation::k_generation.back()[0];
+    simulation::k_phys = simulation::k_generation.back()[0];
   }
 }
 
