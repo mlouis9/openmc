@@ -704,17 +704,19 @@ void read_settings_xml(pugi::xml_node root)
   }
 
   if (check_for_node(root, "print_all_k_factors")) {
-    if (run_mode == RunMode::FIXED_SOURCE &&
-        settings::calculate_subcritical_k) {
+    if ((run_mode == RunMode::FIXED_SOURCE &&
+          settings::calculate_subcritical_k) ||
+        run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
       if (solver_type != SolverType::MONTE_CARLO) {
         fatal_error("The 'print_all_k_factors' setting is only valid in "
-                    "fixed source mode with the Monte Carlo solver.");
+                    "fixed source mode or subcritical multiplication mode with "
+                    "the Monte Carlo solver.");
       }
       print_all_k_factors = get_node_value_bool(root, "print_all_k_factors");
     } else {
-      fatal_error(
-        "The 'print_all_k_factors' setting is only valid in "
-        "fixed source mode with calculate_subcritical_k set to true.");
+      fatal_error("The 'print_all_k_factors' setting is only valid in "
+                  "fixed source mode with calculate_subcritical_k set to true "
+                  "or in subcritical multiplication mode.");
     }
   }
 

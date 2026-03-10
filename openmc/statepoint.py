@@ -399,7 +399,7 @@ class StatePoint:
             cumprod = np.cumprod(k_inactive)
             cumprod[-1] *= 1/(1-self.keff)
             return 1.0+np.sum(cumprod)
-        elif self.calculate_subcritical_k:
+        elif self.calculate_subcritical_k or self.run_mode == 'subcritical multiplication':
             return 1/(1 - self.keff)
         else:
             return None        

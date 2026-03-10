@@ -84,6 +84,9 @@ extern std::array<std::array<double, N_K_EST>, N_K_EST> k_kq_product;
 extern std::array<double, 3> k_combined_weights;
 extern std::array<double, 3> kq_combined_weights;
 
+extern vector<int64_t> n_external_source_gen;
+extern int64_t global_tally_external_source;
+
 } // namespace simulation
 
 //==============================================================================

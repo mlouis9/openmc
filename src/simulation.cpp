@@ -124,6 +124,9 @@ int openmc_simulation_init()
   simulation::ssw_current_file = 1;
   simulation::k_generation.clear();
   simulation::kq_generation.clear();
+  simulation::ks_generation.clear();
+  simulation::n_external_source_gen.clear();
+  simulation::global_tally_external_source = 0;
   simulation::entropy.clear();
   openmc_reset();
 
@@ -352,6 +355,10 @@ std::array<std::array<double, N_K_EST>, N_K_EST> k_kq_product;
 std::array<double, 3> k_combined_weights;
 std::array<double, 3> kq_combined_weights;
 
+// Subcritical multiplication mode external source particle count
+vector<int64_t> n_external_source_gen;
+int64_t global_tally_external_source;
+
 } // namespace simulation
 
 //==============================================================================
@@ -554,8 +561,9 @@ void initialize_generation()
       gt(GlobalTally::K_TRACKLENGTH, TallyResult::VALUE),
       gt(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE)};
   }
-  if (settings::run_mode == RunMode::FIXED_SOURCE &&
-      settings::calculate_subcritical_k) {
+  if ((settings::run_mode == RunMode::FIXED_SOURCE &&
+        settings::calculate_subcritical_k) ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     // Store current value of tracklength kq
     auto& gt_first_gen = simulation::global_tallies_first_gen;
     simulation::kq_generation_val = {
@@ -588,7 +596,11 @@ void finalize_generation()
       settings::n_particles + global_tally_tracklength;
     gt(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE) +=
       settings::n_particles + global_tally_tracklength_sq;
+  }
 
+  if ((settings::run_mode == RunMode::FIXED_SOURCE &&
+        settings::calculate_subcritical_k) ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     // Update first generation tallies
     gt_first_gen(GlobalTally::K_ABSORPTION, TallyResult::VALUE) +=
       global_tally_absorption_first_gen;
@@ -610,14 +622,23 @@ void finalize_generation()
     global_tally_tracklength = 0.0;
     global_tally_tracklength_sq = 0.0;
   }
-  if (settings::run_mode == RunMode::FIXED_SOURCE &&
-      settings::calculate_subcritical_k) {
+  if ((settings::run_mode == RunMode::FIXED_SOURCE &&
+        settings::calculate_subcritical_k) ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     global_tally_absorption_first_gen = 0.0;
     global_tally_collision_first_gen = 0.0;
     global_tally_tracklength_first_gen = 0.0;
     global_tally_tracklength_sq_first_gen = 0.0;
   }
   global_tally_leakage = 0.0;
+
+  // Store the external source particle count for this generation if in
+  // subcritical multiplication mode
+  if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+    simulation::n_external_source_gen.push_back(
+      simulation::global_tally_external_source);
+    simulation::global_tally_external_source = 0;
+  }
 
   if (settings::eigenvalue_like() &&
       settings::solver_type == SolverType::MONTE_CARLO) {
@@ -639,8 +660,9 @@ void finalize_generation()
     // Collect results and statistics
     calculate_generation_keff();
     calculate_average_keff();
-    if (settings::run_mode == RunMode::FIXED_SOURCE &&
-        settings::calculate_subcritical_k) {
+    if ((settings::run_mode == RunMode::FIXED_SOURCE &&
+          settings::calculate_subcritical_k) ||
+        settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
       calculate_generation_keff(KeffType::kq);
       calculate_average_keff(KeffType::kq);
       calculate_generation_keff(KeffType::ks);
@@ -688,6 +710,10 @@ void initialize_history(Particle& p, int64_t index_source)
         // sample from external source
         auto site = sample_external_source(&seed);
         p.from_source(&site);
+
+// Increment number of external source particles for this generation
+#pragma omp atomic
+        simulation::global_tally_external_source += 1;
       }
     } else if (settings::run_mode == RunMode::FIXED_SOURCE) {
       // sample from external source distribution or custom library then set
@@ -948,10 +974,12 @@ void free_memory_simulation()
 
 void transport_history_based_single_particle(Particle& p)
 {
-  bool tally_first_generation = (settings::run_mode == RunMode::FIXED_SOURCE &&
-                                  settings::calculate_subcritical_k)
-                                  ? true
-                                  : false;
+  bool tally_first_generation =
+    ((settings::run_mode == RunMode::FIXED_SOURCE &&
+       settings::calculate_subcritical_k) ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION)
+      ? true
+      : false;
   while (p.alive()) {
     p.event_calculate_xs();
     if (p.alive()) {
@@ -965,8 +993,9 @@ void transport_history_based_single_particle(Particle& p)
       }
     }
     // Check for first generation completion
-    if (!p.alive() && tally_first_generation) {
-      if (settings::calculate_subcritical_k) {
+    if (!p.alive() && tally_first_generation && p.generation_tag() == 0) {
+      if (settings::calculate_subcritical_k ||
+          settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
         // Protect global updates with atomic to prevent data races
 #pragma omp atomic
         global_tally_absorption_first_gen += p.keff_tally_absorption();

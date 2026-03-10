@@ -1121,8 +1121,9 @@ void accumulate_tallies()
     }
 
     // Accumulate subcritical multiplication tallies
-    if (settings::run_mode == RunMode::FIXED_SOURCE &&
-        settings::calculate_subcritical_k) {
+    if ((settings::run_mode == RunMode::FIXED_SOURCE &&
+          settings::calculate_subcritical_k) ||
+        settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
       auto& gt_first_gen = simulation::global_tallies_first_gen;
       if (mpi::master || !settings::reduce_tallies) {
         if (mpi::master || !settings::reduce_tallies) {

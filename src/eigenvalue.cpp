@@ -54,7 +54,6 @@ xt::xtensor<double, 1> source_frac;
 
 double compute_cov_M_kq(int i, int j)
 {
-  // Number of active generations
   int N = settings::n_particles;
   int idx = static_cast<int>(GlobalTally::K_TRACKLENGTH);
 
@@ -69,16 +68,37 @@ double compute_cov_M_kq(int i, int j)
 
 void calculate_generation_ks()
 {
-  auto [m, m_std] = simulation::k_generation.back();
-  auto [kq, kq_std] = simulation::kq_generation.back();
-  double ks_mean = 1 - kq / (m - 1);
-  double cov_M_kq = compute_cov_M_kq(0, 0);
-  double rho = cov_M_kq / (m_std * kq_std);
-  double ks_std =
-    std::sqrt(std::pow(kq_std, 2) / std::pow(m - 1, 2) +
-              std::pow(kq, 2) * std::pow(m_std, 2) / std::pow(m - 1, 4) -
-              2 * kq / std::pow(m - 1, 3) * rho * m_std * kq_std);
-  simulation::ks_generation.push_back({ks_mean, ks_std});
+  if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+    auto [k, k_std] = simulation::k_generation.back();
+    auto [kq, kq_std] = simulation::kq_generation.back();
+
+    // Apply scale factor
+    double scale_factor = simulation::n_external_source_gen.back() > 0
+                            ? static_cast<double>(settings::n_particles) /
+                                simulation::n_external_source_gen.back()
+                            : 0.0;
+    kq *= scale_factor;
+    kq_std *= scale_factor;
+
+    double ks_mean = 1 + kq - kq / k;
+    double cov_k_kq = compute_cov_M_kq(0, 0);
+    double ks_std =
+      std::sqrt(std::pow(kq / std::pow(k, 2), 2) * std::pow(k_std, 2) +
+                std::pow(1 - 1 / k, 2) * std::pow(kq_std, 2) +
+                2 * (kq / std::pow(k, 2)) * (1 - 1 / k) * cov_k_kq);
+    simulation::ks_generation.push_back({ks_mean, ks_std});
+  } else {
+    auto [m, m_std] = simulation::k_generation.back();
+    auto [kq, kq_std] = simulation::kq_generation.back();
+    double ks_mean = 1 - kq / (m - 1);
+    double cov_M_kq = compute_cov_M_kq(0, 0);
+    double rho = cov_M_kq / (m_std * kq_std);
+    double ks_std =
+      std::sqrt(std::pow(kq_std, 2) / std::pow(m - 1, 2) +
+                std::pow(kq, 2) * std::pow(m_std, 2) / std::pow(m - 1, 4) -
+                2 * kq / std::pow(m - 1, 3) * rho * m_std * kq_std);
+    simulation::ks_generation.push_back({ks_mean, ks_std});
+  }
 }
 
 void calculate_generation_keff()
@@ -729,7 +749,11 @@ int openmc_get_kq(double* kq_combined)
 
 int openmc_get_ks(double* ks_combined, double* k_combined, double* kq_combined)
 {
-  ks_combined[0] = 1.0 - kq_combined[0] / (k_combined[0] - 1.0);
+  if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+    ks_combined[0] = 1.0 + kq_combined[0] - kq_combined[0] / k_combined[0];
+  } else {
+    ks_combined[0] = 1.0 - kq_combined[0] / (k_combined[0] - 1.0);
+  }
   double total_cov {0.0};
   array<double, simulation::N_K_EST> M;
   array<double, simulation::N_K_EST> kq;
@@ -746,11 +770,20 @@ int openmc_get_ks(double* ks_combined, double* k_combined, double* kq_combined)
                    simulation::kq_combined_weights[j] * cov;
     }
   }
-  ks_combined[1] =
-    std::sqrt(std::pow(kq_combined[1], 2) / (std::pow(k_combined[0] - 1, 2)) +
-              std::pow(kq_combined[0] * k_combined[1], 2) /
-                std::pow(k_combined[0] - 1, 4) -
-              2 * kq_combined[0] / std::pow(k_combined[0] - 1, 3) * total_cov);
+  if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+    ks_combined[1] = std::sqrt(
+      std::pow(kq_combined[0] / std::pow(k_combined[0], 2), 2) *
+        std::pow(k_combined[1], 2) +
+      std::pow(1 - 1 / k_combined[0], 2) * std::pow(kq_combined[1], 2) +
+      2 * kq_combined[0] / std::pow(k_combined[0], 2) *
+        (1 - 1 / k_combined[0]) * total_cov);
+  } else {
+    ks_combined[1] = std::sqrt(
+      std::pow(kq_combined[1], 2) / (std::pow(k_combined[0] - 1, 2)) +
+      std::pow(kq_combined[0] * k_combined[1], 2) /
+        std::pow(k_combined[0] - 1, 4) -
+      2 * kq_combined[0] / std::pow(k_combined[0] - 1, 3) * total_cov);
+  }
   return 0;
 }
 
@@ -846,23 +879,36 @@ double ufs_get_weight(const Particle& p)
 
 void write_eigenvalue_hdf5(hid_t group)
 {
+  // Extract k-generation data
   auto n = simulation::k_generation.size();
   xt::xtensor<double, 2> k_generation({n, 2});
   xt::xtensor<double, 2> kq_generation({n, 2});
   xt::xtensor<double, 2> ks_generation({n, 2});
   for (int i = 0; i < n; ++i) {
     double k, k_std;
-    if (settings::run_mode == RunMode::FIXED_SOURCE &&
-        settings::calculate_subcritical_k) {
+    if ((settings::run_mode == RunMode::FIXED_SOURCE &&
+          settings::calculate_subcritical_k) ||
+        settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
       // Temporary fix until formula for combined estimator can be implemented
       // correctly
-      auto [k0, k1] = convert_m_to_k(
-        simulation::k_generation[i][0], simulation::k_generation[i][1]);
-      k = k0;
-      k_std = k1;
+      double scale_factor = 1.0;
+      if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+        scale_factor = simulation::n_external_source_gen[i] > 0
+                         ? static_cast<double>(settings::n_particles) /
+                             simulation::n_external_source_gen[i]
+                         : 0.0;
+        k = simulation::k_generation[i][0];
+        k_std = simulation::k_generation[i][1];
+      } else {
 
-      kq_generation(i, 0) = simulation::kq_generation[i][0];
-      kq_generation(i, 1) = simulation::kq_generation[i][1];
+        auto [k0, k1] = convert_m_to_k(
+          simulation::k_generation[i][0], simulation::k_generation[i][1]);
+        k = k0;
+        k_std = k1;
+      }
+
+      kq_generation(i, 0) = simulation::kq_generation[i][0] * scale_factor;
+      kq_generation(i, 1) = simulation::kq_generation[i][1] * scale_factor;
 
       ks_generation(i, 0) = simulation::ks_generation[i][0];
       ks_generation(i, 1) = simulation::ks_generation[i][1];
@@ -885,6 +931,7 @@ void write_eigenvalue_hdf5(hid_t group)
     write_dataset(group, "k_abs_tra", simulation::k_abs_tra);
   }
 
+  // Write k combined
   array<double, 2> k_combined;
   openmc_get_keff(k_combined.data());
   if (settings::run_mode == RunMode::FIXED_SOURCE &&
@@ -894,20 +941,32 @@ void write_eigenvalue_hdf5(hid_t group)
     k_combined[1] = k1;
   }
   write_dataset(group, "k_combined", k_combined);
-  if (settings::run_mode == RunMode::FIXED_SOURCE &&
-      settings::calculate_subcritical_k) {
+
+  // Write kq combined and ks combined if applicable
+  if ((settings::run_mode == RunMode::FIXED_SOURCE &&
+        settings::calculate_subcritical_k) ||
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     write_dataset(group, "kq_generation", kq_generation);
     array<double, 2> kq_combined;
     openmc_get_kq(kq_combined.data());
-    fmt::print("kq_combined: {} +/- {}\n", kq_combined[0], kq_combined[1]);
+    if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+      // Multiply kq by scale factor
+      double scale_factor = simulation::n_external_source_gen.back() > 0
+                              ? static_cast<double>(settings::n_particles) /
+                                  simulation::n_external_source_gen.back()
+                              : 0.0;
+      kq_combined[0] *= scale_factor;
+      kq_combined[1] *= scale_factor;
+    }
     write_dataset(group, "kq_combined", kq_combined);
 
     // Convert back to m for calculation of ks
     array<double, 2> ks_combined;
-    std::tie(k_combined[0], k_combined[1]) =
-      convert_k_to_m(k_combined[0], k_combined[1]);
+    if (settings::run_mode != RunMode::SUBCRITICAL_MULTIPLICATION) {
+      std::tie(k_combined[0], k_combined[1]) =
+        convert_k_to_m(k_combined[0], k_combined[1]);
+    }
     openmc_get_ks(ks_combined.data(), k_combined.data(), kq_combined.data());
-    fmt::print("ks_combined: {} +/- {}\n", ks_combined[0], ks_combined[1]);
     write_dataset(group, "ks_generation", ks_generation);
     write_dataset(group, "ks_combined", ks_combined);
   }

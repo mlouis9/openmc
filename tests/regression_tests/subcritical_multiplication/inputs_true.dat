@@ -32,5 +32,6 @@
     <tabular_legendre>
       <enable>false</enable>
     </tabular_legendre>
+    <print_all_k_factors>true</print_all_k_factors>
   </settings>
   </model>

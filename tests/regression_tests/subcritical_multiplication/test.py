@@ -24,6 +24,12 @@ class MGXSTestHarness(PyAPITestHarness):
         # Read the statepoint file.
         statepoint = glob.glob(self._sp_name)[0]
         with openmc.StatePoint(statepoint) as sp:
+            # Write out multiplication.
+            outstr += 'multiplication:\n'
+            form = '{0:12.6E} {1:12.6E}\n'
+            M = sp.multiplication
+            outstr += form.format(M.n, M.s)
+
             # Write out k
             outstr += 'k\n'
             form = '{0:12.6E} {1:12.6E}\n'
@@ -32,11 +38,36 @@ class MGXSTestHarness(PyAPITestHarness):
 
             # Write out k_generation
             outstr += 'k_generation:\n'
-            form = '{0:12.6E}\n'
+            form = '{0:12.6E} {1:12.6E}\n'
             k_gen = sp.k_generation
             for kg in k_gen:
-                outstr += form.format(kg)
+                outstr += form.format(kg.n, kg.s)
 
+            # Write out ks
+            outstr += 'ks:\n'
+            form = '{0:12.6E} {1:12.6E}\n'
+            ks = sp.ks
+            outstr += form.format(ks.n, ks.s)   
+
+            # Write out ks_generation
+            outstr += 'ks_generation:\n'
+            form = '{0:12.6E} {1:12.6E}\n'
+            ks_gen = sp.ks_generation
+            for ksg in ks_gen:
+                outstr += form.format(ksg.n, ksg.s)
+
+            # Write out kq.
+            outstr += 'kq:\n'
+            form = '{0:12.6E} {1:12.6E}\n'
+            kq = sp.kq
+            outstr += form.format(kq.n, kq.s) 
+
+            # Write out kq_generation
+            outstr += 'kq_generation:\n'
+            form = '{0:12.6E} {1:12.6E}\n'
+            kq_gen = sp.kq_generation
+            for kqg in kq_gen:
+                outstr += form.format(kqg.n, kqg.s)           
         return outstr   
                        
 
@@ -82,6 +113,7 @@ def slab_model():
     model.settings.inactive = 10
     model.settings.batches = 20
     model.settings.run_mode = 'subcritical multiplication'
+    model.settings.print_all_k_factors = True
 
     space = openmc.stats.Box([0,-1000,-1000],[10,1000,1000])
     model.settings.source = openmc.IndependentSource(

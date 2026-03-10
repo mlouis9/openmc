@@ -423,10 +423,19 @@ void print_generation()
     array<double, 2> kq_gen;
     array<double, 2> ks_gen;
     kq_gen = simulation::kq_generation[idx];
+    double scale_factor = 1.0;
+    if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+      scale_factor = simulation::n_external_source_gen[idx] > 0
+                       ? static_cast<double>(settings::n_particles) /
+                           simulation::n_external_source_gen[idx]
+                       : 0.0;
+      kq_gen[0] *= scale_factor;
+      kq_gen[1] *= scale_factor;
+    }
     ks_gen = simulation::ks_generation[idx];
     std::string spaces(batch_and_gen.size(), ' ');
-    print_generation_values(
-      idx, n, spaces + "kq:", kq_gen, simulation::kq, simulation::kq_std);
+    print_generation_values(idx, n, spaces + "kq:", kq_gen,
+      simulation::kq * scale_factor, simulation::kq_std * scale_factor);
     print_generation_values(
       idx, n, spaces + "ks:", ks_gen, simulation::ks, simulation::ks_std);
   } else {
@@ -447,6 +456,17 @@ void print_generation_values(int idx, int n, std::string batch_and_gen,
     fmt::print("   {:8.5f} +/-{:8.5f}", k, k_std);
   }
   fmt::print("\n");
+  if (settings::print_all_k_factors &&
+      batch_and_gen.find("ks:") != std::string::npos) {
+    if (simulation::current_batch != settings::n_batches) {
+      if (n >= 1) {
+        fmt::print(
+          "  ─────────   ────────────────────   ────────────────────\n");
+      } else {
+        fmt::print("  ─────────   ────────────────────\n");
+      }
+    }
+  }
   std::fflush(stdout);
 }
 //==============================================================================
