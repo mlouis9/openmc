@@ -376,6 +376,8 @@ class Settings:
         In subcritical multipliction factor calculations, indicate whether to print all k factors (k, ks, kq) during the transport calculation
     tally_covariance_with_k : bool
         Indicate whether to calculate the covariance of tallies with k in subcritical multiplication simulations
+    embedded_tally_scaling : bool
+        Whether to enable embedded tally scaling in subcritical multiplicaiton simulations
     """
 
     def __init__(self, **kwargs):
@@ -1445,6 +1447,20 @@ class Settings:
                              "run_mode is 'subcritical multiplication'")
         self._tally_covariance_with_k = tally_covariance_with_k
 
+    @property
+    def embedded_tally_scaling(self) -> bool:
+        return self._embedded_tally_scaling
+    
+    @embedded_tally_scaling.setter
+    def embedded_tally_scaling(self, embedded_tally_scaling: bool):
+        cv.check_type('embedded tally scaling', embedded_tally_scaling, bool)
+        if not self._run_mode == RunMode.SUBCRITICAL_MULTIPLICATION:
+            raise ValueError("embedded_tally_scaling can only be set when "
+                             "run_mode is 'subcritical multiplication'")
+        if self._tally_covariance_with_k and embedded_tally_scaling:
+            raise ValueError("cannot tally covariances with k in embedded tally scaling mode")
+        self._embedded_tally_scaling = embedded_tally_scaling
+
     def _create_run_mode_subelement(self, root):
         elem = ET.SubElement(root, "run_mode")
         elem.text = self._run_mode.value
@@ -1992,6 +2008,11 @@ class Settings:
             elem = ET.SubElement(root, "tally_covariance_with_k")
             elem.text = str(self._tally_covariance_with_k).lower()
 
+    def _create_embedded_tally_scaling_subelement(self, root):
+        if self._embedded_tally_scaling:
+            elem = ET.SubElement(root, "embedded_tally_scaling")
+            elem.text = str(self._embedded_tally_scaling).lower()
+
     def _eigenvalue_from_xml_element(self, root):
         elem = root.find('eigenvalue')
         if elem is not None:
@@ -2473,6 +2494,11 @@ class Settings:
         if text is not None:
             self.tally_covariance_with_k = text in ('true', '1')
 
+    def _embedded_tally_scaling_from_xml_element(self, root):
+        text = get_text(root, 'embedded_tally_scaling')
+        if text is not None:
+            self.embedded_tally_scaling = text in ('true', '1')
+
     def to_xml_element(self, mesh_memo=None):
         """Create a 'settings' element to be written to an XML file.
 
@@ -2548,6 +2574,7 @@ class Settings:
         self._create_calculate_subcritical_k_subelement(element)
         self._create_print_all_k_factors_subelement(element)
         self._create_tally_covariance_with_k_subelement(element)
+        self._create_embedded_tally_scaling_subelement(element)
 
         # Clean the indentation in the file to be user-readable
         clean_indentation(element)

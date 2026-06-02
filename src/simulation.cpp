@@ -719,6 +719,8 @@ void finalize_generation()
     // Collect results and statistics
     calculate_generation_k();
     calculate_average_k();
+    fmt::print("Are we using embedded tally scaling? {}\n",
+      settings::embedded_tally_scaling);
     if ((settings::run_mode == RunMode::FIXED_SOURCE &&
           settings::calculate_subcritical_k) ||
         settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
