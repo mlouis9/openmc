@@ -24,6 +24,7 @@
 
 #include <algorithm> // for min
 #include <cmath>     // for sqrt, abs, pow
+#include <cstdio>
 #include <fmt/ostream.h>
 #include <iterator> // for back_inserter
 #include <limits>   //for infinity
@@ -40,9 +41,15 @@ namespace simulation {
 array<double, 2> k_generation_val;
 array<double, 2> kq_generation_val;
 array<double, 2> ks_generation_val;
+array<double, 2> mG_generation_val;
+array<double, 2> RG_generation_val;
+array<double, 2> keff_fixed_src_generation_val;
 array<double, 2> k_sum;
 array<double, 2> kq_sum;
 array<double, 2> ks_sum;
+array<double, 2> mG_sum;
+array<double, 2> RG_sum;
+array<double, 2> keff_fixed_src_sum;
 vector<double> entropy;
 xt::xtensor<double, 1> source_frac;
 
@@ -101,6 +108,15 @@ void calculate_generation_ks()
   }
 }
 
+void calculate_generation_keff_fixed_src()
+{
+  auto [mG, mG_std] = simulation::mG_generation.back();
+  auto [RG, RG_std] = simulation::RG_generation.back();
+  auto [keff, keff_std] = calculate_keff_fixed_src(mG, mG_std, RG, RG_std);
+  simulation::keff_fixed_src_generation.push_back({keff, keff_std});
+  simulation::keff_fixed_src_generation_val = {keff, keff_std};
+}
+
 void calculate_generation_k()
 {
   calculate_generation_k(KType::k);
@@ -125,6 +141,19 @@ void calculate_generation_k(KType type)
     break;
   case KType::ks:
     calculate_generation_ks();
+    return;
+  case KType::mG:
+    gt = simulation::global_tallies_G_minus_1_gen;
+    k_generation_val_ptr = &simulation::mG_generation_val;
+    k_generation_ptr = &simulation::mG_generation;
+    break;
+  case KType::RG:
+    gt = simulation::global_tallies_geq_G_gen;
+    k_generation_val_ptr = &simulation::RG_generation_val;
+    k_generation_ptr = &simulation::RG_generation;
+    break;
+  case KType::keff_fixed_src:
+    calculate_generation_keff_fixed_src();
     return;
   }
 
@@ -179,6 +208,16 @@ std::pair<double, double> convert_k_to_m(double k, double k_std)
   double m = 1.0 / (1.0 - k);
   double m_std = k_std / std::pow(1.0 - k, 2);
   return {m, m_std};
+}
+
+std::pair<double, double> calculate_keff_fixed_src(
+  double mG, double mG_std, double RG, double RG_std)
+{
+  double keff = RG / (mG + RG);
+  double keff_std = 1 / (mG + RG) *
+                    std::sqrt(std::pow(1 - keff, 2) * std::pow(RG_std, 2) +
+                              std::pow(keff, 2) * std::pow(mG_std, 2));
+  return {keff, keff_std};
 }
 
 void synchronize_bank()
@@ -519,6 +558,30 @@ void calculate_average_k(KType type)
     k_sum_ptr = &simulation::ks_sum;
     k_ptr = &simulation::ks;
     k_std_ptr = &simulation::ks_std;
+    break;
+  case KType::mG:
+    k_generation_val_ptr = &simulation::mG_generation_val;
+    k_generation_ptr = &simulation::mG_generation;
+    k_sum_ptr = &simulation::mG_sum;
+    k_ptr = &simulation::mG;
+    k_std_ptr = &simulation::mG_std;
+    n -= simulation::n_keff_fixed_src_skip;
+    break;
+  case KType::RG:
+    k_generation_val_ptr = &simulation::RG_generation_val;
+    k_generation_ptr = &simulation::RG_generation;
+    k_sum_ptr = &simulation::RG_sum;
+    k_ptr = &simulation::RG;
+    k_std_ptr = &simulation::RG_std;
+    n -= simulation::n_keff_fixed_src_skip;
+    break;
+  case KType::keff_fixed_src:
+    k_generation_val_ptr = &simulation::keff_fixed_src_generation_val;
+    k_generation_ptr = &simulation::keff_fixed_src_generation;
+    k_sum_ptr = &simulation::keff_fixed_src_sum;
+    k_ptr = &simulation::keff_fixed_src;
+    k_std_ptr = &simulation::keff_fixed_src_std;
+    n -= simulation::n_keff_fixed_src_skip;
     break;
   }
 
@@ -884,6 +947,8 @@ void write_eigenvalue_hdf5(hid_t group)
   xt::xtensor<double, 2> k_generation({n, 2});
   xt::xtensor<double, 2> kq_generation({n, 2});
   xt::xtensor<double, 2> ks_generation({n, 2});
+  xt::xtensor<double, 2> keff_fixed_src_generation({n, 2});
+
   for (int i = 0; i < n; ++i) {
     double k, k_std;
     if ((settings::run_mode == RunMode::FIXED_SOURCE &&
@@ -912,6 +977,17 @@ void write_eigenvalue_hdf5(hid_t group)
 
       ks_generation(i, 0) = simulation::ks_generation[i][0];
       ks_generation(i, 1) = simulation::ks_generation[i][1];
+
+      if (i < simulation::keff_fixed_src_generation.size() &&
+          i >= simulation::n_keff_fixed_src_skip) {
+        keff_fixed_src_generation(i, 0) =
+          simulation::keff_fixed_src_generation[i][0];
+        keff_fixed_src_generation(i, 1) =
+          simulation::keff_fixed_src_generation[i][1];
+      } else {
+        keff_fixed_src_generation(i, 0) = 0.0;
+        keff_fixed_src_generation(i, 1) = 0.0;
+      }
     } else {
       k = simulation::k_generation[i][0];
       k_std = simulation::k_generation[i][1];
@@ -969,6 +1045,13 @@ void write_eigenvalue_hdf5(hid_t group)
     openmc_get_ks(ks_combined.data(), k_combined.data(), kq_combined.data());
     write_dataset(group, "ks_generation", ks_generation);
     write_dataset(group, "ks_combined", ks_combined);
+
+    write_dataset(
+      group, "keff_fixed_src_generation", keff_fixed_src_generation);
+
+    array<double, 2> keff_fixed_src_combined = {
+      simulation::keff_fixed_src, simulation::keff_fixed_src_std};
+    write_dataset(group, "keff_fixed_src_combined", keff_fixed_src_combined);
   }
 }
 

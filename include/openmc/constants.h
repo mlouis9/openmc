@@ -370,7 +370,7 @@ enum class RunMode {
 };
 
 // Eigenvalue calculation parameters
-enum class KType { k, kq, ks };
+enum class KType { k, kq, ks, mG, RG, keff_fixed_src };
 
 enum class SolverType { MONTE_CARLO, RANDOM_RAY };
 

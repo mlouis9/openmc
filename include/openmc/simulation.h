@@ -42,8 +42,22 @@ extern "C" double kq_std; //!< standard deviation of average kq, used for
                           //!< subcritical multiplication problems
 extern "C" double
   ks; //!< average ks over batches, used for subcritical multiplication problems
-extern "C" double ks_std;    //!< standard deviation of average ks, used for
-                             //!< subcritical multiplication problems
+extern "C" double ks_std; //!< standard deviation of average ks, used for
+                          //!< subcritical multiplication problems
+extern "C" double
+  mG; //!< average mG over batches, used for subcritical multiplication problems
+extern "C" double mG_std; //!< standard deviation of average mG, used for
+                          //!< subcritical multiplication problems
+extern "C" double
+  RG; //!< average RG over batches, used for subcritical multiplication problems
+extern "C" double RG_std; //!< standard deviation of average RG, used for
+                          //!< subcritical multiplication problems
+extern "C" double
+  keff_fixed_src; //!< average keff over batches for fixed source problems, used
+                  //!< for subcritical multiplication problems
+extern "C" double keff_fixed_src_std; //!< standard deviation of average keff
+                                      //!< for fixed source problems, used for
+                                      //!< subcritical multiplication problems
 extern "C" double k_col_abs; //!< sum over batches of k_collision * k_absorption
 extern "C" double
   k_col_tra; //!< sum over batches of k_collision * k_tracklength
@@ -70,6 +84,9 @@ extern const RegularMesh* ufs_mesh;
 extern vector<array<double, 2>> k_generation;
 extern vector<array<double, 2>> kq_generation;
 extern vector<array<double, 2>> ks_generation;
+extern vector<array<double, 2>> mG_generation;
+extern vector<array<double, 2>> RG_generation;
+extern vector<array<double, 2>> keff_fixed_src_generation;
 extern vector<int64_t> work_index;
 
 enum class KEstimator : int {
@@ -88,6 +105,7 @@ extern std::array<double, 3> kq_combined_weights;
 
 extern vector<int64_t> n_external_source_gen;
 extern int64_t global_tally_external_source;
+extern int n_keff_fixed_src_skip;
 
 } // namespace simulation
 

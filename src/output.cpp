@@ -438,6 +438,12 @@ void print_generation()
       simulation::kq * scale_factor, simulation::kq_std * scale_factor);
     print_generation_values(
       idx, n, spaces + "ks:", ks_gen, simulation::ks, simulation::ks_std);
+
+    // Print keff estimate
+    array<double, 2> keff_fixed_src_gen;
+    keff_fixed_src_gen = simulation::keff_fixed_src_generation[idx];
+    print_generation_values(idx, n, spaces + "keff:", keff_fixed_src_gen,
+      simulation::keff_fixed_src, simulation::keff_fixed_src_std);
   } else {
     print_generation_values(idx, n, batch_and_gen, k_gen, k, k_std);
   }
@@ -457,7 +463,7 @@ void print_generation_values(int idx, int n, std::string batch_and_gen,
   }
   fmt::print("\n");
   if (settings::print_all_k_factors &&
-      batch_and_gen.find("ks:") != std::string::npos) {
+      batch_and_gen.find("keff:") != std::string::npos) {
     if (simulation::current_batch != settings::n_batches) {
       if (n >= 1) {
         fmt::print(

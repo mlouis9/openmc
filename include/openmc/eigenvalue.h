@@ -24,9 +24,19 @@ namespace simulation {
 extern array<double, 2>
   k_generation_val; //!<  Single-generation k on each processor
 extern array<double, 2>
-  kq_generation_val;           //!<  Single-generation kq on each processor
-extern array<double, 2> k_sum; //!< Used to reduce sum and sum_sq
+  kq_generation_val; //!<  Single-generation kq on each processor
+extern array<double, 2>
+  mG_generation_val; //!< Single-generation mG on each processor
+extern array<double, 2>
+  RG_generation_val; //!< Single-generation RG on each processor
+extern array<double, 2>
+  keff_fixed_src_generation_val; //!< Single-generation keff for fixed source
+                                 //!< problems on each processor
+extern array<double, 2> k_sum;   //!< Used to reduce sum and sum_sq
 extern array<double, 2> kq_sum;
+extern array<double, 2> mG_sum;
+extern array<double, 2> RG_sum;
+extern array<double, 2> keff_fixed_src_sum;
 extern vector<double> entropy; //!< Shannon entropy at each generation
 extern xt::xtensor<double, 1> source_frac; //!< Source fraction for UFS
 
@@ -47,6 +57,8 @@ void calculate_generation_k(KType type);
 
 std::pair<double, double> convert_m_to_k(double m, double m_std);
 std::pair<double, double> convert_k_to_m(double k, double k_std);
+std::pair<double, double> calculate_keff_fixed_src(
+  double mG, double mG_std, double RG, double RG_std);
 
 //! Calculate mean/standard deviation of keff during active generations
 //!

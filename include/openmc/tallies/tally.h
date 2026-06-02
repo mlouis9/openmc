@@ -225,6 +225,12 @@ extern xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
 //! Global tallies for first generation (for subcritical multiplication)
 extern xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
   global_tallies_first_gen;
+//! Global tallies for G-1 generation (for fixed source keff estimate)
+extern xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
+  global_tallies_G_minus_1_gen;
+//! Global tallies for >= G generation (for fixed source keff estimate)
+extern xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
+  global_tallies_geq_G_gen;
 
 //! Number of realizations for global tallies
 extern "C" int32_t n_realizations;
@@ -240,6 +246,16 @@ extern double global_tally_absorption_first_gen;
 extern double global_tally_collision_first_gen;
 extern double global_tally_tracklength_first_gen;
 extern double global_tally_tracklength_sq_first_gen;
+
+extern double global_tally_absorption_G_minus_1_gen;
+extern double global_tally_collision_G_minus_1_gen;
+extern double global_tally_tracklength_G_minus_1_gen;
+extern double global_tally_tracklength_sq_G_minus_1_gen;
+
+extern double global_tally_absorption_geq_G_gen;
+extern double global_tally_collision_geq_G_gen;
+extern double global_tally_tracklength_geq_G_gen;
+extern double global_tally_tracklength_sq_geq_G_gen;
 
 //==============================================================================
 // Non-member functions

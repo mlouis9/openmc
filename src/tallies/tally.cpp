@@ -72,6 +72,10 @@ namespace simulation {
 xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>> global_tallies;
 xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
   global_tallies_first_gen;
+xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
+  global_tallies_G_minus_1_gen;
+xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
+  global_tallies_geq_G_gen;
 int32_t n_realizations {0};
 } // namespace simulation
 
@@ -86,6 +90,18 @@ double global_tally_absorption_first_gen;
 double global_tally_collision_first_gen;
 double global_tally_tracklength_first_gen;
 double global_tally_tracklength_sq_first_gen;
+
+// Tallies for G-1 generation quantities
+double global_tally_absorption_G_minus_1_gen;
+double global_tally_collision_G_minus_1_gen;
+double global_tally_tracklength_G_minus_1_gen;
+double global_tally_tracklength_sq_G_minus_1_gen;
+
+// Tallies for >= G generation quantities
+double global_tally_absorption_geq_G_gen;
+double global_tally_collision_geq_G_gen;
+double global_tally_tracklength_geq_G_gen;
+double global_tally_tracklength_sq_geq_G_gen;
 
 //==============================================================================
 // Tally object implementation

@@ -125,6 +125,9 @@ int openmc_simulation_init()
   simulation::k_generation.clear();
   simulation::kq_generation.clear();
   simulation::ks_generation.clear();
+  simulation::mG_generation.clear();
+  simulation::RG_generation.clear();
+  simulation::keff_fixed_src_generation.clear();
   simulation::n_external_source_gen.clear();
   simulation::global_tally_external_source = 0;
   simulation::entropy.clear();
@@ -324,6 +327,12 @@ double kq;
 double kq_std;
 double ks;
 double ks_std;
+double mG;
+double mG_std;
+double RG;
+double RG_std;
+double keff_fixed_src;
+double keff_fixed_src_std;
 double k_col_abs {0.0};
 double k_col_tra {0.0};
 double k_abs_tra {0.0};
@@ -346,6 +355,9 @@ const RegularMesh* ufs_mesh {nullptr};
 vector<array<double, 2>> k_generation;
 vector<array<double, 2>> kq_generation;
 vector<array<double, 2>> ks_generation;
+vector<array<double, 2>> mG_generation;
+vector<array<double, 2>> RG_generation;
+vector<array<double, 2>> keff_fixed_src_generation;
 vector<int64_t> work_index;
 
 // k estimator × kq estimator products
@@ -359,6 +371,11 @@ std::array<double, 3> kq_combined_weights;
 // Subcritical multiplication mode external source particle count
 vector<int64_t> n_external_source_gen;
 int64_t global_tally_external_source;
+
+// Generation G for k estimates in fixed source, subcritical mode
+int G {0};
+int n_keff_fixed_src_skip {
+  0}; // Number of active batches skipped in keff_fixed_src averaging
 
 } // namespace simulation
 
@@ -570,6 +587,15 @@ void initialize_generation()
     simulation::kq_generation_val = {
       gt_first_gen(GlobalTally::K_TRACKLENGTH, TallyResult::VALUE),
       gt_first_gen(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE)};
+
+    auto& gt_G_minus_1 = simulation::global_tallies_G_minus_1_gen;
+    auto& gt_geq_G = simulation::global_tallies_geq_G_gen;
+    simulation::mG_generation_val = {
+      gt_G_minus_1(GlobalTally::K_TRACKLENGTH, TallyResult::VALUE),
+      gt_G_minus_1(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE)};
+    simulation::RG_generation_val = {
+      gt_geq_G(GlobalTally::K_TRACKLENGTH, TallyResult::VALUE),
+      gt_geq_G(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE)};
   }
 }
 
@@ -611,6 +637,28 @@ void finalize_generation()
       global_tally_tracklength_first_gen;
     gt_first_gen(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE) +=
       global_tally_tracklength_sq_first_gen;
+
+    // Update generation G-1 tallies
+    auto& gt_G_minus_1 = simulation::global_tallies_G_minus_1_gen;
+    gt_G_minus_1(GlobalTally::K_ABSORPTION, TallyResult::VALUE) +=
+      global_tally_absorption_G_minus_1_gen;
+    gt_G_minus_1(GlobalTally::K_COLLISION, TallyResult::VALUE) +=
+      global_tally_collision_G_minus_1_gen;
+    gt_G_minus_1(GlobalTally::K_TRACKLENGTH, TallyResult::VALUE) +=
+      global_tally_tracklength_G_minus_1_gen;
+    gt_G_minus_1(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE) +=
+      global_tally_tracklength_sq_G_minus_1_gen;
+
+    // Update generation >= G tallies
+    auto& gt_geq_G = simulation::global_tallies_geq_G_gen;
+    gt_geq_G(GlobalTally::K_ABSORPTION, TallyResult::VALUE) +=
+      global_tally_absorption_geq_G_gen;
+    gt_geq_G(GlobalTally::K_COLLISION, TallyResult::VALUE) +=
+      global_tally_collision_geq_G_gen;
+    gt_geq_G(GlobalTally::K_TRACKLENGTH, TallyResult::VALUE) +=
+      global_tally_tracklength_geq_G_gen;
+    gt_geq_G(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE) +=
+      global_tally_tracklength_sq_geq_G_gen;
   }
   gt(GlobalTally::LEAKAGE, TallyResult::VALUE) += global_tally_leakage;
 
@@ -630,6 +678,16 @@ void finalize_generation()
     global_tally_collision_first_gen = 0.0;
     global_tally_tracklength_first_gen = 0.0;
     global_tally_tracklength_sq_first_gen = 0.0;
+
+    global_tally_absorption_G_minus_1_gen = 0.0;
+    global_tally_collision_G_minus_1_gen = 0.0;
+    global_tally_tracklength_G_minus_1_gen = 0.0;
+    global_tally_tracklength_sq_G_minus_1_gen = 0.0;
+
+    global_tally_absorption_geq_G_gen = 0.0;
+    global_tally_collision_geq_G_gen = 0.0;
+    global_tally_tracklength_geq_G_gen = 0.0;
+    global_tally_tracklength_sq_geq_G_gen = 0.0;
   }
   global_tally_leakage = 0.0;
 
@@ -668,6 +726,20 @@ void finalize_generation()
       calculate_average_k(KType::kq);
       calculate_generation_k(KType::ks);
       calculate_average_k(KType::ks);
+      calculate_generation_k(KType::mG);
+      calculate_generation_k(KType::RG);
+      calculate_generation_k(KType::keff_fixed_src);
+      fmt::print("G = {}\n", simulation::G);
+      double keff_gen = simulation::keff_fixed_src_generation.back()[0];
+      if (keff_gen != 0.0 &&
+          keff_gen !=
+            1.0) { // Skip trivial estimates from trivial RG, mG tallies
+        calculate_average_k(KType::RG);
+        calculate_average_k(KType::mG);
+        calculate_average_k(KType::keff_fixed_src);
+      } else {
+        simulation::n_keff_fixed_src_skip += 1;
+      }
     }
 
     simulation::k_old = simulation::k_current;
@@ -691,6 +763,7 @@ void initialize_history(Particle& p, int64_t index_source)
                    settings::n_particles +
                  simulation::work_index[mpi::rank] + index_source;
     uint64_t seed = init_seed(id, STREAM_SOURCE);
+    simulation::G = settings::n_inactive > 0 ? settings::n_inactive + 1 : 10;
     if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
       double rnd = prn(&seed);
       double k_avg = 0.0;
@@ -973,14 +1046,53 @@ void free_memory_simulation()
   simulation::entropy.clear();
 }
 
+void accumulate_generation_k_estimators(
+  bool& tally_first_generation, bool& tally_geq_G_gen, Particle& p)
+{
+  if (tally_first_generation && p.generation_tag() == 0) {
+    // Protect global updates with atomic to prevent data races
+#pragma omp atomic
+    global_tally_absorption_first_gen += p.keff_tally_absorption();
+#pragma omp atomic
+    global_tally_collision_first_gen += p.keff_tally_collision();
+#pragma omp atomic
+    global_tally_tracklength_first_gen += p.keff_tally_tracklength();
+#pragma omp atomic
+    global_tally_tracklength_sq_first_gen +=
+      std::pow(p.keff_tally_tracklength(), 2);
+    tally_first_generation = false;
+  } else if (p.generation_tag() == simulation::G - 1) {
+#pragma omp atomic
+    global_tally_absorption_G_minus_1_gen += p.keff_tally_absorption();
+#pragma omp atomic
+    global_tally_collision_G_minus_1_gen += p.keff_tally_collision();
+#pragma omp atomic
+    global_tally_tracklength_G_minus_1_gen += p.keff_tally_tracklength();
+#pragma omp atomic
+    global_tally_tracklength_sq_G_minus_1_gen +=
+      std::pow(p.keff_tally_tracklength(), 2);
+  } else if (p.generation_tag() >= simulation::G) {
+#pragma omp atomic
+    global_tally_absorption_geq_G_gen += p.keff_tally_absorption();
+#pragma omp atomic
+    global_tally_collision_geq_G_gen += p.keff_tally_collision();
+#pragma omp atomic
+    global_tally_tracklength_geq_G_gen += p.keff_tally_tracklength();
+#pragma omp atomic
+    global_tally_tracklength_sq_geq_G_gen +=
+      std::pow(p.keff_tally_tracklength(), 2);
+    tally_geq_G_gen = true;
+  }
+}
+
 void transport_history_based_single_particle(Particle& p)
 {
-  bool tally_first_generation =
+  bool tally_first_generation = true;
+  bool tally_geq_G_gen = false;
+  bool accumulate_subcritical_tallies =
     ((settings::run_mode == RunMode::FIXED_SOURCE &&
        settings::calculate_subcritical_k) ||
-      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION)
-      ? true
-      : false;
+      settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION);
   while (p.alive()) {
     p.event_calculate_xs();
     if (p.alive()) {
@@ -993,27 +1105,18 @@ void transport_history_based_single_particle(Particle& p)
         p.event_collide();
       }
     }
-    // Check for first generation completion
-    if (!p.alive() && tally_first_generation && p.generation_tag() == 0) {
-      if (settings::calculate_subcritical_k ||
-          settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
-        // Protect global updates with atomic to prevent data races
-#pragma omp atomic
-        global_tally_absorption_first_gen += p.keff_tally_absorption();
-#pragma omp atomic
-        global_tally_collision_first_gen += p.keff_tally_collision();
-#pragma omp atomic
-        global_tally_tracklength_first_gen += p.keff_tally_tracklength();
-#pragma omp atomic
-        global_tally_tracklength_sq_first_gen +=
-          std::pow(p.keff_tally_tracklength(), 2);
-      }
-      tally_first_generation = false;
+    // Check for particle death (generation completion)
+    if (!p.alive() && accumulate_subcritical_tallies) {
+      accumulate_generation_k_estimators(
+        tally_first_generation, tally_geq_G_gen, p);
     }
-    if (!tally_first_generation) {
+    if (!tally_first_generation && accumulate_subcritical_tallies) {
       p.event_revive_from_secondary();
     }
   }
+  //   if (tally_geq_G_gen) {
+  //     global_tally_tracklength_sq_geq_G_gen += std::pow(history_sum, 2);
+  //   }
   p.event_death();
 }
 

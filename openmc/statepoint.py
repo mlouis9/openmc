@@ -88,6 +88,10 @@ class StatePoint:
     keff : uncertainties.UFloat
         Combined estimator for k-effective
         .. versionadded:: 0.13.1
+    keff_fixed_src_generation : numpy.ndarray
+        Estimate of fixed-source mode k-effective for each batch/generation
+    keff_fixed_src : uncertainties.UFloat
+        Combined estimator for fixed-source mode k-effective
     kq : uncertainties.UFloat
         Combined estimator for kq
     ks : uncertainaties.UFloat
@@ -324,6 +328,30 @@ class StatePoint:
                 return uarray(arr[:,0],arr[:,1])
             else:
                 raise ValueError(f'ks_generation shape ({arr.shape}) must be either 1d or 2d')
+        else:
+            return None
+
+    @property
+    def keff_fixed_src_generation(self):
+        """Estimate of fixed-source mode k-effective for each batch/generation."""
+        if 'keff_fixed_src_generation' in self._f:
+            arr = self._f['keff_fixed_src_generation'][()]
+            if arr.ndim == 1:
+                return arr
+            elif arr.ndim == 2:
+                return uarray(arr[:, 0], arr[:, 1])
+            else:
+                raise ValueError(
+                    f'keff_fixed_src_generation shape ({arr.shape}) must be either 1d or 2d'
+                )
+        else:
+            return None
+
+    @property
+    def keff_fixed_src(self):
+        """Combined estimator for fixed-source mode k-effective."""
+        if 'keff_fixed_src_combined' in self._f:
+            return ufloat(*self._f['keff_fixed_src_combined'][()])
         else:
             return None
     

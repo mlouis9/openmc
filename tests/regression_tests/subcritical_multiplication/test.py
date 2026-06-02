@@ -9,7 +9,8 @@ import pytest
 from openmc.examples import slab_mg
 import os
 import glob
-    
+import shutil # Added for handling multiple gold files
+
 from tests.testing_harness import PyAPITestHarness
 
 
@@ -19,75 +20,69 @@ class MGXSTestHarness(PyAPITestHarness):
         f = 'mgxs.h5'
         if os.path.exists(f):
             os.remove(f)
+
     def _get_results(self, hash_output=False):
         outstr = super()._get_results(hash_output=hash_output)
-        # Read the statepoint file.
         statepoint = glob.glob(self._sp_name)[0]
+        
         with openmc.StatePoint(statepoint) as sp:
-            # Write out multiplication.
             outstr += 'multiplication:\n'
             form = '{0:12.6E} {1:12.6E}\n'
             M = sp.multiplication
             outstr += form.format(M.n, M.s)
 
-            # Write out k
             outstr += 'k\n'
-            form = '{0:12.6E} {1:12.6E}\n'
             k = sp.keff
             outstr += form.format(k.n, k.s)
 
-            # Write out k_generation
             outstr += 'k_generation:\n'
-            form = '{0:12.6E} {1:12.6E}\n'
             k_gen = sp.k_generation
             for kg in k_gen:
                 outstr += form.format(kg.n, kg.s)
 
-            # Write out ks
             outstr += 'ks:\n'
-            form = '{0:12.6E} {1:12.6E}\n'
             ks = sp.ks
             outstr += form.format(ks.n, ks.s)   
 
-            # Write out ks_generation
             outstr += 'ks_generation:\n'
-            form = '{0:12.6E} {1:12.6E}\n'
             ks_gen = sp.ks_generation
             for ksg in ks_gen:
                 outstr += form.format(ksg.n, ksg.s)
 
-            # Write out kq.
             outstr += 'kq:\n'
-            form = '{0:12.6E} {1:12.6E}\n'
             kq = sp.kq
             outstr += form.format(kq.n, kq.s) 
 
-            # Write out kq_generation
             outstr += 'kq_generation:\n'
-            form = '{0:12.6E} {1:12.6E}\n'
             kq_gen = sp.kq_generation
             for kqg in kq_gen:
-                outstr += form.format(kqg.n, kqg.s)           
+                outstr += form.format(kqg.n, kqg.s)
+
+            outstr += 'keff_fixed_src:\n'
+            keff = sp.keff_fixed_src
+            outstr += form.format(keff.n, keff.s)
+            outstr += 'keff_fixed_src_generation:\n'
+            keff_gen = sp.keff_fixed_src_generation
+            for keffg in keff_gen:
+                outstr += form.format(keffg.n, keffg.s)
+                
         return outstr   
-                       
+                        
 
 @pytest.fixture()
 def slab_model():
+    openmc.reset_auto_ids()
     model = slab_mg(mgxslib_name='mgxs.h5')
     right_boundary = model.geometry.get_all_surfaces()[2]
     right_boundary.coefficients['x0'] = 10.0
     
     cell = model.geometry.get_all_cells()[1]
-    
     mat = model.geometry.get_all_materials()[1]
     mat.set_density('macro', 0.01) 
-    ###########################################################################
-    # Create multigroup data
 
-    # Instantiate the energy group data
+    # [Instantiate energy group and multigroup cross-section data...]
     ebins = np.geomspace(1e-5, 20.0e6, 5)
     groups = openmc.mgxs.EnergyGroups(group_edges=ebins)
-
     nusigma_f = np.array([9.6,5.4,5.2,2.5])
     sigma_s = np.array([[0.5,0.5,0.5,0.5],
                         [0.0,1.0,0.5,0.5],
@@ -108,12 +103,10 @@ def slab_model():
     mg_cross_sections_file.add_xsdata(mat_data)
     mg_cross_sections_file.export_to_hdf5()
 
-    # Settings
+    # Default settings
     model.settings.particles = 100000
     model.settings.inactive = 10
     model.settings.batches = 20
-    model.settings.run_mode = 'subcritical multiplication'
-    model.settings.print_all_k_factors = True
 
     space = openmc.stats.Box([0,-1000,-1000],[10,1000,1000])
     model.settings.source = openmc.IndependentSource(
@@ -122,6 +115,45 @@ def slab_model():
     return model
 
 
-def test_multiplication(slab_model):
+# Parametrize the test to run both modes with distinct gold file prefixes
+@pytest.mark.parametrize("run_mode, prefix", [
+    ("subcritical multiplication", "multiplication"),
+    ("fixed source", "fixed_source")
+])
+def test_slab_modes(slab_model, run_mode, prefix):
+    # 1. Dynamically update the model settings for this iteration
+    slab_model.settings.run_mode = run_mode
+    if run_mode == "fixed source":
+        print("Hey setting calculate subcritical k to True")
+        slab_model.settings.calculate_subcritical_k = True  # Ensure we still calculate k metrics in fixed source mode
+    slab_model.settings.print_all_k_factors = True
+    
     harness = MGXSTestHarness("statepoint.20.h5", model=slab_model)
-    harness.main()
+    
+    # Define our unique mode-specific gold filenames
+    specific_inputs = f"inputs_true_{prefix}.dat"
+    specific_results = f"results_true_{prefix}.dat"
+    
+    # 2. PRE-TEST: Stage the mode-specific files as the default names OpenMC expects
+    if os.path.exists(specific_inputs):
+        shutil.copy(specific_inputs, 'inputs_true.dat')
+    elif os.path.exists('inputs_true.dat'):
+        os.remove('inputs_true.dat')  # Clean out leftover stale files
+        
+    if os.path.exists(specific_results):
+        shutil.copy(specific_results, 'results_true.dat')
+    elif os.path.exists('results_true.dat'):
+        os.remove('results_true.dat')
+
+    try:
+        # 3. RUN: Execute the standard OpenMC harness loop
+        harness.main()
+        
+    finally:
+        # 4. POST-TEST: Clean up and support the `--update` workflow
+        # Move files back to their specific names (captures new runs or updates)
+        if os.path.exists('inputs_true.dat'):
+            shutil.move('inputs_true.dat', specific_inputs)
+            
+        if os.path.exists('results_true.dat'):
+            shutil.move('results_true.dat', specific_results)
