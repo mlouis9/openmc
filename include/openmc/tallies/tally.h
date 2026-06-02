@@ -121,6 +121,8 @@ public:
 
   void accumulate();
 
+  void accumulate_covariance_k(double k_col, double k_abs, double k_tra);
+
   //! return the index of a score specified by name
   int score_index(const std::string& score) const;
 
@@ -177,6 +179,10 @@ public:
   vector<Trigger> triggers_;
 
   int deriv_ {C_NONE}; //!< Index of a TallyDerivative object for diff tallies.
+
+  xt::xtensor<double, 2> sum_cross_k_col_;
+  xt::xtensor<double, 2> sum_cross_k_abs_;
+  xt::xtensor<double, 2> sum_cross_k_tra_;
 
 private:
   //----------------------------------------------------------------------------

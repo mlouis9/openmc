@@ -835,6 +835,12 @@ void Tally::init_results()
   } else {
     results_ = xt::empty<double>({n_filter_bins_, n_scores, 3});
   }
+
+  if (settings::tally_covariance_with_k) {
+    sum_cross_k_col_ = xt::zeros<double>({n_filter_bins_, n_scores});
+    sum_cross_k_abs_ = xt::zeros<double>({n_filter_bins_, n_scores});
+    sum_cross_k_tra_ = xt::zeros<double>({n_filter_bins_, n_scores});
+  }
 }
 
 void Tally::reset()
@@ -842,6 +848,14 @@ void Tally::reset()
   n_realizations_ = 0;
   if (results_.size() != 0) {
     xt::view(results_, xt::all()) = 0.0;
+  }
+  if (settings::tally_covariance_with_k) {
+    if (sum_cross_k_col_.size())
+      sum_cross_k_col_.fill(0.0);
+    if (sum_cross_k_abs_.size())
+      sum_cross_k_abs_.fill(0.0);
+    if (sum_cross_k_tra_.size())
+      sum_cross_k_tra_.fill(0.0);
   }
 }
 
@@ -900,6 +914,46 @@ void Tally::accumulate()
           results_(i, j, TallyResult::SUM_SQ) += val * val;
         }
       }
+    }
+  }
+}
+
+void Tally::accumulate_covariance_k(double k_col, double k_abs, double k_tra)
+{
+  if (!settings::tally_covariance_with_k)
+    return;
+
+  if (!(mpi::master || !settings::reduce_tallies))
+    return;
+
+  // Calculate total source strength for normalization
+  double total_source = 0.0;
+  if (settings::run_mode == RunMode::FIXED_SOURCE) {
+    total_source = model::external_sources_probability.integral();
+  } else {
+    total_source = 1.0;
+  }
+
+  // Determine number of particles contributing to tally
+  double contributing_particles = settings::reduce_tallies
+                                    ? settings::n_particles
+                                    : simulation::work_per_rank;
+
+  // Account for number of source particles in normalization
+  double norm =
+    total_source / (contributing_particles * settings::gen_per_batch);
+
+  if (settings::solver_type == SolverType::RANDOM_RAY) {
+    norm = 1.0;
+  }
+
+#pragma omp parallel for
+  for (int i = 0; i < results_.shape()[0]; ++i) {
+    for (int j = 0; j < results_.shape()[1]; ++j) {
+      double val = results_(i, j, TallyResult::VALUE) * norm;
+      sum_cross_k_col_(i, j) += val * k_col;
+      sum_cross_k_abs_(i, j) += val * k_abs;
+      sum_cross_k_tra_(i, j) += val * k_tra;
     }
   }
 }
@@ -1124,8 +1178,8 @@ void accumulate_tallies()
     }
 
     // Accumulate results for global tallies
-    double k_vals[3];
-    double kq_vals[3];
+    double k_vals[3] {0.0, 0.0, 0.0};
+    double kq_vals[3] {0.0, 0.0, 0.0};
     for (int i = 0; i < N_GLOBAL_TALLIES; ++i) {
       double val = gt(i, TallyResult::VALUE) / simulation::total_weight;
       if (i < 3) {
@@ -1173,12 +1227,15 @@ void accumulate_tallies()
         simulation::k_kq_products[i][j] += k_vals[i] * kq_vals[j];
       }
     }
-  }
 
-  // Accumulate results for each tally
-  for (int i_tally : model::active_tallies) {
-    auto& tally {model::tallies[i_tally]};
-    tally->accumulate();
+    // Accumulate results for each tally
+    for (int i_tally : model::active_tallies) {
+      auto& tally {model::tallies[i_tally]};
+      if (settings::tally_covariance_with_k) {
+        tally->accumulate_covariance_k(k_col, k_abs, k_tra);
+      }
+      tally->accumulate();
+    }
   }
 }
 

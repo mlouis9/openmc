@@ -1007,16 +1007,74 @@ void write_eigenvalue_hdf5(hid_t group)
     write_dataset(group, "k_abs_tra", simulation::k_abs_tra);
   }
 
+  int64_t n_real = simulation::n_realizations;
+
+  // Grab the average and variance for Collision, Absorption, and Tracklength
+  // (Using the exact same logic found inside get_combined_k_from_tallies)
+  std::array<double, 2> k_col = {
+    simulation::global_tallies(GlobalTally::K_COLLISION, TallyResult::SUM) /
+      n_real,
+    std::sqrt(
+      (simulation::global_tallies(
+         GlobalTally::K_COLLISION, TallyResult::SUM_SQ) -
+        n_real * std::pow(simulation::global_tallies(
+                            GlobalTally::K_COLLISION, TallyResult::SUM) /
+                            n_real,
+                   2)) /
+      (n_real - 1)) /
+      std::sqrt(n_real)};
+
+  std::array<double, 2> k_abs = {
+    simulation::global_tallies(GlobalTally::K_ABSORPTION, TallyResult::SUM) /
+      n_real,
+    std::sqrt(
+      (simulation::global_tallies(
+         GlobalTally::K_ABSORPTION, TallyResult::SUM_SQ) -
+        n_real * std::pow(simulation::global_tallies(
+                            GlobalTally::K_ABSORPTION, TallyResult::SUM) /
+                            n_real,
+                   2)) /
+      (n_real - 1)) /
+      std::sqrt(n_real)};
+
+  std::array<double, 2> k_tra = {
+    simulation::global_tallies(GlobalTally::K_TRACKLENGTH, TallyResult::SUM) /
+      n_real,
+    std::sqrt(
+      (simulation::global_tallies(
+         GlobalTally::K_TRACKLENGTH, TallyResult::SUM_SQ) -
+        n_real * std::pow(simulation::global_tallies(
+                            GlobalTally::K_TRACKLENGTH, TallyResult::SUM) /
+                            n_real,
+                   2)) /
+      (n_real - 1)) /
+      std::sqrt(n_real)};
+
   // Write k combined
   array<double, 2> k_combined;
   openmc_get_keff(k_combined.data());
+
+  // If running fixed source subcritical, convert raw multipliers (M) to
+  // k-effective
   if (settings::run_mode == RunMode::FIXED_SOURCE &&
       settings::calculate_subcritical_k) {
+
+    // Convert combined
     auto [k0, k1] = convert_m_to_k(k_combined[0], k_combined[1]);
     k_combined[0] = k0;
     k_combined[1] = k1;
+
+    // Convert individual estimators from M to K as well
+    std::tie(k_col[0], k_col[1]) = convert_m_to_k(k_col[0], k_col[1]);
+    std::tie(k_abs[0], k_abs[1]) = convert_m_to_k(k_abs[0], k_abs[1]);
+    std::tie(k_tra[0], k_tra[1]) = convert_m_to_k(k_tra[0], k_tra[1]);
   }
   write_dataset(group, "k_combined", k_combined);
+  write_dataset(group, "k_combined_weights", simulation::k_combined_weights);
+
+  write_dataset(group, "k_collision", k_col);
+  write_dataset(group, "k_absorption", k_abs);
+  write_dataset(group, "k_tracklength", k_tra);
 
   // Write kq combined and ks combined if applicable
   if ((settings::run_mode == RunMode::FIXED_SOURCE &&

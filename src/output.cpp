@@ -784,6 +784,17 @@ void write_tallies()
               tally.n_realizations_);
           fmt::print(tallies_out, "{0:{1}}{2:<36} {3:.6} +/- {4:.6}\n", "",
             indent + 1, score_name, mean, t_value * stdev);
+          if (settings::tally_covariance_with_k &&
+              tally.sum_cross_k_col_.size() > 0) {
+            fmt::print(tallies_out, "{0:{1}}Covariance with k-estimates:\n", "",
+              indent + 2);
+            fmt::print(tallies_out,
+              "{0:{1}}col={4:.6e}, abs={5:.6e}, tra={6:.6e}\n", "", indent + 3,
+              filter_index, score_index,
+              tally.sum_cross_k_col_(filter_index, score_index),
+              tally.sum_cross_k_abs_(filter_index, score_index),
+              tally.sum_cross_k_tra_(filter_index, score_index));
+          }
           score_index += 1;
         }
         indent -= 2;

@@ -20,7 +20,7 @@ from ._sparse_compat import lil_array
 from ._xml import clean_indentation, get_elem_list, get_text
 from .mixin import IDManagerMixin
 from .mesh import MeshBase
-
+from uncertainties import UFloat
 
 # The tally arithmetic product types. The tensor product performs the full
 # cross product of the data in two tallies with respect to a specified axis
@@ -165,6 +165,11 @@ class Tally(IDManagerMixin):
         self._with_batch_statistics = False
         self._derived = False
         self._sparse = False
+
+        # Covariance tallies with k estimates
+        self._sum_cross_k_col = None
+        self._sum_cross_k_abs = None
+        self._sum_cross_k_tra = None
 
         self._sp_filename = None
         self._results_read = False
@@ -459,6 +464,22 @@ class Tally(IDManagerMixin):
                 # Set the additional data for this Tally
                 self._sum_third = sum_third
                 self._sum_fourth = sum_fourth
+
+            # Read covariance tallies if present
+            if "covariance" in group:
+                cov_group = group["covariance"]
+                if "sum_cross_k_col" in cov_group:
+                    cov_col = cov_group["sum_cross_k_col"][()]
+                    cov_abs = cov_group["sum_cross_k_abs"][()]
+                    cov_tra = cov_group["sum_cross_k_tra"][()]
+                    
+                    # Reshape to (n_filter_bins, n_scores*n_nuclides)
+                    self._sum_cross_k_col = np.reshape(cov_col, 
+                        (self.num_filter_bins, self.num_nuclides * self.num_scores))
+                    self._sum_cross_k_abs = np.reshape(cov_abs, 
+                        (self.num_filter_bins, self.num_nuclides * self.num_scores))
+                    self._sum_cross_k_tra = np.reshape(cov_tra, 
+                        (self.num_filter_bins, self.num_nuclides * self.num_scores))
 
             # Convert NumPy arrays to SciPy sparse LIL matrices
             if self.sparse:
@@ -1000,6 +1021,17 @@ class Tally(IDManagerMixin):
             if self._std_dev is not None:
                 self._std_dev = lil_array(self._std_dev.flatten(), self._std_dev.shape)
 
+            # Covariance data
+            if self._sum_cross_k_col is not None:
+                self._sum_cross_k_col = lil_array(self._sum_cross_k_col.flatten(), 
+                                                  self._sum_cross_k_col.shape)
+            if self._sum_cross_k_abs is not None:
+                self._sum_cross_k_abs = lil_array(self._sum_cross_k_abs.flatten(), 
+                                                  self._sum_cross_k_abs.shape)
+            if self._sum_cross_k_tra is not None:
+                self._sum_cross_k_tra = lil_array(self._sum_cross_k_tra.flatten(), 
+                                                  self._sum_cross_k_tra.shape)
+            
             self._sparse = True
 
         # Convert SciPy sparse LIL matrices to NumPy arrays
@@ -1016,7 +1048,70 @@ class Tally(IDManagerMixin):
                 self._mean = np.reshape(self._mean.toarray(), self.shape)
             if self._std_dev is not None:
                 self._std_dev = np.reshape(self._std_dev.toarray(), self.shape)
+
+            # Covariance data
+            if self._sum_cross_k_col is not None:
+                self._sum_cross_k_col = np.reshape(self._sum_cross_k_col.toarray(), 
+                    (self.num_filter_bins, self.num_nuclides * self.num_scores))
+            if self._sum_cross_k_abs is not None:
+                self._sum_cross_k_abs = np.reshape(self._sum_cross_k_abs.toarray(), 
+                    (self.num_filter_bins, self.num_nuclides * self.num_scores))
+            if self._sum_cross_k_tra is not None:
+                self._sum_cross_k_tra = np.reshape(self._sum_cross_k_tra.toarray(), 
+                    (self.num_filter_bins, self.num_nuclides * self.num_scores))
+
             self._sparse = False
+
+    @property
+    @ensure_results
+    def sum_cross_k_col(self):
+        if not self._sp_filename or self.derived:
+            return None
+
+        if self.sparse:
+            return np.reshape(self._sum_cross_k_col.toarray(), 
+                            (self.num_filter_bins, self.num_nuclides * self.num_scores))
+        else:
+            return self._sum_cross_k_col
+
+    @sum_cross_k_col.setter
+    def sum_cross_k_col(self, data):
+        cv.check_type('sum_cross_k_col', data, Iterable)
+        self._sum_cross_k_col = data
+
+    @property
+    @ensure_results
+    def sum_cross_k_abs(self):
+        if not self._sp_filename or self.derived:
+            return None
+
+        if self.sparse:
+            return np.reshape(self._sum_cross_k_abs.toarray(), 
+                            (self.num_filter_bins, self.num_nuclides * self.num_scores))
+        else:
+            return self._sum_cross_k_abs
+
+    @sum_cross_k_abs.setter
+    def sum_cross_k_abs(self, data):
+        cv.check_type('sum_cross_k_abs', data, Iterable)
+        self._sum_cross_k_abs = data
+
+    @property
+    @ensure_results
+    def sum_cross_k_tra(self):
+        if not self._sp_filename or self.derived:
+            return None
+
+        if self.sparse:
+            return np.reshape(self._sum_cross_k_tra.toarray(), 
+                            (self.num_filter_bins, self.num_nuclides * self.num_scores))
+        else:
+            return self._sum_cross_k_tra
+
+    @sum_cross_k_tra.setter
+    def sum_cross_k_tra(self, data):
+        cv.check_type('sum_cross_k_tra', data, Iterable)
+        self._sum_cross_k_tra = data
 
     def remove_score(self, score):
         """Remove a score from the tally
@@ -2004,6 +2099,12 @@ class Tally(IDManagerMixin):
         # Append columns with mean, std. dev. for each tally bin
         df['mean'] = self.mean.ravel()
         df['std. dev.'] = self.std_dev.ravel()
+
+        # Append covariance columns if available
+        if self.sum_cross_k_col is not None:
+            df['sum_cross_k_col'] = self.sum_cross_k_col.ravel()
+            df['sum_cross_k_abs'] = self.sum_cross_k_abs.ravel()
+            df['sum_cross_k_tra'] = self.sum_cross_k_tra.ravel()
 
         df = df.dropna(axis=1)
 
@@ -3614,6 +3715,141 @@ class Tally(IDManagerMixin):
         # If original tally was sparse, sparsify the tally average
         tally_avg.sparse = self.sparse
         return tally_avg
+
+    def get_covariance_with_k(self, statepoint, k_estimator='combined'):
+        """Get covariance between tally and k estimate.
+        
+        Covariance is computed as: Cov(T', k) = E[T'*k] - E[T']*E[k]
+        
+        For combined estimator, uses weights from k_combined_weights.
+        
+        Parameters
+        ----------
+        statepoint : openmc.StatePoint
+            StatePoint object containing k estimates
+        k_estimator : {'combined', 'collision', 'absorption', 'tracklength'}
+            Which k estimator to use
+            
+        Returns
+        -------
+        np.ndarray
+            Covariance array reshaped to (n_filter_bins, n_scores*n_nuclides)
+        """
+        cv.check_value('k_estimator', k_estimator, 
+                    {'combined', 'collision', 'absorption', 'tracklength'})
+        
+        n = self.num_realizations
+        tally_mean = self.mean.reshape(self.num_filter_bins, -1)
+        
+        if k_estimator == 'combined':
+            if any(cp is None for cp in [self.sum_cross_k_col, self.sum_cross_k_abs, self.sum_cross_k_tra]):
+                raise ValueError('Covariance data not available for combined estimator')
+            
+            weights = statepoint.k_combined_weights
+            
+            # Compute individual covariances
+            cov_col = self.sum_cross_k_col / n - tally_mean * statepoint.k_col.nominal_value
+            cov_abs = self.sum_cross_k_abs / n - tally_mean * statepoint.k_abs.nominal_value
+            cov_tra = self.sum_cross_k_tra / n - tally_mean * statepoint.k_tra.nominal_value
+            
+            # Combine with weights
+            covariance = (weights['collision'] * cov_col + 
+                        weights['absorption'] * cov_abs + 
+                        weights['tracklength'] * cov_tra)
+            
+        elif k_estimator == 'collision':
+            if self.sum_cross_k_col is None:
+                raise ValueError('Covariance data not available for collision estimator')
+            covariance = self.sum_cross_k_col / n - tally_mean * statepoint.k_col.nominal_value
+            
+        elif k_estimator == 'absorption':
+            if self.sum_cross_k_abs is None:
+                raise ValueError('Covariance data not available for absorption estimator')
+            covariance = self.sum_cross_k_abs / n - tally_mean * statepoint.k_abs.nominal_value
+            
+        else:  # tracklength
+            if self.sum_cross_k_tra is None:
+                raise ValueError('Covariance data not available for tracklength estimator')
+            covariance = self.sum_cross_k_tra / n - tally_mean * statepoint.k_tra.nominal_value
+        
+        return covariance
+
+    def get_scaled_pandas_dataframe(self, statepoint, k_estimator='combined',
+                                    float_format='{:.2e}'):
+        """Build a Pandas DataFrame for scaled tally data with proper uncertainties.
+        
+        Scales tally by M = 1/(1-k) and propagates uncertainties including
+        covariance term.
+        
+        Parameters
+        ----------
+        statepoint : openmc.StatePoint
+            StatePoint object containing k estimates
+        k_estimator : {'combined', 'collision', 'absorption', 'tracklength'}
+            Which k estimator to use
+        float_format : str
+            Format string for floats
+            
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame with scaled mean and standard deviation
+        """
+        if k_estimator == 'combined':
+            k_value = statepoint.keff
+        elif k_estimator == 'collision':
+            k_value = statepoint.k_col
+        elif k_estimator == 'absorption':
+            k_value = statepoint.k_abs
+        elif k_estimator == 'tracklength':
+            k_value = statepoint.k_tra
+        else:
+            cv.check_value('k_estimator', k_estimator, 
+                        {'combined', 'collision', 'absorption', 'tracklength'})
+        
+        try:
+            if isinstance(k_value, UFloat):
+                k_mean = k_value.nominal_value
+                k_std = k_value.std_dev
+            else:
+                k_mean = float(k_value)
+                k_std = 0.0
+        except (ImportError, AttributeError):
+            k_mean = float(k_value)
+            k_std = 0.0
+        
+        if k_mean >= 1.0:
+            raise ValueError(f'k must be < 1.0 for scaling, got {k_mean}')
+        
+        # Start with base dataframe
+        df = self.get_pandas_dataframe(float_format=float_format)
+        
+        # Compute scaled values
+        M = 1.0 / (1.0 - k_mean)
+        scaled_mean = M * self.mean
+        
+        # Variance: Var(T') / (1-k)^2 + T'^2 * Var(k) / (1-k)^4 + 2*T'*Cov(T',k) / (1-k)^3
+        var_T = self.std_dev ** 2
+        var_scaled = (var_T / (1.0 - k_mean)**2 + 
+                    self.mean**2 * k_std**2 / (1.0 - k_mean)**4)
+        
+        # Add covariance term if available
+        if self.sum_cross_k_col is not None:
+            try:
+                cov = self.get_covariance_with_k(statepoint, k_estimator)
+                cov = cov.reshape(self.shape)
+                var_scaled += 2.0 * self.mean * cov / (1.0 - k_mean)**3
+            except ValueError:
+                pass
+        
+        var_scaled = np.maximum(var_scaled, 0.0)
+        scaled_std = np.sqrt(var_scaled)
+        
+        # Replace with scaled values
+        df['mean'] = scaled_mean.ravel()
+        df['std. dev.'] = scaled_std.ravel()
+        
+        return df
 
     def diagonalize_filter(self, new_filter, filter_position=-1):
         """Diagonalize the tally data array along a new axis of filter bins.

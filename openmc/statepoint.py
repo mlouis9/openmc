@@ -73,6 +73,12 @@ class StatePoint:
         Combined estimator for k-effective
 
         .. deprecated:: 0.13.1
+    k_abs : float
+        Absorption estimate of k
+    k_col : float
+        Collision estimate of k
+    k_tra : float
+        Tracklength estimate of k
     k_col_abs : float
         Cross-product of collision and absorption estimates of k-effective
     k_col_tra : float
@@ -86,8 +92,10 @@ class StatePoint:
     ks_generation : numpy.ndarray
         Estimate of ks for each batch/generation
     keff : uncertainties.UFloat
-        Combined estimator for k-effective
+        Combined estimator for k
         .. versionadded:: 0.13.1
+    k_combined_weights : dict
+        Weights used to compute the combined k estimate from tracklength, collision, and absorption estimates
     keff_fixed_src_generation : numpy.ndarray
         Estimate of fixed-source mode k-effective for each batch/generation
     keff_fixed_src : uncertainties.UFloat
@@ -362,6 +370,39 @@ class StatePoint:
         else:
             return None
         
+    @property
+    def k_combined_weights(self):
+        if 'k_combined_weights' in self._f:
+            weights = self._f['k_combined_weights'][()]
+            return {
+                'collision': weights[0],
+                'absorption': weights[1],
+                'tracklength': weights[2]
+            }
+        else:
+            return None
+        
+    @property
+    def k_col(self):
+        if 'k_collision' in self._f:
+            return ufloat(*self._f['k_collision'][()])
+        else:
+            return None
+        
+    @property
+    def k_abs(self):
+        if 'k_absorption' in self._f:
+            return ufloat(*self._f['k_absorption'][()])
+        else:
+            return None
+
+    @property
+    def k_tra(self):
+        if 'k_tracklength' in self._f:
+            return ufloat(*self._f['k_tracklength'][()])
+        else:
+            return None
+
     @property
     def kq(self):
         if 'kq_combined' in self._f:
@@ -897,3 +938,40 @@ class StatePoint:
                 beta_effective = beta_effective[0]
 
         return KineticsParameters(generation_time, beta_effective)
+
+    def get_covariance_with_k(self, tally_id, k_estimator='combined'):
+        """Get covariance between tally and k estimate.
+        
+        Parameters
+        ----------
+        tally_id : int
+            ID of the tally
+        k_estimator : {'combined', 'collision', 'absorption', 'tracklength'}
+            Which k estimator to use
+            
+        Returns
+        -------
+        np.ndarray
+            Covariance array
+        """
+        tally = self.get_tally(id=tally_id)
+        return tally.get_covariance_with_k(self, k_estimator)
+
+    def get_scaled_tally(self, tally_id, k_estimator='combined'):
+        """Get scaled tally with properly propagated uncertainties.
+        
+        Parameters
+        ----------
+        tally_id : int
+            ID of the tally
+        k_estimator : {'combined', 'collision', 'absorption', 'tracklength'}
+            Which k estimator to use
+            
+        Returns
+        -------
+        pandas.DataFrame
+            Scaled tally dataframe
+        """
+        tally = self.get_tally(id=tally_id)
+        df = tally.get_scaled_pandas_dataframe(self, k_estimator)
+        return uarray(df['mean'], df['std. dev.'])

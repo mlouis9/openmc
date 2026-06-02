@@ -284,6 +284,21 @@ extern "C" int openmc_statepoint_write(const char* filename, bool* write_source)
           auto& results = tally->results_;
           write_tally_results(tally_group, results.shape()[0],
             results.shape()[1], results.shape()[2], results.data());
+
+          // Write covariance tallies with k
+          if (settings::tally_covariance_with_k) {
+            if (tally->sum_cross_k_col_.size() > 0) {
+              hid_t cov_group = create_group(tally_group, "covariance");
+              write_dataset(
+                cov_group, "sum_cross_k_col", tally->sum_cross_k_col_);
+              write_dataset(
+                cov_group, "sum_cross_k_abs", tally->sum_cross_k_abs_);
+              write_dataset(
+                cov_group, "sum_cross_k_tra", tally->sum_cross_k_tra_);
+              close_group(cov_group);
+            }
+          }
+
           close_group(tally_group);
         }
       } else {
@@ -527,6 +542,21 @@ extern "C" int openmc_statepoint_load(const char* filename)
             results.shape()[1], results.shape()[2], results.data());
 
           read_dataset(tally_group, "n_realizations", tally->n_realizations_);
+
+          // Read covariance tallies if present
+          if (object_exists(tally_group, "covariance")) {
+            hid_t cov_group = open_group(tally_group, "covariance");
+            if (object_exists(cov_group, "sum_cross_k_col")) {
+              read_dataset(
+                cov_group, "sum_cross_k_col", tally->sum_cross_k_col_);
+              read_dataset(
+                cov_group, "sum_cross_k_abs", tally->sum_cross_k_abs_);
+              read_dataset(
+                cov_group, "sum_cross_k_tra", tally->sum_cross_k_tra_);
+            }
+            close_group(cov_group);
+          }
+
           close_group(tally_group);
         }
       }
@@ -990,6 +1020,17 @@ void write_tally_results_nr(hid_t file_id)
       auto shape = results_copy.shape();
       write_tally_results(
         tally_group, shape[0], shape[1], shape[2], results_copy.data());
+
+      // Write covariance tallies with k
+      if (settings::tally_covariance_with_k) {
+        if (t->sum_cross_k_col_.size() > 0) {
+          hid_t cov_group = create_group(tally_group, "covariance");
+          write_dataset(cov_group, "sum_cross_k_col", t->sum_cross_k_col_);
+          write_dataset(cov_group, "sum_cross_k_abs", t->sum_cross_k_abs_);
+          write_dataset(cov_group, "sum_cross_k_tra", t->sum_cross_k_tra_);
+          close_group(cov_group);
+        }
+      }
 
       close_group(tally_group);
     } else {

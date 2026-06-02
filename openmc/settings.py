@@ -1440,9 +1440,9 @@ class Settings:
     @tally_covariance_with_k.setter
     def tally_covariance_with_k(self, tally_covariance_with_k: bool):
         cv.check_type('tally covariance with k', tally_covariance_with_k, bool)
-        if not self._run_mode == RunMode.SUBCRITICAL_MULTIPLICATION and (not self._run_mode == RunMode.FIXED_SOURCE or not self._calculate_subcritical_k):
+        if not self._run_mode == RunMode.SUBCRITICAL_MULTIPLICATION:
             raise ValueError("tally_covariance_with_k can only be set when "
-                             "run_mode is 'subcritical multiplication' or 'fixed source' and calculate_subcritical_k is True")
+                             "run_mode is 'subcritical multiplication'")
         self._tally_covariance_with_k = tally_covariance_with_k
 
     def _create_run_mode_subelement(self, root):
