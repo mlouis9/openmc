@@ -729,7 +729,6 @@ void finalize_generation()
       calculate_generation_k(KType::mG);
       calculate_generation_k(KType::RG);
       calculate_generation_k(KType::keff_fixed_src);
-      fmt::print("G = {}\n", simulation::G);
       double keff_gen = simulation::keff_fixed_src_generation.back()[0];
       if (keff_gen != 0.0 &&
           keff_gen !=

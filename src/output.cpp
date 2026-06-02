@@ -604,19 +604,23 @@ void print_results()
   double mean, stdev;
   if (n > 1) {
     if (settings::eigenvalue_like()) {
+      std::string k_label = "k-effective";
+      if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+        k_label = "k";
+      }
       std::tie(mean, stdev) = mean_stdev(&gt(GlobalTally::K_COLLISION, 0), n);
-      fmt::print(" k-effective (Collision)     = {:.5f} +/- {:.5f}\n", mean,
+      fmt::print(" {} (Collision)     = {:.5f} +/- {:.5f}\n", k_label, mean,
         t_n1 * stdev);
       std::tie(mean, stdev) = mean_stdev(&gt(GlobalTally::K_TRACKLENGTH, 0), n);
-      fmt::print(" k-effective (Track-length)  = {:.5f} +/- {:.5f}\n", mean,
+      fmt::print(" {} (Track-length)  = {:.5f} +/- {:.5f}\n", k_label, mean,
         t_n1 * stdev);
       std::tie(mean, stdev) = mean_stdev(&gt(GlobalTally::K_ABSORPTION, 0), n);
-      fmt::print(" k-effective (Absorption)    = {:.5f} +/- {:.5f}\n", mean,
+      fmt::print(" {} (Absorption)    = {:.5f} +/- {:.5f}\n", k_label, mean,
         t_n1 * stdev);
       if (n > 3) {
         double k_combined[2];
         openmc_get_keff(k_combined);
-        fmt::print(" Combined k-effective        = {:.5f} +/- {:.5f}\n",
+        fmt::print(" Combined {}        = {:.5f} +/- {:.5f}\n", k_label,
           k_combined[0], k_combined[1]);
       }
     }
