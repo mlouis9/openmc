@@ -173,6 +173,8 @@ extern bool calculate_subcritical_k;     //!< Calculate subcritical k in fixed
                                          //!< source mode
 extern bool
   print_all_k_factors; //!< Print k-effective for all batches and generations
+extern bool
+  tally_covariance_with_k; //!< Calculate covariance of tallies with k-effective
 extern int
   max_history_splits; //!< maximum number of particle splits for weight windows
 extern int max_secondaries;       //!< maximum number of secondaries in the bank
