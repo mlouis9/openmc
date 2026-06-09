@@ -69,39 +69,36 @@ vector<double> time_grid;
 } // namespace model
 
 namespace simulation {
-xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>> global_tallies;
-xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
-  global_tallies_first_gen;
-xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
-  global_tallies_G_minus_1_gen;
-xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
-  global_tallies_geq_G_gen;
-int32_t n_realizations {0};
-} // namespace simulation
+vector<xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>>
+  global_tallies_by_gen;
+}
+
+vector<double> global_tally_absorption_by_gen;
+vector<double> global_tally_collision_by_gen;
+vector<double> global_tally_tracklength_by_gen;
+vector<double> global_tally_tracklength_sq_by_gen;
+
+void resize_per_generation_tallies(int n_gen)
+{
+  if (simulation::global_tallies_by_gen.size() < n_gen) {
+    simulation::global_tallies_by_gen.resize(n_gen);
+    // zero-initialize newly added entries
+    for (auto& gt : simulation::global_tallies_by_gen) {
+      // xtensor_fixed default-constructs uninitialized; explicitly zero
+      std::fill(gt.begin(), gt.end(), 0.0);
+    }
+  }
+  global_tally_absorption_by_gen.resize(n_gen, 0.0);
+  global_tally_collision_by_gen.resize(n_gen, 0.0);
+  global_tally_tracklength_by_gen.resize(n_gen, 0.0);
+  global_tally_tracklength_sq_by_gen.resize(n_gen, 0.0);
+}
 
 double global_tally_absorption;
 double global_tally_collision;
 double global_tally_tracklength;
 double global_tally_tracklength_sq;
 double global_tally_leakage;
-
-// Tallies for first generation quantities
-double global_tally_absorption_first_gen;
-double global_tally_collision_first_gen;
-double global_tally_tracklength_first_gen;
-double global_tally_tracklength_sq_first_gen;
-
-// Tallies for G-1 generation quantities
-double global_tally_absorption_G_minus_1_gen;
-double global_tally_collision_G_minus_1_gen;
-double global_tally_tracklength_G_minus_1_gen;
-double global_tally_tracklength_sq_G_minus_1_gen;
-
-// Tallies for >= G generation quantities
-double global_tally_absorption_geq_G_gen;
-double global_tally_collision_geq_G_gen;
-double global_tally_tracklength_geq_G_gen;
-double global_tally_tracklength_sq_geq_G_gen;
 
 //==============================================================================
 // Tally object implementation
@@ -1194,7 +1191,7 @@ void accumulate_tallies()
     if ((settings::run_mode == RunMode::FIXED_SOURCE &&
           settings::calculate_subcritical_k) ||
         settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
-      auto& gt_first_gen = simulation::global_tallies_first_gen;
+      auto& gt_first_gen = simulation::global_tallies_by_gen[0];
       if (mpi::master || !settings::reduce_tallies) {
         if (mpi::master || !settings::reduce_tallies) {
           // Accumulate products of different estimators of k

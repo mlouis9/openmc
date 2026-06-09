@@ -228,15 +228,8 @@ namespace simulation {
 //! Global tallies (such as k-effective estimators)
 extern xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
   global_tallies;
-//! Global tallies for first generation (for subcritical multiplication)
-extern xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
-  global_tallies_first_gen;
-//! Global tallies for G-1 generation (for fixed source keff estimate)
-extern xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
-  global_tallies_G_minus_1_gen;
-//! Global tallies for >= G generation (for fixed source keff estimate)
-extern xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>
-  global_tallies_geq_G_gen;
+extern vector<xt::xtensor_fixed<double, xt::xshape<N_GLOBAL_TALLIES, 3>>>
+  global_tallies_by_gen;
 
 //! Number of realizations for global tallies
 extern "C" int32_t n_realizations;
@@ -248,20 +241,11 @@ extern double global_tally_tracklength;
 extern double global_tally_tracklength_sq;
 extern double global_tally_leakage;
 
-extern double global_tally_absorption_first_gen;
-extern double global_tally_collision_first_gen;
-extern double global_tally_tracklength_first_gen;
-extern double global_tally_tracklength_sq_first_gen;
-
-extern double global_tally_absorption_G_minus_1_gen;
-extern double global_tally_collision_G_minus_1_gen;
-extern double global_tally_tracklength_G_minus_1_gen;
-extern double global_tally_tracklength_sq_G_minus_1_gen;
-
-extern double global_tally_absorption_geq_G_gen;
-extern double global_tally_collision_geq_G_gen;
-extern double global_tally_tracklength_geq_G_gen;
-extern double global_tally_tracklength_sq_geq_G_gen;
+// Per-generation accumulators (indexed by generation tag)
+extern vector<double> global_tally_absorption_by_gen;
+extern vector<double> global_tally_collision_by_gen;
+extern vector<double> global_tally_tracklength_by_gen;
+extern vector<double> global_tally_tracklength_sq_by_gen;
 
 //==============================================================================
 // Non-member functions
@@ -300,6 +284,9 @@ void reduce_tally_results();
 #endif
 
 void free_memory_tally();
+
+//! Ensure per-generation tally vectors are sized to at least `n_gen` entries
+void resize_per_generation_tallies(int n_gen);
 
 } // namespace openmc
 

@@ -107,6 +107,25 @@ extern vector<int64_t> n_external_source_gen;
 extern int64_t global_tally_external_source;
 extern int n_keff_fixed_src_skip;
 
+// Map: generation tag → number of particles with that tag in current batch
+extern std::unordered_map<int, int64_t> particles_per_generation;
+
+// Track total particles per generation (before accumulated)
+extern int64_t max_generation_tag;
+
+// Add this: generation-specific weight for each particle
+extern std::unordered_map<int, double>
+  generation_weights; // Maps gen_tag -> 1/N_n
+
+// Embedded tally scaling: running products of empirical k values
+extern std::unordered_map<int, double>
+  cumulative_weight_per_generation; // W_n = product of k_i
+extern std::unordered_map<int, int64_t>
+  particles_produced_per_generation; // N_prod,n
+extern double current_cumulative_weight;
+
+extern int G;
+
 } // namespace simulation
 
 //==============================================================================

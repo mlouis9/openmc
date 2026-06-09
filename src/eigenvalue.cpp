@@ -135,7 +135,7 @@ void calculate_generation_k(KType type)
     k_generation_ptr = &simulation::k_generation;
     break;
   case KType::kq:
-    gt = simulation::global_tallies_first_gen;
+    gt = simulation::global_tallies_by_gen[0];
     k_generation_val_ptr = &simulation::kq_generation_val;
     k_generation_ptr = &simulation::kq_generation;
     break;
@@ -143,12 +143,16 @@ void calculate_generation_k(KType type)
     calculate_generation_ks();
     return;
   case KType::mG:
-    gt = simulation::global_tallies_G_minus_1_gen;
+    gt = simulation::global_tallies_by_gen[simulation::G - 1];
     k_generation_val_ptr = &simulation::mG_generation_val;
     k_generation_ptr = &simulation::mG_generation;
     break;
   case KType::RG:
-    gt = simulation::global_tallies_geq_G_gen;
+    gt.fill(0.0);
+    for (int g = simulation::G; g < simulation::global_tallies_by_gen.size();
+         ++g) {
+      gt += simulation::global_tallies_by_gen[g];
+    }
     k_generation_val_ptr = &simulation::RG_generation_val;
     k_generation_ptr = &simulation::RG_generation;
     break;
@@ -806,7 +810,7 @@ int openmc_get_kq(double* kq_combined)
 {
   return get_combined_k_from_tallies(kq_combined,
     simulation::kq_combined_weights, simulation::kq, simulation::kq_std,
-    simulation::global_tallies_first_gen, simulation::kq_col_abs,
+    simulation::global_tallies_by_gen[0], simulation::kq_col_abs,
     simulation::kq_col_tra, simulation::kq_abs_tra);
 }
 
@@ -826,7 +830,7 @@ int openmc_get_ks(double* ks_combined, double* k_combined, double* kq_combined)
       double cov =
         (simulation::k_kq_products[i][j] -
           n * simulation::global_tallies(i, TallyResult::SUM) *
-            simulation::global_tallies_first_gen(j, TallyResult::SUM) /
+            simulation::global_tallies_by_gen[0](j, TallyResult::SUM) /
             std::pow(n, 2)) /
         (n * (n - 1)); // Note extra division by n to get standard error
       total_cov += simulation::k_combined_weights[i] *

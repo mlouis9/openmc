@@ -486,7 +486,9 @@ void score_fission_eout(Particle& p, int i_tally, int i_score, int score_bin)
               filter_weight *= match.weights_[i_bin];
             }
 
-            score_fission_delayed_dg(i_tally, d_bin, score * filter_weight,
+            score_fission_delayed_dg(i_tally, d_bin,
+              score * filter_weight * p.generation_cumulative_weight() *
+                p.generation_weight(),
               i_score, p.filter_matches());
           }
         }
@@ -1101,7 +1103,8 @@ void score_general_ce_nonanalog(Particle& p, int i_tally, int start_index,
 // Update tally results
 #pragma omp atomic
     tally.results_(filter_index, score_index, TallyResult::VALUE) +=
-      score * filter_weight;
+      score * filter_weight * p.generation_cumulative_weight() *
+      p.generation_weight();
   }
 }
 
@@ -1606,7 +1609,8 @@ void score_general_ce_analog(Particle& p, int i_tally, int start_index,
 // Update tally results
 #pragma omp atomic
     tally.results_(filter_index, score_index, TallyResult::VALUE) +=
-      score * filter_weight;
+      score * filter_weight * p.generation_cumulative_weight() *
+      p.generation_weight();
   }
 }
 
@@ -2303,7 +2307,8 @@ void score_general_mg(Particle& p, int i_tally, int start_index,
 // Update tally results
 #pragma omp atomic
     tally.results_(filter_index, score_index, TallyResult::VALUE) +=
-      score * filter_weight;
+      score * filter_weight * p.generation_cumulative_weight() *
+      p.generation_weight();
   }
 }
 
@@ -2639,7 +2644,8 @@ void score_surface_tally(Particle& p, const vector<int>& tallies)
       for (auto score_index = 0; score_index < tally.scores_.size();
            ++score_index) {
 #pragma omp atomic
-        tally.results_(filter_index, score_index, TallyResult::VALUE) += score;
+        tally.results_(filter_index, score_index, TallyResult::VALUE) +=
+          score * p.generation_cumulative_weight() * p.generation_weight();
       }
     }
 
@@ -2715,7 +2721,8 @@ void score_pulse_height_tally(Particle& p, const vector<int>& tallies)
                  ++score_index) {
 #pragma omp atomic
               tally.results_(filter_index, score_index, TallyResult::VALUE) +=
-                filter_weight;
+                filter_weight * p.generation_cumulative_weight() *
+                p.generation_weight();
             }
           }
 

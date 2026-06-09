@@ -28,6 +28,10 @@ class Surface;
  */
 
 class Particle : public ParticleData {
+private:
+  double generation_cumulative_weight_ {1.0};
+  double generation_weight_ {1.0};
+
 public:
   //==========================================================================
   // Constructors
@@ -38,6 +42,18 @@ public:
   // Methods
 
   double speed() const;
+
+  double& generation_weight() { return generation_weight_; }
+  double generation_weight() const { return generation_weight_; }
+
+  double& generation_cumulative_weight()
+  {
+    return generation_cumulative_weight_;
+  }
+  double generation_cumulative_weight() const
+  {
+    return generation_cumulative_weight_;
+  }
 
   //! create a secondary particle
   //

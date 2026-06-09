@@ -207,6 +207,8 @@ extern double weight_survive;      //!< Survival weight after Russian roulette
 
 bool eigenvalue_like();
 
+extern int max_tracked_generations;
+
 } // namespace settings
 
 //==============================================================================

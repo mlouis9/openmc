@@ -393,6 +393,7 @@ class Settings:
         self._calculate_subcritical_k = False
         self._print_all_k_factors = False
         self._tally_covariance_with_k = False
+        self._embedded_tally_scaling = False
 
         # Energy mode subelement
         self._energy_mode = None
