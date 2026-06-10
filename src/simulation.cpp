@@ -771,41 +771,6 @@ void finalize_generation()
       }
     }
 
-    fmt::print("total weight = {}\n", simulation::total_weight);
-    fmt::print("Num particles = {}\n", settings::n_particles);
-    fmt::print("Sum of N_gen = {}\n",
-      std::accumulate(simulation::particles_per_generation.begin(),
-        simulation::particles_per_generation.end(), 0LL));
-    for (auto& N : simulation::particles_per_generation) {
-      fmt::print("{} ", N);
-    }
-    fmt::print("\n");
-
-    fmt::print("k_by_gen: ");
-    for (auto& k : simulation::k_by_gen) {
-      fmt::print("{} ", k);
-    }
-    fmt::print("\n");
-
-    fmt::print("cumulative_multiplication_by_gen: ");
-    for (auto& cm : simulation::cumulative_multiplication_by_gen) {
-      fmt::print("{} ", cm);
-    }
-    fmt::print("\n");
-
-    double test = 0.0;
-
-    for (int i = 0; i < simulation::k_by_gen.size(); i++) {
-      double product = 1.0;
-      for (int j = 0; j < i; j++) {
-        product *= simulation::k_by_gen[j];
-      }
-      test += product;
-    }
-
-    fmt::print("Reconstructed M from k_by_gen: {}\n Actual M: {}", test,
-      1 / (1 - simulation::k));
-
     simulation::k_old = simulation::k_current;
 
     // Write generation output
