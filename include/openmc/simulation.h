@@ -107,24 +107,24 @@ extern vector<int64_t> n_external_source_gen;
 extern int64_t global_tally_external_source;
 extern int n_keff_fixed_src_skip;
 
-// Map: generation tag → number of particles with that tag in current batch
-extern std::unordered_map<int, int64_t> particles_per_generation;
-
-// Track total particles per generation (before accumulated)
-extern int64_t max_generation_tag;
-
-// Add this: generation-specific weight for each particle
-extern std::unordered_map<int, double>
-  generation_weights; // Maps gen_tag -> 1/N_n
-
-// Embedded tally scaling: running products of empirical k values
-extern std::unordered_map<int, double>
-  cumulative_weight_per_generation; // W_n = product of k_i
-extern std::unordered_map<int, int64_t>
-  particles_produced_per_generation; // N_prod,n
-extern double current_cumulative_weight;
-
 extern int G;
+
+// Per-generation-tag history of single-batch k estimates
+// k_by_gen_generation[g][i] = (mean, std) for tag g, generation index i
+extern std::vector<std::vector<std::array<double, 2>>> k_by_gen_generation;
+extern std::vector<std::array<double, 2>> k_by_gen_generation_val;
+
+// Per-tag accumulators (analogous to k_generation_val, k_sum)
+extern std::vector<std::array<double, 2>> k_by_gen_val; // single-gen
+extern std::vector<std::array<double, 2>> k_by_gen_sum; // running sum/sum^2
+extern std::vector<double> k_by_gen;                    // mean over active gens
+extern std::vector<double> k_by_gen_std;                // std-dev of mean
+extern std::vector<double>
+  cumulative_multiplication_by_gen; // cumulative multiplication up to tag g
+
+// Number of particle histories that visited each generation tag
+// (filled during transport, used for per-tag normalization & birth weights)
+extern std::vector<int64_t> particles_per_generation; // current batch
 
 } // namespace simulation
 
@@ -178,6 +178,8 @@ void transport_history_based();
 
 //! Simulate all particle histories using event-based parallelism
 void transport_event_based();
+
+void precalculate_generation_counts();
 
 } // namespace openmc
 

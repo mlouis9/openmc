@@ -117,6 +117,8 @@ int openmc_simulation_init()
         settings::calculate_subcritical_k) ||
       settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
     resize_per_generation_tallies(settings::n_batches);
+    simulation::k_by_gen_generation_val.clear();
+    simulation::particles_per_generation.assign(settings::n_batches, 0);
   }
 
   // Set up material nuclide index mapping
@@ -269,6 +271,11 @@ int openmc_next_batch(int* status)
   for (current_gen = 1; current_gen <= settings::gen_per_batch; ++current_gen) {
 
     initialize_generation();
+
+    if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION &&
+        settings::embedded_tally_scaling) {
+      precalculate_generation_counts();
+    }
 
     // Start timer for transport
     simulation::time_transport.start();
@@ -598,6 +605,9 @@ void initialize_generation()
   if ((settings::run_mode == RunMode::FIXED_SOURCE &&
         settings::calculate_subcritical_k) ||
       settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+    std::fill(simulation::particles_per_generation.begin(),
+      simulation::particles_per_generation.end(), 0);
+
     // Store current value of tracklength kq
     auto& gt_first_gen = simulation::global_tallies_by_gen[0];
     simulation::kq_generation_val = {
@@ -617,6 +627,15 @@ void initialize_generation()
         GlobalTally::K_TRACKLENGTH, TallyResult::VALUE);
       geq_G_val_sq += simulation::global_tallies_by_gen[g](
         GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE);
+    }
+
+    int n_gen = simulation::global_tallies_by_gen.size();
+    simulation::k_by_gen_generation_val.resize(n_gen);
+    for (int g = 0; g < n_gen; ++g) {
+      auto& gt_g = simulation::global_tallies_by_gen[g];
+      simulation::k_by_gen_generation_val[g] = {
+        gt_g(GlobalTally::K_TRACKLENGTH, TallyResult::VALUE),
+        gt_g(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE)};
     }
     simulation::RG_generation_val = {geq_G_val, geq_G_val_sq};
   }
@@ -717,8 +736,6 @@ void finalize_generation()
     // Collect results and statistics
     calculate_generation_k();
     calculate_average_k();
-    fmt::print("Are we using embedded tally scaling? {}\n",
-      settings::embedded_tally_scaling);
     if ((settings::run_mode == RunMode::FIXED_SOURCE &&
           settings::calculate_subcritical_k) ||
         settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
@@ -739,7 +756,55 @@ void finalize_generation()
       } else {
         simulation::n_keff_fixed_src_skip += 1;
       }
+
+      calculate_all_generation_k_by_tag();
+
+      // Update cumulative multiplication by gen
+      double product = 1.0;
+      for (int i = 0; i < simulation::k_by_gen.size(); i++) {
+        product *= simulation::k_by_gen[i];
+        if (i < simulation::cumulative_multiplication_by_gen.size()) {
+          simulation::cumulative_multiplication_by_gen[i] = product;
+        } else {
+          simulation::cumulative_multiplication_by_gen.push_back(product);
+        }
+      }
     }
+
+    fmt::print("total weight = {}\n", simulation::total_weight);
+    fmt::print("Num particles = {}\n", settings::n_particles);
+    fmt::print("Sum of N_gen = {}\n",
+      std::accumulate(simulation::particles_per_generation.begin(),
+        simulation::particles_per_generation.end(), 0LL));
+    for (auto& N : simulation::particles_per_generation) {
+      fmt::print("{} ", N);
+    }
+    fmt::print("\n");
+
+    fmt::print("k_by_gen: ");
+    for (auto& k : simulation::k_by_gen) {
+      fmt::print("{} ", k);
+    }
+    fmt::print("\n");
+
+    fmt::print("cumulative_multiplication_by_gen: ");
+    for (auto& cm : simulation::cumulative_multiplication_by_gen) {
+      fmt::print("{} ", cm);
+    }
+    fmt::print("\n");
+
+    double test = 0.0;
+
+    for (int i = 0; i < simulation::k_by_gen.size(); i++) {
+      double product = 1.0;
+      for (int j = 0; j < i; j++) {
+        product *= simulation::k_by_gen[j];
+      }
+      test += product;
+    }
+
+    fmt::print("Reconstructed M from k_by_gen: {}\n Actual M: {}", test,
+      1 / (1 - simulation::k));
 
     simulation::k_old = simulation::k_current;
 
@@ -794,6 +859,20 @@ void initialize_history(Particle& p, int64_t index_source)
       p.from_source(&site);
     }
   }
+  // weight particle according to generation_weight and
+  // generation_cumulative_weight
+  if (settings::embedded_tally_scaling) {
+    p.generation_weight() =
+      (double)settings::n_particles /
+      simulation::particles_per_generation[p.generation_tag()];
+    if (p.generation_tag() >= 1) {
+      p.generation_cumulative_weight() =
+        simulation::cumulative_multiplication_by_gen[p.generation_tag() - 1];
+    } else {
+      p.generation_cumulative_weight() = 1.0;
+    }
+  }
+
   p.current_work() = index_source;
 
   // set identifier for particle
@@ -1070,6 +1149,83 @@ void accumulate_generation_k_estimators(Particle& p)
   global_tally_tracklength_by_gen[gen] += tl;
 #pragma omp atomic
   global_tally_tracklength_sq_by_gen[gen] += tlsq;
+}
+
+void precalculate_generation_counts()
+{
+  // 1. Calculate the same k_avg used in initialize_history
+  double k_avg = 0.0;
+  int n = simulation::k_generation.size();
+  if (n >= 2) {
+    k_avg = (simulation::k_generation[n - 1][0] +
+              simulation::k_generation[n - 2][0]) /
+            2.0;
+  } else if (n == 1) {
+    k_avg = simulation::k_generation[0][0];
+  }
+
+  // Local accumulator to prevent OpenMP atomic bottlenecks
+  std::vector<int64_t> local_counts(
+    simulation::particles_per_generation.size(), 0);
+
+// 2. Loop over the particles assigned to this rank
+#pragma omp parallel for
+  for (int64_t i_work = 1; i_work <= simulation::work_per_rank; ++i_work) {
+    int64_t id = (simulation::total_gen + overall_generation() - 1) *
+                   settings::n_particles +
+                 simulation::work_index[mpi::rank] + i_work;
+
+    // Initialize a temporary seed exactly as initialize_history does
+    uint64_t seed = init_seed(id, STREAM_SOURCE);
+    double rnd = prn(&seed);
+
+    int gen = 0;
+    if (rnd < k_avg) {
+      // Sampled from the fission source bank.
+      // Replace `.generation_tag` below with however your custom SourceSite
+      // or Particle banking currently tracks the generation integer.
+      gen = simulation::source_bank[i_work - 1].generation_tag;
+    } else {
+      // Sampled from the external source, which represents generation 0
+      gen = 0;
+    }
+
+    // 3. Accumulate safely
+    if (gen >= local_counts.size()) {
+#pragma omp critical
+      {
+        if (gen >= local_counts.size()) {
+          local_counts.resize(gen + 1, 0);
+        }
+      }
+    }
+
+#pragma omp atomic
+    local_counts[gen]++;
+  }
+
+  // 4. Ensure global vector is sized correctly across all ranks
+  int local_size = local_counts.size();
+  int max_size = local_size;
+
+#ifdef OPENMC_MPI
+  MPI_Allreduce(&local_size, &max_size, 1, MPI_INT, MPI_MAX, mpi::intracomm);
+#endif
+
+  if (simulation::particles_per_generation.size() < max_size) {
+    simulation::particles_per_generation.resize(max_size, 0);
+  }
+  local_counts.resize(max_size, 0);
+
+// 5. Reduce the local counts into the global state
+#ifdef OPENMC_MPI
+  MPI_Allreduce(local_counts.data(),
+    simulation::particles_per_generation.data(), max_size, MPI_INT64_T, MPI_SUM,
+    mpi::intracomm);
+#else
+  std::copy(local_counts.begin(), local_counts.end(),
+    simulation::particles_per_generation.begin());
+#endif
 }
 
 void transport_history_based_single_particle(Particle& p)

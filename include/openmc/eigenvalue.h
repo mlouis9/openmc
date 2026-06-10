@@ -60,6 +60,12 @@ std::pair<double, double> convert_k_to_m(double k, double k_std);
 std::pair<double, double> calculate_keff_fixed_src(
   double mG, double mG_std, double RG, double RG_std);
 
+// New generalized per-tag versions (parallel to
+// calculate_generation_k(KType::kq))
+void calculate_generation_k_by_tag(int g);
+void calculate_average_k_by_tag(int g);
+void calculate_all_generation_k_by_tag(); // convenience: loops over all g
+
 //! Calculate mean/standard deviation of keff during active generations
 //!
 //! This function sets the global variables keff and keff_std which represent

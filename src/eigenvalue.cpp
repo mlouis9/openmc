@@ -53,6 +53,15 @@ array<double, 2> keff_fixed_src_sum;
 vector<double> entropy;
 xt::xtensor<double, 1> source_frac;
 
+std::vector<std::vector<std::array<double, 2>>> k_by_gen_generation;
+std::vector<std::array<double, 2>> k_by_gen_generation_val;
+std::vector<std::array<double, 2>> k_by_gen_val;
+std::vector<std::array<double, 2>> k_by_gen_sum;
+std::vector<double> k_by_gen;
+std::vector<double> k_by_gen_std;
+std::vector<int64_t> particles_per_generation;
+std::vector<double> cumulative_multiplication_by_gen;
+
 } // namespace simulation
 
 //==============================================================================
@@ -198,6 +207,163 @@ void calculate_generation_k(KType type)
   double k_std = std::sqrt(
     (k_reduced[1] - std::pow(k_mean, 2)) / (settings::n_particles - 1));
   k_generation_ptr->push_back({k_mean, k_std});
+}
+
+//==============================================================================
+// Generalized per-generation-tag k estimators
+//
+// These are the analogues of calculate_generation_k(KType::kq) and
+// calculate_average_k(KType::kq), but parameterized by an arbitrary generation
+// tag index g (0 = first generation, 1 = second, etc.). The MPI / statistics
+// machinery is identical; only the source tally array and the normalization
+// (N_g instead of settings::n_particles) change.
+//==============================================================================
+
+void ensure_by_gen_storage(int g)
+{
+  size_t needed = static_cast<size_t>(g) + 1;
+  if (simulation::k_by_gen_generation.size() < needed)
+    simulation::k_by_gen_generation.resize(needed);
+  if (simulation::k_by_gen_val.size() < needed)
+    simulation::k_by_gen_val.resize(needed, {0.0, 0.0});
+  if (simulation::k_by_gen_sum.size() < needed)
+    simulation::k_by_gen_sum.resize(needed, {0.0, 0.0});
+  if (simulation::k_by_gen.size() < needed)
+    simulation::k_by_gen.resize(needed, 0.0);
+  if (simulation::k_by_gen_std.size() < needed)
+    simulation::k_by_gen_std.resize(needed, 0.0);
+}
+
+void calculate_generation_k_by_tag(int g)
+{
+  // Bounds check against tracked tallies
+  if (g < 0 || g >= static_cast<int>(simulation::global_tallies_by_gen.size()))
+    return;
+
+  ensure_by_gen_storage(g);
+
+  auto& gt = simulation::global_tallies_by_gen[g];
+  auto& val = simulation::k_by_gen_generation_val[g];
+
+  // Same delta-trick used in calculate_generation_k
+  val[0] = gt(GlobalTally::K_TRACKLENGTH, TallyResult::VALUE) - val[0];
+  val[1] = gt(GlobalTally::K_TRACKLENGTH_SQ, TallyResult::VALUE) - val[1];
+
+  std::array<double, 2> k_reduced;
+#ifdef OPENMC_MPI
+  if (settings::solver_type != SolverType::RANDOM_RAY) {
+    MPI_Allreduce(
+      &val[0], &k_reduced[0], 1, MPI_DOUBLE, MPI_SUM, mpi::intracomm);
+    MPI_Allreduce(
+      &val[1], &k_reduced[1], 1, MPI_DOUBLE, MPI_SUM, mpi::intracomm);
+  } else {
+    k_reduced = val;
+  }
+#else
+  k_reduced = val;
+#endif
+
+  // --- Per-generation normalization ---------------------------------------
+  // Use N_g (particles that actually visited generation g) when available;
+  // fall back to settings::n_particles to recover the old behavior.
+  int64_t n_g_local = (g < (int)simulation::particles_per_generation.size())
+                        ? simulation::particles_per_generation[g]
+                        : 0;
+  int64_t n_g = n_g_local;
+#ifdef OPENMC_MPI
+  if (settings::solver_type != SolverType::RANDOM_RAY) {
+    MPI_Allreduce(&n_g_local, &n_g, 1, MPI_INT64_T, MPI_SUM, mpi::intracomm);
+  }
+#endif
+  double N = (n_g > 0) ? static_cast<double>(n_g)
+                       : static_cast<double>(settings::n_particles);
+
+  if (settings::solver_type != SolverType::RANDOM_RAY) {
+    k_reduced[0] /= N;
+    k_reduced[1] /= N;
+  }
+  double k_mean = k_reduced[0];
+  double k_std =
+    (N > 1) ? std::sqrt((k_reduced[1] - k_mean * k_mean) / (N - 1)) : 0.0;
+  if (!std::isfinite(k_std))
+    k_std = 0.0;
+
+  simulation::k_by_gen_generation[g].push_back({k_mean, k_std});
+}
+
+void calculate_average_k_by_tag(int g)
+{
+  if (g < 0 || g >= static_cast<int>(simulation::k_by_gen_generation.size()))
+    return;
+  if (simulation::k_by_gen_generation[g].empty())
+    return;
+
+  ensure_by_gen_storage(g);
+
+  int n;
+  if (simulation::current_batch > settings::n_inactive) {
+    n = settings::gen_per_batch * simulation::n_realizations +
+        simulation::current_gen;
+  } else {
+    n = 0;
+  }
+
+  int i = static_cast<int>(simulation::k_by_gen_generation[g].size()) - 1;
+  double k_val = 0.0, k_std_val = 0.0;
+
+  if (n <= 0) {
+    k_val = simulation::k_by_gen_generation[g][i][0];
+  } else {
+    // Determine the starting index of the active generations in our history
+    // vector
+    size_t start_idx =
+      static_cast<size_t>(settings::n_inactive) * settings::gen_per_batch;
+
+    double sum_k = 0.0;
+    double sum_k_sq = 0.0;
+    int n_nonzero = 0;
+
+    // Loop through all active generations recorded so far
+    for (size_t idx = start_idx;
+         idx < simulation::k_by_gen_generation[g].size(); ++idx) {
+      double k_i = simulation::k_by_gen_generation[g][idx][0];
+      if (k_i != 0.0) { // Exclude exact zeros
+        sum_k += k_i;
+        sum_k_sq += k_i * k_i;
+        n_nonzero++;
+      }
+    }
+
+    if (n_nonzero > 0) {
+      k_val = sum_k / n_nonzero;
+      if (n_nonzero > 1) {
+        double t_value = 1.0;
+        if (settings::confidence_intervals) {
+          double alpha = 1.0 - CONFIDENCE_LEVEL;
+          t_value = t_percentile(1.0 - alpha / 2.0, n_nonzero - 1);
+        }
+        k_std_val = t_value * std::sqrt((sum_k_sq / n_nonzero - k_val * k_val) /
+                                        (n_nonzero - 1));
+        if (!std::isfinite(k_std_val))
+          k_std_val = 0.0;
+      }
+    } else {
+      // Fallback to the latest generation value if no active non-zero values
+      // exist yet
+      k_val = simulation::k_by_gen_generation[g][i][0];
+    }
+  }
+  simulation::k_by_gen[g] = k_val;
+  simulation::k_by_gen_std[g] = k_std_val;
+}
+
+void calculate_all_generation_k_by_tag()
+{
+  int n_gen = static_cast<int>(simulation::global_tallies_by_gen.size());
+  for (int g = 0; g < n_gen; ++g) {
+    calculate_generation_k_by_tag(g);
+    calculate_average_k_by_tag(g);
+  }
 }
 
 std::pair<double, double> convert_m_to_k(double m, double m_std)
