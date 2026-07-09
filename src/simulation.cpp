@@ -1248,11 +1248,11 @@ void transport_history_based_single_particle(Particle& p)
       else
         p.event_collide();
     }
-    // On generation completion (particle death), accumulate that generation
+    // Per-generation k estimators: accumulate the just-dead particle
     if (!p.alive() && accumulate_subcritical_tallies) {
       accumulate_generation_k_estimators(p);
-      p.event_revive_from_secondary(); // continue with next generation if any
     }
+    p.event_revive_from_secondary(); // restore: always call
   }
   p.event_death();
 }
