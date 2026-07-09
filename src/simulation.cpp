@@ -277,6 +277,28 @@ int openmc_next_batch(int* status)
       precalculate_generation_counts();
     }
 
+    // for (int i = 0; i < simulation::k_by_gen.size(); i++) {
+    //   double kq = simulation::kq * settings::n_particles /
+    //               simulation::particles_per_generation[0]; // Normalize
+    //   fmt::print(
+    //     "Generation {}: cumulative_multiplication_by_gen = {}, particles per
+    //     " "generation = {}, fraction = {}, prevalence = {} kq = {}\n ", i +
+    //     1, simulation::cumulative_multiplication_by_gen[i],
+    //     simulation::particles_per_generation[i + 1],
+    //     (double)simulation::particles_per_generation[i + 1] /
+    //       settings::n_particles,
+    //     kq * (double)simulation::particles_per_generation[i + 1] /
+    //       settings::n_particles,
+    //     kq);
+    //   //   fmt::print("Generation {}: cumulative_multiplication_by_gen = {},
+    //   "
+    //   //              "particles per generation = {}, fraction = {}\n ",
+    //   //     i + 1, simulation::cumulative_multiplication_by_gen[i],
+    //   //     simulation::particles_per_generation[i],
+    //   //     (double)simulation::particles_per_generation[i] /
+    //   //       settings::n_particles);
+    // }
+
     // Start timer for transport
     simulation::time_transport.start();
 
@@ -831,8 +853,24 @@ void initialize_history(Particle& p, int64_t index_source)
       (double)settings::n_particles /
       simulation::particles_per_generation[p.generation_tag()];
     if (p.generation_tag() >= 1) {
+      double kq = simulation::kq * settings::n_particles /
+                  simulation::particles_per_generation[0]; // Normalize
       p.generation_cumulative_weight() =
-        simulation::cumulative_multiplication_by_gen[p.generation_tag() - 1];
+        kq * simulation::particles_per_generation[p.generation_tag()] /
+        simulation::particles_per_generation[1];
+      //   p.generation_cumulative_weight() =
+      //     simulation::cumulative_multiplication_by_gen[p.generation_tag() -
+      //     1];
+      //   if (p.generation_tag() == 1 || p.generation_tag() == 2) {
+      //     fmt::print("Particle of generation {} has generation weight {} and
+      //     "
+      //                "cumulative weight {}, and cumulative multiplication
+      //                {}\n ",
+      //       p.generation_tag(), p.generation_weight(),
+      //       p.generation_cumulative_weight(),
+      //       simulation::cumulative_multiplication_by_gen[p.generation_tag() -
+      //       1]);
+      //   }
     } else {
       p.generation_cumulative_weight() = 1.0;
     }
