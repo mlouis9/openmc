@@ -853,24 +853,8 @@ void initialize_history(Particle& p, int64_t index_source)
       (double)settings::n_particles /
       simulation::particles_per_generation[p.generation_tag()];
     if (p.generation_tag() >= 1) {
-      double kq = simulation::kq * settings::n_particles /
-                  simulation::particles_per_generation[0]; // Normalize
-      p.generation_cumulative_weight() =
-        kq * simulation::particles_per_generation[p.generation_tag()] /
-        simulation::particles_per_generation[1];
-      //   p.generation_cumulative_weight() =
-      //     simulation::cumulative_multiplication_by_gen[p.generation_tag() -
-      //     1];
-      //   if (p.generation_tag() == 1 || p.generation_tag() == 2) {
-      //     fmt::print("Particle of generation {} has generation weight {} and
-      //     "
-      //                "cumulative weight {}, and cumulative multiplication
-      //                {}\n ",
-      //       p.generation_tag(), p.generation_weight(),
-      //       p.generation_cumulative_weight(),
-      //       simulation::cumulative_multiplication_by_gen[p.generation_tag() -
-      //       1]);
-      //   }
+      p.generation_cumulative_weight() = p.generation_cumulative_weight() =
+        simulation::cumulative_multiplication_by_gen[p.generation_tag() - 1];
     } else {
       p.generation_cumulative_weight() = 1.0;
     }
