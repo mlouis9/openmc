@@ -525,6 +525,9 @@ void Particle::event_death()
   keff_tally_collision() = 0.0;
   keff_tally_tracklength() = 0.0;
   keff_tally_leakage() = 0.0;
+  keff_tally_absorption_binned() = 0.0;
+  keff_tally_collision_binned() = 0.0;
+  keff_tally_tracklength_binned() = 0.0;
 
   if (!model::active_pulse_height_tallies.empty()) {
     score_pulse_height_tally(*this, model::active_pulse_height_tallies);

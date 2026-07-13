@@ -1118,15 +1118,23 @@ void accumulate_generation_k_estimators(Particle& p)
   if (global_tally_absorption_by_gen.empty())
     return;
 
-  // Clamp to last bin if generation exceeds tracked range
   int max_gen = static_cast<int>(global_tally_absorption_by_gen.size()) - 1;
   if (gen > max_gen)
     gen = max_gen;
 
-  double abs = p.keff_tally_absorption();
-  double col = p.keff_tally_collision();
-  double tl = p.keff_tally_tracklength();
+  // Bin only the INCREMENT accumulated since this history's previous death.
+  // The per-particle keff accumulators are cumulative over the whole history
+  // (reset only at event_death), so differencing isolates this generation's
+  // own contribution while leaving the cumulative totals intact for the
+  // per-history main-k tallies formed in event_death.
+  double abs = p.keff_tally_absorption() - p.keff_tally_absorption_binned();
+  double col = p.keff_tally_collision() - p.keff_tally_collision_binned();
+  double tl = p.keff_tally_tracklength() - p.keff_tally_tracklength_binned();
   double tlsq = tl * tl;
+
+  p.keff_tally_absorption_binned() = p.keff_tally_absorption();
+  p.keff_tally_collision_binned() = p.keff_tally_collision();
+  p.keff_tally_tracklength_binned() = p.keff_tally_tracklength();
 
 #pragma omp atomic
   global_tally_absorption_by_gen[gen] += abs;

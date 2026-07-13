@@ -108,11 +108,14 @@ void calculate_generation_ks()
     auto [kq, kq_std] = simulation::kq_generation.back();
     double ks_mean = 1 - kq / (m - 1);
     double cov_M_kq = compute_cov_M_kq(0, 0);
-    double rho = cov_M_kq / (m_std * kq_std);
-    double ks_std =
-      std::sqrt(std::pow(kq_std, 2) / std::pow(m - 1, 2) +
-                std::pow(kq, 2) * std::pow(m_std, 2) / std::pow(m - 1, 4) -
-                2 * kq / std::pow(m - 1, 3) * rho * m_std * kq_std);
+    double denom_rho = m_std * kq_std;
+    double rho = (denom_rho > 0.0) ? cov_M_kq / denom_rho : 0.0;
+    rho = std::max(
+      -1.0, std::min(1.0, rho)); // a noisy sample correlation can exceed +/-1
+    double ks_var = std::pow(kq_std, 2) / std::pow(m - 1, 2) +
+                    std::pow(kq, 2) * std::pow(m_std, 2) / std::pow(m - 1, 4) -
+                    2 * kq / std::pow(m - 1, 3) * rho * m_std * kq_std;
+    double ks_std = std::sqrt(std::max(0.0, ks_var));
     simulation::ks_generation.push_back({ks_mean, ks_std});
   }
 }
@@ -204,8 +207,15 @@ void calculate_generation_k(KType type)
     k_reduced[1] /= settings::n_particles;
   }
   double k_mean = k_reduced[0];
-  double k_std = std::sqrt(
-    (k_reduced[1] - std::pow(k_mean, 2)) / (settings::n_particles - 1));
+  // The single-batch variance of a positive-definite estimator is >= 0 in exact
+  // arithmetic (Cauchy-Schwarz: N * sum(x^2) >= (sum x)^2). Near criticality
+  // the second moment and squared mean are nearly equal, so finite-precision
+  // cancellation can drive the radicand slightly negative -> sqrt -> nan. Clamp
+  // it. The authoritative per-quantity uncertainty is the batch-averaged one in
+  // calculate_average_k; this single-batch value is only a diagnostic.
+  double k_var =
+    (k_reduced[1] - std::pow(k_mean, 2)) / (settings::n_particles - 1);
+  double k_std = std::sqrt(std::max(0.0, k_var));
   k_generation_ptr->push_back({k_mean, k_std});
 }
 
@@ -383,10 +393,16 @@ std::pair<double, double> convert_k_to_m(double k, double k_std)
 std::pair<double, double> calculate_keff_fixed_src(
   double mG, double mG_std, double RG, double RG_std)
 {
-  double keff = RG / (mG + RG);
-  double keff_std = 1 / (mG + RG) *
-                    std::sqrt(std::pow(1 - keff, 2) * std::pow(RG_std, 2) +
-                              std::pow(keff, 2) * std::pow(mG_std, 2));
+  double denom = mG + RG;
+  // Degenerate tail: return {0,0} so the upstream "skip trivial estimates"
+  // guard drops this batch rather than averaging in a negative/divergent keff.
+  if (!(denom > 0.0) || !(RG >= 0.0)) {
+    return {0.0, 0.0};
+  }
+  double keff = std::max(0.0, std::min(1.0, RG / denom));
+  double keff_var = std::pow(1 - keff, 2) * std::pow(RG_std, 2) +
+                    std::pow(keff, 2) * std::pow(mG_std, 2);
+  double keff_std = std::sqrt(std::max(0.0, keff_var)) / denom;
   return {keff, keff_std};
 }
 

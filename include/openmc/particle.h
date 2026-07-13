@@ -31,6 +31,9 @@ class Particle : public ParticleData {
 private:
   double generation_cumulative_weight_ {1.0};
   double generation_weight_ {1.0};
+  double keff_tally_absorption_binned_ {0.0};
+  double keff_tally_collision_binned_ {0.0};
+  double keff_tally_tracklength_binned_ {0.0};
 
 public:
   //==========================================================================
@@ -53,6 +56,16 @@ public:
   double generation_cumulative_weight() const
   {
     return generation_cumulative_weight_;
+  }
+
+  double& keff_tally_absorption_binned()
+  {
+    return keff_tally_absorption_binned_;
+  }
+  double& keff_tally_collision_binned() { return keff_tally_collision_binned_; }
+  double& keff_tally_tracklength_binned()
+  {
+    return keff_tally_tracklength_binned_;
   }
 
   //! create a secondary particle
