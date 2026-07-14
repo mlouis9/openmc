@@ -1,0 +1,42 @@
+<?xml version='1.0' encoding='utf-8'?>
+<model>
+  <materials>
+    <material id="3" name="fissile_cube_mat" depletable="true">
+      <density value="19.1" units="g/cm3"/>
+      <nuclide name="U235" ao="1.0"/>
+    </material>
+  </materials>
+  <geometry>
+    <cell id="3" material="3" region="-14 13 -16 15 -18 17" universe="3"/>
+    <surface id="13" type="x-plane" boundary="vacuum" coeffs="-6.5"/>
+    <surface id="14" type="x-plane" boundary="vacuum" coeffs="6.5"/>
+    <surface id="15" type="y-plane" boundary="vacuum" coeffs="-6.5"/>
+    <surface id="16" type="y-plane" boundary="vacuum" coeffs="6.5"/>
+    <surface id="17" type="z-plane" boundary="vacuum" coeffs="-6.5"/>
+    <surface id="18" type="z-plane" boundary="vacuum" coeffs="6.5"/>
+  </geometry>
+  <settings>
+    <run_mode>fixed source</run_mode>
+    <particles>20000</particles>
+    <batches>125</batches>
+    <inactive>75</inactive>
+    <source type="independent" strength="1.0" particle="neutron">
+      <space type="point">
+        <parameters>0.0 0.0 0.0</parameters>
+      </space>
+    </source>
+    <entropy_mesh>4</entropy_mesh>
+    <mesh id="4">
+      <dimension>5 5 5</dimension>
+      <lower_left>-6.5 -6.5 -6.5</lower_left>
+      <upper_right>6.5 6.5 6.5</upper_right>
+    </mesh>
+    <calculate_subcritical_k>true</calculate_subcritical_k>
+    <print_all_k_factors>true</print_all_k_factors>
+  </settings>
+  <tallies>
+    <tally id="7" name="absorption">
+      <scores>absorption</scores>
+    </tally>
+  </tallies>
+</model>

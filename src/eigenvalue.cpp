@@ -716,7 +716,7 @@ void calculate_average_k(KType type)
   }
   // Initialize variables
   double k;
-  double k_std;
+  double k_std = 0.0;
 
   array<double, 2>* k_generation_val_ptr;
   vector<array<double, 2>>* k_generation_ptr;

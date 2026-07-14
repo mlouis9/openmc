@@ -776,7 +776,9 @@ void finalize_generation()
         calculate_average_k(KType::mG);
         calculate_average_k(KType::keff_fixed_src);
       } else {
-        simulation::n_keff_fixed_src_skip += 1;
+        if (simulation::current_batch > settings::n_inactive) {
+          simulation::n_keff_fixed_src_skip += 1;
+        }
       }
 
       calculate_all_generation_k_by_tag();

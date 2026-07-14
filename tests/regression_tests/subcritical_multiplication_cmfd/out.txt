@@ -1,0 +1,907 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.1, pluggy-1.6.0
+rootdir: /workspaces/subcritical/openmc
+configfile: pytest.ini
+plugins: xdist-3.8.0, rerunfailures-16.1, cov-7.0.0
+collected 7 items
+
+subcritical_multiplication_cmfd/test_subcritical_cmfd_solve.py                                 %%%%%%%%%%%%%%%
+                           %%%%%%%%%%%%%%%%%%%%%%%%
+                        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                                    %%%%%%%%%%%%%%%%%%%%%%%%
+                                     %%%%%%%%%%%%%%%%%%%%%%%%
+                 ###############      %%%%%%%%%%%%%%%%%%%%%%%%
+                ##################     %%%%%%%%%%%%%%%%%%%%%%%
+                ###################     %%%%%%%%%%%%%%%%%%%%%%%
+                ####################     %%%%%%%%%%%%%%%%%%%%%%
+                #####################     %%%%%%%%%%%%%%%%%%%%%
+                ######################     %%%%%%%%%%%%%%%%%%%%
+                #######################     %%%%%%%%%%%%%%%%%%
+                 #######################     %%%%%%%%%%%%%%%%%
+                 ######################     %%%%%%%%%%%%%%%%%
+                  ####################     %%%%%%%%%%%%%%%%%
+                    #################     %%%%%%%%%%%%%%%%%
+                     ###############     %%%%%%%%%%%%%%%%
+                       ############     %%%%%%%%%%%%%%%
+                          ########     %%%%%%%%%%%%%%
+                                      %%%%%%%%%%%
+
+                 | The OpenMC Monte Carlo Code
+       Copyright | 2011-2025 MIT, UChicago Argonne LLC, and contributors
+         License | https://docs.openmc.org/en/latest/license.html
+         Version | 0.15.4-dev125
+     Commit Hash | 116cba1917d708bf4eb71327e753f0e641d9afa1
+       Date/Time | 2026-07-14 20:00:41
+  OpenMP Threads | 12
+
+ Minimum neutron data temperature: 294 K
+ Maximum neutron data temperature: 294 K
+           CMFD k:    0.91591
+
+           CMFD k:    0.88949
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    0.25469
+
+           CMFD k:    nan
+
+           CMFD k:    0.16854
+
+           CMFD k:    0.14991
+
+Projected external source distribution (normalized):
+Mesh bin (2, 2, 3, 0): 1.275100e-01
+Mesh bin (2, 2, 3, 1): 8.724900e-01
+
+ ============================>     RESULTS     <============================
+
+ k (Collision)     = 0.96201 +/- 0.00275
+ k (Track-length)  = 0.96180 +/- 0.00151
+ k (Absorption)    = 0.96207 +/- 0.00245
+ Combined k        = 0.96183 +/- 0.00165
+ Leakage Fraction            = 0.59207 +/- 0.00123
+
+=====================>     CMFD TIMING STATISTICS     <====================
+
+   Time in CMFD                    =  2.43447e-01 seconds
+     Building matrices             =  8.20374e-02 seconds
+     Solving matrices              =  3.68264e-02 seconds
+
+F....                                %%%%%%%%%%%%%%%
+                           %%%%%%%%%%%%%%%%%%%%%%%%
+                        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                                    %%%%%%%%%%%%%%%%%%%%%%%%
+                                     %%%%%%%%%%%%%%%%%%%%%%%%
+                 ###############      %%%%%%%%%%%%%%%%%%%%%%%%
+                ##################     %%%%%%%%%%%%%%%%%%%%%%%
+                ###################     %%%%%%%%%%%%%%%%%%%%%%%
+                ####################     %%%%%%%%%%%%%%%%%%%%%%
+                #####################     %%%%%%%%%%%%%%%%%%%%%
+                ######################     %%%%%%%%%%%%%%%%%%%%
+                #######################     %%%%%%%%%%%%%%%%%%
+                 #######################     %%%%%%%%%%%%%%%%%
+                 ######################     %%%%%%%%%%%%%%%%%
+                  ####################     %%%%%%%%%%%%%%%%%
+                    #################     %%%%%%%%%%%%%%%%%
+                     ###############     %%%%%%%%%%%%%%%%
+                       ############     %%%%%%%%%%%%%%%
+                          ########     %%%%%%%%%%%%%%
+                                      %%%%%%%%%%%
+
+                 | The OpenMC Monte Carlo Code
+       Copyright | 2011-2025 MIT, UChicago Argonne LLC, and contributors
+         License | https://docs.openmc.org/en/latest/license.html
+         Version | 0.15.4-dev125
+     Commit Hash | 116cba1917d708bf4eb71327e753f0e641d9afa1
+       Date/Time | 2026-07-14 20:00:44
+  OpenMP Threads | 12
+
+ Minimum neutron data temperature: 0 K
+ Maximum neutron data temperature: 1.7976931348623157e+308 K
+           CMFD k:    0.93309
+
+           CMFD k:    0.89180
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    0.52816
+
+           CMFD k:    0.33741
+
+           CMFD k:    0.19005
+
+           CMFD k:    0.17137
+
+           CMFD k:    0.20754
+
+           CMFD k:    0.24351
+
+           CMFD k:    0.27888
+
+           CMFD k:    0.29883
+
+           CMFD k:    0.36228
+
+           CMFD k:    0.46427
+
+           CMFD k:    0.85031
+
+           CMFD k:    0.91861
+
+           CMFD k:    0.98115
+
+           CMFD k:    0.96063
+
+           CMFD k:    0.52628
+
+           CMFD k:    0.36190
+
+           CMFD k:    0.21848
+
+           CMFD k:    0.13737
+
+           CMFD k:    0.14683
+
+           CMFD k:    0.15855
+
+           CMFD k:    0.15902
+
+           CMFD k:    0.15953
+
+           CMFD k:    0.15999
+
+           CMFD k:    0.16056
+
+           CMFD k:    0.16096
+
+           CMFD k:    0.16149
+
+           CMFD k:    0.16188
+
+           CMFD k:    0.17206
+
+           CMFD k:    0.18226
+
+           CMFD k:    0.19233
+
+           CMFD k:    0.20260
+
+           CMFD k:    0.21259
+
+           CMFD k:    0.22240
+
+           CMFD k:    0.23242
+
+           CMFD k:    0.24214
+
+           CMFD k:    0.25194
+
+           CMFD k:    0.26148
+
+           CMFD k:    0.27082
+
+           CMFD k:    0.28046
+
+           CMFD k:    0.28972
+
+           CMFD k:    0.29907
+
+           CMFD k:    0.30819
+
+           CMFD k:    0.31734
+
+           CMFD k:    0.31852
+
+           CMFD k:    0.31974
+
+           CMFD k:    0.32560
+
+           CMFD k:    0.36418
+
+           CMFD k:    0.42162
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    0.86045
+
+           CMFD k:    0.59548
+
+           CMFD k:    0.39360
+
+           CMFD k:    0.34846
+
+           CMFD k:    0.30736
+
+           CMFD k:    0.28340
+
+           CMFD k:    0.26519
+
+           CMFD k:    0.24926
+
+           CMFD k:    0.23523
+
+           CMFD k:    0.22269
+
+           CMFD k:    0.20797
+
+           CMFD k:    0.19381
+
+           CMFD k:    0.18230
+
+           CMFD k:    0.16942
+
+           CMFD k:    0.15963
+
+           CMFD k:    0.15139
+
+           CMFD k:    0.14534
+
+           CMFD k:    0.13975
+
+           CMFD k:    0.13535
+
+           CMFD k:    0.13170
+
+           CMFD k:    0.12867
+
+           CMFD k:    0.12604
+
+           CMFD k:    0.12332
+
+           CMFD k:    0.12083
+
+           CMFD k:    0.11851
+
+           CMFD k:    0.11643
+
+           CMFD k:    0.11449
+
+           CMFD k:    0.11258
+
+           CMFD k:    0.11097
+
+           CMFD k:    0.10958
+
+           CMFD k:    0.10816
+
+           CMFD k:    0.10661
+
+           CMFD k:    0.10499
+
+           CMFD k:    0.10331
+
+           CMFD k:    0.10144
+
+           CMFD k:    0.09962
+
+           CMFD k:    0.09782
+
+           CMFD k:    0.09455
+
+           CMFD k:    0.09131
+
+           CMFD k:    0.08803
+
+           CMFD k:    0.08455
+
+           CMFD k:    0.08133
+
+Projected external source distribution (normalized):
+Mesh bin (2, 2, 2, 0): 1.275100e-01
+Mesh bin (2, 2, 2, 1): 8.724900e-01
+
+ ============================>     RESULTS     <============================
+
+ k (Collision)     = 1.05418 +/- 0.00110
+ k (Track-length)  = 1.05354 +/- 0.00101
+ k (Absorption)    = 1.05338 +/- 0.00140
+ Combined k        = 1.05332 +/- 0.00094
+ Leakage Fraction            = 0.55211 +/- 0.00057
+
+=====================>     CMFD TIMING STATISTICS     <====================
+
+   Time in CMFD                    =  2.75884e+00 seconds
+     Building matrices             =  3.61157e-01 seconds
+     Solving matrices              =  3.68864e-01 seconds
+
+F                                %%%%%%%%%%%%%%%
+                           %%%%%%%%%%%%%%%%%%%%%%%%
+                        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                                    %%%%%%%%%%%%%%%%%%%%%%%%
+                                     %%%%%%%%%%%%%%%%%%%%%%%%
+                 ###############      %%%%%%%%%%%%%%%%%%%%%%%%
+                ##################     %%%%%%%%%%%%%%%%%%%%%%%
+                ###################     %%%%%%%%%%%%%%%%%%%%%%%
+                ####################     %%%%%%%%%%%%%%%%%%%%%%
+                #####################     %%%%%%%%%%%%%%%%%%%%%
+                ######################     %%%%%%%%%%%%%%%%%%%%
+                #######################     %%%%%%%%%%%%%%%%%%
+                 #######################     %%%%%%%%%%%%%%%%%
+                 ######################     %%%%%%%%%%%%%%%%%
+                  ####################     %%%%%%%%%%%%%%%%%
+                    #################     %%%%%%%%%%%%%%%%%
+                     ###############     %%%%%%%%%%%%%%%%
+                       ############     %%%%%%%%%%%%%%%
+                          ########     %%%%%%%%%%%%%%
+                                      %%%%%%%%%%%
+
+                 | The OpenMC Monte Carlo Code
+       Copyright | 2011-2025 MIT, UChicago Argonne LLC, and contributors
+         License | https://docs.openmc.org/en/latest/license.html
+         Version | 0.15.4-dev125
+     Commit Hash | 116cba1917d708bf4eb71327e753f0e641d9afa1
+       Date/Time | 2026-07-14 20:01:15
+  OpenMP Threads | 12
+
+ Minimum neutron data temperature: 0 K
+ Maximum neutron data temperature: 1.7976931348623157e+308 K
+           CMFD k:    0.93309
+
+           CMFD k:    0.89180
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    0.52816
+
+           CMFD k:    0.33741
+
+           CMFD k:    0.19005
+
+           CMFD k:    0.17137
+
+           CMFD k:    0.20754
+
+           CMFD k:    0.24351
+
+           CMFD k:    0.27888
+
+           CMFD k:    0.29883
+
+           CMFD k:    0.36228
+
+           CMFD k:    0.46427
+
+           CMFD k:    0.85031
+
+           CMFD k:    0.91861
+
+           CMFD k:    0.98115
+
+           CMFD k:    0.96063
+
+           CMFD k:    0.52628
+
+           CMFD k:    0.36190
+
+           CMFD k:    0.21848
+
+           CMFD k:    0.13737
+
+           CMFD k:    0.14683
+
+           CMFD k:    0.15855
+
+           CMFD k:    0.15902
+
+           CMFD k:    0.15953
+
+           CMFD k:    0.15999
+
+           CMFD k:    0.16056
+
+           CMFD k:    0.16096
+
+           CMFD k:    0.16149
+
+           CMFD k:    0.16188
+
+           CMFD k:    0.17206
+
+           CMFD k:    0.18226
+
+           CMFD k:    0.19233
+
+           CMFD k:    0.20260
+
+           CMFD k:    0.21259
+
+           CMFD k:    0.22240
+
+           CMFD k:    0.23242
+
+           CMFD k:    0.24214
+
+           CMFD k:    0.25194
+
+           CMFD k:    0.26148
+
+           CMFD k:    0.27082
+
+           CMFD k:    0.28046
+
+           CMFD k:    0.28972
+
+           CMFD k:    0.29907
+
+           CMFD k:    0.30819
+
+           CMFD k:    0.31734
+
+           CMFD k:    0.31852
+
+           CMFD k:    0.31974
+
+           CMFD k:    0.32560
+
+           CMFD k:    0.36418
+
+           CMFD k:    0.42162
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    0.86045
+
+           CMFD k:    0.59548
+
+           CMFD k:    0.39360
+
+           CMFD k:    0.33621
+
+           CMFD k:    0.29326
+
+           CMFD k:    0.26694
+
+           CMFD k:    0.24475
+
+           CMFD k:    0.22750
+
+           CMFD k:    0.21261
+
+           CMFD k:    0.20004
+
+           CMFD k:    0.18832
+
+           CMFD k:    0.17872
+
+           CMFD k:    0.17109
+
+           CMFD k:    0.16489
+
+           CMFD k:    0.15950
+
+           CMFD k:    0.15463
+
+           CMFD k:    0.14999
+
+           CMFD k:    0.14577
+
+           CMFD k:    0.14180
+
+           CMFD k:    0.13860
+
+           CMFD k:    0.13525
+
+           CMFD k:    0.13187
+
+           CMFD k:    0.12865
+
+           CMFD k:    0.12557
+
+           CMFD k:    0.12256
+
+           CMFD k:    0.11971
+
+           CMFD k:    0.11697
+
+           CMFD k:    0.11411
+
+           CMFD k:    0.11156
+
+           CMFD k:    0.10911
+
+           CMFD k:    0.10676
+
+           CMFD k:    0.10452
+
+           CMFD k:    0.10236
+
+           CMFD k:    0.10023
+
+           CMFD k:    0.09833
+
+           CMFD k:    0.09638
+
+           CMFD k:    0.09449
+
+           CMFD k:    0.09121
+
+           CMFD k:    0.08812
+
+           CMFD k:    0.08507
+
+           CMFD k:    0.08187
+
+           CMFD k:    0.07884
+
+Projected external source distribution (normalized):
+Mesh bin (2, 2, 2, 0): 1.275100e-01
+Mesh bin (2, 2, 2, 1): 8.724900e-01
+
+ ============================>     RESULTS     <============================
+
+ k (Collision)     = 1.05582 +/- 0.00103
+ k (Track-length)  = 1.05511 +/- 0.00103
+ k (Absorption)    = 1.05655 +/- 0.00112
+ Combined k        = 1.05574 +/- 0.00093
+ Leakage Fraction            = 0.55085 +/- 0.00048
+
+=====================>     CMFD TIMING STATISTICS     <====================
+
+   Time in CMFD                    =  3.36188e+00 seconds
+     Building matrices             =  4.00614e-01 seconds
+     Solving matrices              =  5.32784e-01 seconds
+
+                                %%%%%%%%%%%%%%%
+                           %%%%%%%%%%%%%%%%%%%%%%%%
+                        %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                      %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                                    %%%%%%%%%%%%%%%%%%%%%%%%
+                                     %%%%%%%%%%%%%%%%%%%%%%%%
+                 ###############      %%%%%%%%%%%%%%%%%%%%%%%%
+                ##################     %%%%%%%%%%%%%%%%%%%%%%%
+                ###################     %%%%%%%%%%%%%%%%%%%%%%%
+                ####################     %%%%%%%%%%%%%%%%%%%%%%
+                #####################     %%%%%%%%%%%%%%%%%%%%%
+                ######################     %%%%%%%%%%%%%%%%%%%%
+                #######################     %%%%%%%%%%%%%%%%%%
+                 #######################     %%%%%%%%%%%%%%%%%
+                 ######################     %%%%%%%%%%%%%%%%%
+                  ####################     %%%%%%%%%%%%%%%%%
+                    #################     %%%%%%%%%%%%%%%%%
+                     ###############     %%%%%%%%%%%%%%%%
+                       ############     %%%%%%%%%%%%%%%
+                          ########     %%%%%%%%%%%%%%
+                                      %%%%%%%%%%%
+
+                 | The OpenMC Monte Carlo Code
+       Copyright | 2011-2025 MIT, UChicago Argonne LLC, and contributors
+         License | https://docs.openmc.org/en/latest/license.html
+         Version | 0.15.4-dev125
+     Commit Hash | 116cba1917d708bf4eb71327e753f0e641d9afa1
+       Date/Time | 2026-07-14 20:01:49
+  OpenMP Threads | 12
+
+ Minimum neutron data temperature: 0 K
+ Maximum neutron data temperature: 1.7976931348623157e+308 K
+           CMFD k:    0.93309
+
+           CMFD k:    0.88031
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    nan
+
+           CMFD k:    0.42640
+
+           CMFD k:    0.23044
+
+           CMFD k:    0.19067
+
+           CMFD k:    0.16683
+
+           CMFD k:    0.14998
+
+           CMFD k:    0.13526
+
+           CMFD k:    0.10994
+
+           CMFD k:    0.09553
+
+           CMFD k:    0.08960
+
+           CMFD k:    0.08431
+
+           CMFD k:    0.08275
+
+           CMFD k:    0.08071
+
+           CMFD k:    0.07824
+
+           CMFD k:    0.07668
+
+           CMFD k:    0.07461
+
+           CMFD k:    0.07312
+
+           CMFD k:    0.07201
+
+           CMFD k:    0.07092
+
+           CMFD k:    0.06856
+
+           CMFD k:    0.06632
+
+           CMFD k:    0.06375
+
+           CMFD k:    0.06192
+
+           CMFD k:    0.06058
+
+           CMFD k:    0.05914
+
+           CMFD k:    0.05789
+
+           CMFD k:    0.05619
+
+           CMFD k:    0.05598
+
+           CMFD k:    0.05593
+
+           CMFD k:    0.05560
+
+           CMFD k:    0.05517
+
+           CMFD k:    0.05460
+
+           CMFD k:    0.05425
+
+           CMFD k:    0.05382
+
+           CMFD k:    0.05352
+
+           CMFD k:    0.05336
+
+           CMFD k:    0.05301
+
+           CMFD k:    0.05275
+
+           CMFD k:    0.05257
+
+           CMFD k:    0.05239
+
+           CMFD k:    0.05242
+
+           CMFD k:    0.05234
+
+           CMFD k:    0.05220
+
+           CMFD k:    0.05157
+
+           CMFD k:    0.05090
+
+           CMFD k:    0.05046
+
+           CMFD k:    0.04987
+
+           CMFD k:    0.04953
+
+           CMFD k:    0.04900
+
+           CMFD k:    0.04848
+
+           CMFD k:    0.04789
+
+           CMFD k:    0.04737
+
+           CMFD k:    0.04696
+
+           CMFD k:    0.04679
+
+           CMFD k:    0.04652
+
+           CMFD k:    0.04634
+
+           CMFD k:    0.04617
+
+           CMFD k:    0.04604
+
+           CMFD k:    0.04605
+
+           CMFD k:    0.04606
+
+           CMFD k:    0.04604
+
+           CMFD k:    0.04603
+
+           CMFD k:    0.04600
+
+           CMFD k:    0.04595
+
+           CMFD k:    0.04590
+
+           CMFD k:    0.04584
+
+           CMFD k:    0.04576
+
+           CMFD k:    0.04568
+
+           CMFD k:    0.04559
+
+           CMFD k:    0.04551
+
+           CMFD k:    0.04543
+
+           CMFD k:    0.04534
+
+           CMFD k:    0.04524
+
+           CMFD k:    0.04516
+
+           CMFD k:    0.04507
+
+           CMFD k:    0.04497
+
+           CMFD k:    0.04488
+
+           CMFD k:    0.04480
+
+           CMFD k:    0.04471
+
+           CMFD k:    0.04460
+
+           CMFD k:    0.04450
+
+           CMFD k:    0.04441
+
+           CMFD k:    0.04430
+
+           CMFD k:    0.04420
+
+           CMFD k:    0.04409
+
+           CMFD k:    0.04400
+
+           CMFD k:    0.04391
+
+           CMFD k:    0.04382
+
+           CMFD k:    0.04374
+
+           CMFD k:    0.04365
+
+           CMFD k:    0.04357
+
+           CMFD k:    0.04339
+
+           CMFD k:    0.04318
+
+           CMFD k:    0.04302
+
+           CMFD k:    0.04290
+
+           CMFD k:    0.04280
+
+Projected external source distribution (normalized):
+Mesh bin (2, 2, 2, 0): 1.275100e-01
+Mesh bin (2, 2, 2, 1): 8.724900e-01
+
+ ============================>     RESULTS     <============================
+
+ k (Collision)     = 0.96544 +/- 0.00063
+ k (Track-length)  = 0.96564 +/- 0.00061
+ k (Absorption)    = 0.96482 +/- 0.00084
+ Combined k        = 0.96533 +/- 0.00044
+ Leakage Fraction            = 0.59083 +/- 0.00034
+
+=====================>     CMFD TIMING STATISTICS     <====================
+
+   Time in CMFD                    =  2.78580e+00 seconds
+     Building matrices             =  3.51570e-01 seconds
+     Solving matrices              =  4.08017e-01 seconds
+
+F
+
+=================================== FAILURES ===================================
+__________________________ test_model_is_subcritical ___________________________
+
+offcenter = <test_subcritical_cmfd_solve.CapturingCMFDRun object at 0x7660738a5eb0>
+
+    def test_model_is_subcritical(offcenter):
+        """Most solves must be physical; if not, the cube isn't subcritical (or the
+        0 K temperature bug is back) and every downstream test is meaningless."""
+        phys = _physical(offcenter.captured)
+        frac = len(phys) / len(offcenter.captured)
+>       assert frac > 0.6, (
+            f"only {frac:.0%} of CMFD solves were physically subcritical -- check "
+            "temperature (should be 294 K) and that the geometry is subcritical")
+E       AssertionError: only 50% of CMFD solves were physically subcritical -- check temperature (should be 294 K) and that the geometry is subcritical
+E       assert 0.5 > 0.6
+
+/workspaces/subcritical/openmc/tests/regression_tests/subcritical_multiplication_cmfd/test_subcritical_cmfd_solve.py:164: AssertionError
+________________________ test_cmfd_M_matches_transport _________________________
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-15/test_cmfd_M_matches_transport0')
+
+    @pytest.mark.slow
+    def test_cmfd_M_matches_transport(tmp_path):
+        model = build_model(source_xyz=(0.0, 0.0, 0.0), **MED)
+        run = build_cmfd_run(feedback=True)
+        sp_path = _run_in(tmp_path, model, run)
+    
+        tail = _physical(run.captured[-15:])
+        assert len(tail) >= 5, (
+            "too few physical CMFD solves near convergence; model may be near/over "
+            "critical")
+        M_cmfd = float(np.mean([c["M"] for c in tail]))
+        k_cmfd = float(np.mean([c["keff"] for c in tail]))
+        with openmc.StatePoint(sp_path) as sp:
+            M_mc, k_mc = sp.multiplication.n, sp.keff.n
+    
+        assert abs(M_cmfd - M_mc) / M_mc < 0.10, f"CMFD M={M_cmfd:.4f} vs MC {M_mc:.4f}"
+>       assert abs(k_cmfd - k_mc) < 0.05, f"CMFD k={k_cmfd:.4f} vs MC {k_mc:.4f}"
+E       AssertionError: CMFD k=0.0997 vs MC 1.0533
+E       assert 0.953666303830222 < 0.05
+E        +  where 0.953666303830222 = abs((0.0996574466094475 - 1.0533237504396695))
+
+/workspaces/subcritical/openmc/tests/regression_tests/subcritical_multiplication_cmfd/test_subcritical_cmfd_solve.py:240: AssertionError
+_________________________ test_feedback_does_not_bias __________________________
+
+tmp_path = PosixPath('/tmp/pytest-of-ubuntu/pytest-15/test_feedback_does_not_bias0')
+
+    @pytest.mark.slow
+    def test_feedback_does_not_bias(tmp_path):
+        """CMFD feedback must accelerate convergence WITHOUT moving the answer.
+        Compare feedback-on vs feedback-off using the SAME in-memory driver and
+        model, so the only difference is the reweighting -- this isolates a feedback
+        bias from any executable-vs-library or temperature/seed confound."""
+        d_on = tmp_path / "on"; d_on.mkdir()
+        sp_on = _run_in(d_on, build_model(**MED), build_cmfd_run(feedback=True))
+        v_on, s_on = _absorption(sp_on)
+    
+        d_off = tmp_path / "off"; d_off.mkdir()
+        sp_off = _run_in(d_off, build_model(**MED), build_cmfd_run(feedback=False))
+        v_off, s_off = _absorption(sp_off)
+    
+        z = abs(v_on - v_off) / np.sqrt(s_on ** 2 + s_off ** 2)
+>       assert z < 4.0, (
+            f"feedback-on {v_on:.4e}+/-{s_on:.1e} vs feedback-off "
+            f"{v_off:.4e}+/-{s_off:.1e} at z={z:.2f}")
+E       AssertionError: feedback-on 1.0838e+01+/-4.0e-01 vs feedback-off 1.2927e+01+/-1.3e-01 at z=4.94
+E       assert np.float64(4.942967417265432) < 4.0
+
+/workspaces/subcritical/openmc/tests/regression_tests/subcritical_multiplication_cmfd/test_subcritical_cmfd_solve.py:258: AssertionError
+=================== 3 failed, 4 passed in 101.45s (0:01:41) ====================

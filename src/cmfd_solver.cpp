@@ -18,7 +18,12 @@
 #include "openmc/tallies/tally.h"
 #include "openmc/vector.h"
 
+#include "openmc/cmfd_source_projection.h"
+
 namespace openmc {
+
+xt::xtensor<double, 4> external_src_cmfd;
+bool external_src_projection_on {false};
 
 namespace cmfd {
 
@@ -566,6 +571,44 @@ void free_memory_cmfd()
 
   // Set pointers to null
   cmfd::mesh = nullptr;
+}
+
+// ================================================================================
+// Projection of external source onto CMFD mesh for subcritical multiplication
+// mode
+// ================================================================================
+
+extern "C" void openmc_project_external_source_to_cmfd(int32_t mesh_id,
+  const double* egrid, int ng, int64_t n_sample_particles,
+  const int* cmfd_indices, double* src_out)
+{
+  // Get the mesh
+  if (model::mesh_map.find(mesh_id) == model::mesh_map.end()) {
+    fatal_error(
+      fmt::format("Mesh {} not found for source projection", mesh_id));
+  }
+
+  int32_t mesh_idx = model::mesh_map.at(mesh_id);
+  auto* mesh = dynamic_cast<StructuredMesh*>(model::meshes[mesh_idx].get());
+
+  if (!mesh) {
+    fatal_error("Mesh for external source projection must be StructuredMesh");
+  }
+
+  // Convert egrid to vector
+  std::vector<double> egrid_vec(egrid, egrid + ng + 1);
+
+  // Convert indices to array
+  std::array<int, 4> indices;
+  std::copy(cmfd_indices, cmfd_indices + 4, indices.begin());
+
+  // Call projection function
+  auto src_proj = cmfd::project_external_source_to_mesh(
+    mesh, egrid_vec, n_sample_particles, indices);
+
+  // Copy result to output array
+  int total = indices[0] * indices[1] * indices[2] * indices[3];
+  std::copy(src_proj.data(), src_proj.data() + total, src_out);
 }
 
 } // namespace openmc

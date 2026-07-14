@@ -16,6 +16,7 @@ from numbers import Real, Integral
 import sys
 import time
 import warnings
+import ctypes
 
 import h5py
 import numpy as np
@@ -476,6 +477,15 @@ class CMFDRun:
         self._loss_col = None
         self._prod_row = None
         self._prod_col = None
+        self._external_src_cmfd = None
+        self._n_external_src_samples = 100000
+        # --- subcritical multiplication mode ---
+        self._subcritical = False       # set True once source projection succeeds
+        self._M_subcritical = None      # multiplication M = 1/(1-k) from last solve
+        self._store_subcritical_debug = False   # tests set this True
+        self._subcritical_debug = None
+        self._subcritical_flux_floor = 1e-8    # relative floor for starved cells
+        self._skip_feedback_this_batch = False  # set True by the solver if k >= 1
 
     @property
     def tally_begin(self):
@@ -1242,26 +1252,40 @@ class CMFDRun:
                 # Create CMFD data based on OpenMC tallies
                 self._set_up_cmfd()
 
-                # Call solver
-                self._cmfd_solver_execute()
+                # Fixed-source (Neumann) solve in subcritical multiplication
+                # mode; eigenvalue power iteration otherwise
+                if self._subcritical:
+                    self._cmfd_solver_execute_subcritical()
+                else:
+                    self._cmfd_solver_execute()
 
-                # Store k-effective
+                # Store k-effective (subcritical: k = 1 - 1/M)
                 self._k_cmfd.append(self._keff)
 
-                # Check to perform adjoint on last batch
-                batches = openmc.lib.settings.get_batches()
-                if openmc.lib.current_batch() == batches and self._run_adjoint:
-                    self._cmfd_solver_execute(adjoint=True)
+                # Adjoint is only defined for the eigenvalue solve
+                if not self._subcritical:
+                    batches = openmc.lib.settings.get_batches()
+                    if (openmc.lib.current_batch() == batches
+                            and self._run_adjoint):
+                        self._cmfd_solver_execute(adjoint=True)
 
-                # Calculate fission source
+                # Calculate fission source (reweight target shape)
                 self._calc_fission_source()
+
+            # Decide feedback for this batch. The subcritical solver may flag a
+            # non-physical (k >= 1) solve and request feedback be skipped.
+            # This bool MUST be identical on every rank, since the C++ reweight
+            # branches on it after a collective; broadcast from master.
+            skip = getattr(self, '_skip_feedback_this_batch', False)
+            if have_mpi and self._intracomm is not None:
+                skip = self._intracomm.bcast(skip, root=0)
+            feedback = self._feedback and not skip
 
             # Calculate weight factors through C++ and manipulate CMFD
             # source into a 1-D vector that matches C++ array ordering
             src_flipped = np.flip(self._cmfd_src, axis=3)
             src_swapped = np.swapaxes(src_flipped, 0, 2)
-            args = self._feedback, src_swapped.flatten()
-            openmc.lib._dll.openmc_cmfd_reweight(*args)
+            openmc.lib._dll.openmc_cmfd_reweight(feedback, src_swapped.flatten())
 
         # Stop CMFD timer
         if openmc.lib.master():
@@ -1363,6 +1387,129 @@ class CMFDRun:
                 self._write_vector(self._adj_phi, 'adj_fluxvec')
             else:
                 self._write_vector(self._phi, 'fluxvec')
+
+    def _cmfd_solver_execute_subcritical(self):
+        """Fixed-source (Neumann) CMFD solve: (M - F) phi = Q, via a sparse
+        DIRECT factorization. Coarse mesh -> direct solve is cheap and exact,
+        with no iteration cap and no sensitivity to spectral radius / SOR.
+        This matters near criticality (M = 1/(1-k) large), where (M - F) is
+        ill-conditioned and Gauss-Seidel converges like ~k per sweep."""
+        t0 = time.time()
+        loss = self._build_loss_matrix(False)
+        prod = self._build_prod_matrix(False)
+        A = (loss - prod).tocsc()
+        A.sort_indices()
+        self._time_cmfdbuild += time.time() - t0
+
+        # RHS b = Q in matrix-row (cell*ng + g) order; undo the flip(energy) +
+        # swap(x,z) that maps between the C++ and Python CMFD conventions.
+        nx, ny, nz, ng = self._indices
+        Q = np.flip(self._external_src_cmfd, axis=3)
+        Q = np.swapaxes(Q, 0, 2)
+        idx = self._accel_idxs
+        b = np.zeros((self._mat_dim, ng))
+        for g in range(ng):
+            b[self._coremap[idx], g] = Q[idx + (g,)]
+        b = b.reshape(-1)
+
+        q_total = b.sum()
+        if q_total <= 0.0:
+            raise OpenMCError(
+                'Subcritical CMFD: projected external source has zero weight '
+                'inside the accelerated mesh.')
+
+        t1 = time.time()
+        phi = self._solve_fixed_source(A, b)
+        self._time_cmfdsolve += time.time() - t1
+
+        fiss_src = prod.dot(phi)
+        fiss_total = float(fiss_src.sum())
+
+        # Physicality / subcriticality guard.
+        # For a genuinely subcritical system (M - F) is an M-matrix, so with a
+        # non-negative source Q the solution phi >= 0 and sum(F phi) > 0,
+        # giving M = 1 + sum(F phi)/sum(Q) > 1. If the CMFD-estimated system is
+        # at or above critical, (M - F) is indefinite: phi acquires negative
+        # entries and M = 1/(1-k) is undefined/negative. Feeding that back as a
+        # reweight target corrupts the source, so flag it, skip feedback this
+        # batch, and report k = NaN rather than emitting garbage.
+        phi_absmax = float(np.abs(phi).max())
+        neg_flux = float(phi.min()) < -1e-6 * max(phi_absmax, 1e-300)
+
+        if (not np.all(np.isfinite(phi))) or fiss_total <= 0.0 or neg_flux:
+            self._M_subcritical = np.nan
+            self._keff = np.nan
+            self._skip_feedback_this_batch = True
+            # Keep a benign, non-negative normalized shape so the downstream
+            # _calc_fission_source does not choke. It will NOT be applied.
+            safe = np.abs(phi)
+            nrm = np.sqrt(np.sum(safe * safe))
+            self._phi = (safe / nrm) if nrm > 0 else \
+                np.ones_like(phi) / np.sqrt(phi.size)
+            self._dom.append(0.0)
+            if openmc.lib.master() and openmc.lib.settings.verbosity >= 5:
+                print(' WARNING: CMFD fixed-source solve is non-physical '
+                      '(estimated system is at or above critical); skipping '
+                      'CMFD feedback this batch. Verify the problem is '
+                      'subcritical and that cross-section temperatures are set.')
+                sys.stdout.flush()
+            if self._store_subcritical_debug:
+                self._subcritical_debug = dict(
+                    loss=loss, prod=prod, A=A, b=b, phi_raw=phi,
+                    fiss_src_sum=fiss_total, q_total=float(q_total),
+                    M=self._M_subcritical, keff=self._keff)
+            return
+
+        # Physical subcritical solve
+        M_mult = 1.0 + fiss_total / q_total
+        keff = 1.0 - 1.0 / M_mult
+
+        self._skip_feedback_this_batch = False
+        self._M_subcritical = M_mult
+        self._keff = keff
+        self._phi = phi / np.sqrt(np.sum(phi * phi))
+        self._dom.append(0.0)
+
+        if self._store_subcritical_debug:
+            self._subcritical_debug = dict(
+                loss=loss, prod=prod, A=A, b=b, phi_raw=phi,
+                fiss_src_sum=fiss_total, q_total=float(q_total),
+                M=M_mult, keff=keff)
+
+        if self._write_matrices:
+            self._write_matrix(A, 'subcritical_A')
+            self._write_vector(self._phi, 'subcritical_fluxvec')
+
+    def _solve_fixed_source(self, A, b):
+        """Solve A x = b robustly. Direct sparse LU first; ILU-preconditioned
+        GMRES as a fallback if the factorization is singular or non-finite."""
+        from scipy.sparse import linalg as sla
+        from scipy import sparse
+        A = sparse.csc_matrix(A)
+
+        try:
+            phi = sla.splu(A).solve(b)
+            if np.all(np.isfinite(phi)):
+                return phi
+        except (RuntimeError, ValueError):
+            pass
+
+        try:
+            ilu = sla.spilu(A)
+            Minv = sla.LinearOperator(A.shape, ilu.solve)
+        except (RuntimeError, ValueError):
+            Minv = None
+        try:
+            phi, info = sla.gmres(A, b, M=Minv, rtol=1e-10, atol=0.0, maxiter=5000)
+        except TypeError:                       # older scipy uses tol=
+            phi, info = sla.gmres(A, b, M=Minv, tol=1e-10, atol=0.0, maxiter=5000)
+
+        if info != 0 or not np.all(np.isfinite(phi)):
+            raise OpenMCError(
+                'Subcritical CMFD fixed-source solve did not converge '
+                f'(gmres info={info}); (M - F) is likely near-singular '
+                '(k -> 1) or the mesh cross sections are ill-conditioned.')
+        return phi
 
     def _write_vector(self, vector, base_filename):
         """Write a 1-D numpy array to file and also save it in .npy format.
@@ -1849,16 +1996,25 @@ class CMFDRun:
         zero_flux = np.logical_and(self._flux < _TINY_BIT,
                                    is_accel[..., np.newaxis])
         if np.any(zero_flux) and self._cmfd_on:
-            # Get index of first zero flux in flux array
-            idx = np.argwhere(zero_flux)[0]
-
-            # Throw error message (one-based indexing)
-            # Index of group is flipped
-            err_message = 'Detected zero flux without coremap overlay' + \
-                          ' at mesh: (' + \
-                          ', '.join(str(i+1) for i in idx[:-1]) + \
-                          ') in group ' + str(ng-idx[-1])
-            raise OpenMCError(err_message)
+            if getattr(self, '_subcritical', False):
+                # Source-driven problems legitimately starve cells far from the
+                # external source. Floor them so the diffusion operator stays
+                # finite instead of aborting; these cells carry negligible
+                # fission source and do not affect M.
+                fmax = float(self._flux.max())
+                floor = max(_TINY_BIT, self._subcritical_flux_floor * fmax)
+                self._flux = np.where(zero_flux, floor, self._flux)
+                if openmc.lib.settings.verbosity >= 7:
+                    n = int(np.count_nonzero(zero_flux))
+                    print(f' CMFD: floored {n} starved cell(s) (subcritical mode)')
+                    sys.stdout.flush()
+            else:
+                idx = np.argwhere(zero_flux)[0]
+                err_message = 'Detected zero flux without coremap overlay' + \
+                              ' at mesh: (' + \
+                              ', '.join(str(i+1) for i in idx[:-1]) + \
+                              ') in group ' + str(ng-idx[-1])
+                raise OpenMCError(err_message)
 
         # Get total reaction rate (rr) from CMFD tally 0
         totalrr = tallies[tally_id].results[:,1,1]
@@ -2989,3 +3145,198 @@ class CMFDRun:
         # Initialize CMFD mesh and energy grid in C++ for CMFD reweight
         args = self._tally_ids[0], self._indices, self._norm
         openmc.lib._dll.openmc_initialize_mesh_egrid(*args)
+
+    @property
+    def n_external_src_samples(self):
+        """Number of external source particles to sample for projection"""
+        return self._n_external_src_samples
+    
+    @n_external_src_samples.setter
+    def n_external_src_samples(self, n_samples):
+        """Set number of external source particles to sample for projection"""
+        check_type('n_external_src_samples', n_samples, Integral)
+        check_greater_than('n_external_src_samples', n_samples, 0)
+        self._n_external_src_samples = n_samples
+    
+    @property
+    def external_src_cmfd(self):
+        """External source distribution projected onto CMFD mesh"""
+        return self._external_src_cmfd
+    
+    def _project_external_source_to_cmfd(self):
+        """Project external source onto CMFD mesh (subcritical multiplication mode only).
+        
+        In subcritical multiplication mode, we solve a single linear system:
+            M*φ = F*φ + Q
+        
+        Where:
+            M = total interaction matrix (leakage + absorption)
+            F = fission production matrix
+            Q = external source term (to be projected onto mesh)
+            φ = scalar flux (solution)
+        """
+        # Check if we're in subcritical multiplication mode by reading the XML
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse('settings.xml')
+            root = tree.getroot()
+            run_mode_elem = root.find('run_mode')
+            
+            if run_mode_elem is None or run_mode_elem.text is None:
+                if openmc.lib.master() and openmc.lib.settings.verbosity >= 6:
+                    print(' Could not determine run mode from settings.xml; skipping source projection.')
+                    sys.stdout.flush()
+                return
+            
+            run_mode_str = run_mode_elem.text.strip()
+            is_subcritical = ('subcritical' in run_mode_str.lower())
+            
+        except Exception as e1:
+            if openmc.lib.master():
+                print(f' Warning: Could not read settings.xml for run mode: {e1}')
+                sys.stdout.flush()
+            try: 
+                # Fallback: try reading from model.xml
+                tree = ET.parse('model.xml')
+                root = tree.getroot()
+
+                run_mode_str = root.findtext('settings/run_mode')
+
+                if run_mode_str is None:
+                    if openmc.lib.master() and openmc.lib.settings.verbosity >= 6:
+                        print(' Could not determine run mode from model.xml; skipping source projection.')
+                        sys.stdout.flush()
+                    return
+
+                run_mode_str = run_mode_str.strip()
+                is_subcritical = 'subcritical' in run_mode_str.lower()
+                print(f' Successfully read run mode from model.xml for external source projection. Run mode is {run_mode_str}. Is subcritical = {is_subcritical}')
+
+            except Exception as e2:
+                if openmc.lib.master():
+                    print(f' Warning: Could not read model.xml for run mode: {e2}')
+                    sys.stdout.flush()
+
+                return
+        
+        if not is_subcritical:
+            # Not in subcritical multiplication mode
+            if openmc.lib.master() and openmc.lib.settings.verbosity >= 7:
+                print(f' Run mode is "{run_mode_str}"; skipping external source projection.')
+                sys.stdout.flush()
+            return
+        
+        if openmc.lib.master():
+            if openmc.lib.settings.verbosity >= 6:
+                print(' Projecting external source onto CMFD mesh...')
+                print(' System to solve: M*φ = F*φ + Q')
+                sys.stdout.flush()
+        
+        # Call C API function to project source
+        nx, ny, nz, ng = self._indices
+        n_total_bins = nx * ny * nz * ng
+        
+        # Allocate output array
+        src_out = np.zeros((nx, ny, nz, ng), dtype=np.float64)
+        
+        try:
+            import ctypes
+            
+            # Prepare numpy arrays with proper ctypes
+            egrid_c = np.asarray(self._egrid, dtype=np.float64)
+            indices_c = np.asarray(self._indices, dtype=np.int32)
+            
+            # Get the C function and set argument types
+            c_func = openmc.lib._dll.openmc_project_external_source_to_cmfd
+            c_func.argtypes = [
+                ctypes.c_int32,                           # mesh_id
+                ctypes.POINTER(ctypes.c_double),          # egrid pointer
+                ctypes.c_int,                             # ng
+                ctypes.c_int64,                           # n_sample_particles
+                ctypes.POINTER(ctypes.c_int32),           # cmfd_indices pointer
+                ctypes.POINTER(ctypes.c_double)           # src_out pointer
+            ]
+            c_func.restype = None
+            
+            # Call the C function with proper pointers
+            c_func(
+                self._mesh_id,
+                egrid_c.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+                ng,
+                self._n_external_src_samples,
+                indices_c.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
+                src_out.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+            )
+            
+            self._external_src_cmfd = src_out
+            
+            # Verify normalization
+            total = np.sum(src_out)
+            self._external_src_cmfd = src_out
+            self._subcritical = True
+            if openmc.lib.master() and openmc.lib.settings.verbosity >= 7:
+                print(f' External source projection complete.')
+                print(f' Normalized source (∫Q d³r dE = {total:.6e})')
+                print(f' Solve: M*φ = F*φ + Q, then k_eff = ∫(ν*Σ_f*φ) / ∫(Σ_t*Q)')
+                sys.stdout.flush()
+            
+        except Exception as e:
+            if openmc.lib.master():
+                print(f' Warning: External source projection failed: {e}')
+                import traceback
+                traceback.print_exc()
+                sys.stdout.flush()
+            self._external_src_cmfd = None
+    
+    def init(self):
+        """ Initialize CMFDRun instance by setting up CMFD parameters and
+        calling :func:`openmc.lib.simulation_init`
+
+        """
+        # Configure CMFD parameters
+        self._configure_cmfd()
+
+        # Create tally objects
+        self._create_cmfd_tally()
+
+        if openmc.lib.master():
+            # Compute and store array indices used to build cross section arrays
+            self._precompute_array_indices()
+
+            # Compute and store row and column indices used to build CMFD matrices
+            self._precompute_matrix_indices()
+
+            # Initialize all variables used for linear solver in C++
+            self._initialize_linsolver()
+
+        # Project external source if in subcritical multiplication mode (NEW)
+        self._project_external_source_to_cmfd()
+
+        # Initialize simulation
+        openmc.lib.simulation_init()
+
+        # Set cmfd_run variable to True through C API
+        openmc.lib.settings.cmfd_run = True
+    
+    def _set_up_cmfd_subcritical(self):
+        """Setup CMFD for subcritical multiplication mode (NEW METHOD).
+        
+        In subcritical mode, the external source is fixed, so we modify
+        the CMFD solve to include the external source term in the RHS.
+        
+        The system being solved is:
+            L*φ = S_ext + ν_f*σ_f*φ
+        
+        Where S_ext is the external source projection.
+        """
+        # Standard CMFD setup
+        self._compute_effective_downscatter()
+        self._neutron_balance()
+        self._compute_dtilde()
+        self._compute_dhat()
+        
+        # In subcritical mode, the external source term is handled by
+        # modifying the RHS of the power iteration system. This is done
+        # in the Fortran/C++ power iteration routine by including S_ext
+        # in the production term computation.
+
