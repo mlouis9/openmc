@@ -51,6 +51,7 @@ array<double, 2> mG_sum;
 array<double, 2> RG_sum;
 array<double, 2> keff_fixed_src_sum;
 vector<double> entropy;
+std::vector<std::vector<double>> entropy_by_gen;
 xt::xtensor<double, 1> source_frac;
 
 std::vector<std::vector<std::array<double, 2>>> k_by_gen_generation;
@@ -1067,6 +1068,78 @@ void shannon_entropy()
   }
 }
 
+void shannon_entropy_by_gen()
+{
+  if (!simulation::entropy_mesh)
+    return;
+
+  // ---------------------------------------------------------------------
+  // Determine the global maximum generation tag present in the source bank.
+  // This must be reduced across ranks: count_sites() below performs a
+  // collective MPI_Reduce, so *every* rank has to call it the same number of
+  // times or the run will deadlock.
+  // ---------------------------------------------------------------------
+  int n_max_local = -1;
+  for (int64_t i = 0; i < static_cast<int64_t>(simulation::source_bank.size());
+       ++i) {
+    n_max_local = std::max(
+      n_max_local, static_cast<int>(simulation::source_bank[i].generation_tag));
+  }
+  int n_max = n_max_local;
+#ifdef OPENMC_MPI
+  MPI_Allreduce(&n_max_local, &n_max, 1, MPI_INT, MPI_MAX, mpi::intracomm);
+#endif
+
+  if (n_max < 0) {
+    if (mpi::master)
+      simulation::entropy_by_gen.emplace_back();
+    return;
+  }
+
+  // Bucket this rank's source bank by generation tag
+  std::vector<std::vector<SourceSite>> banks(n_max + 1);
+  for (int64_t i = 0; i < static_cast<int64_t>(simulation::source_bank.size());
+       ++i) {
+    const auto& site = simulation::source_bank[i];
+    int g = static_cast<int>(site.generation_tag);
+    if (g < 0)
+      continue;
+    if (g > n_max)
+      g = n_max; // defensive; shouldn't happen after the Allreduce
+    banks[g].push_back(site);
+  }
+
+  std::vector<double> H_gen(n_max + 1, 0.0);
+  bool any_outside = false;
+
+  for (int g = 0; g <= n_max; ++g) {
+    bool sites_outside = false;
+    xt::xtensor<double, 1> p = simulation::entropy_mesh->count_sites(
+      banks[g].data(), static_cast<int64_t>(banks[g].size()), &sites_outside);
+
+    if (mpi::master) {
+      double total = xt::sum(p)();
+      double H = std::numeric_limits<double>::quiet_NaN();
+      if (total > 0.0) {
+        p /= total;
+        H = 0.0;
+        for (auto p_i : p) {
+          if (p_i > 0.0)
+            H -= p_i * std::log2(p_i);
+        }
+      }
+      H_gen[g] = H;
+      any_outside = any_outside || sites_outside;
+    }
+  }
+
+  if (mpi::master) {
+    if (any_outside)
+      warning("Source site(s) outside of entropy box (by-generation entropy).");
+    simulation::entropy_by_gen.push_back(std::move(H_gen));
+  }
+}
+
 void ufs_count_sites()
 {
   if (simulation::current_batch == 1 && simulation::current_gen == 1) {
@@ -1186,6 +1259,73 @@ void write_eigenvalue_hdf5(hid_t group)
   write_dataset(group, "k_generation", k_generation);
   if (settings::entropy_on) {
     write_dataset(group, "entropy", simulation::entropy);
+
+    // --- By-generation Shannon entropy -----------------------------------
+    // Ragged rows are padded to the global max with NaN so the dataset is
+    // rectangular: shape (n_sim_generations, n_gen_max).
+    if (!simulation::entropy_by_gen.empty()) {
+      size_t n_rows = simulation::entropy_by_gen.size();
+      size_t n_cols = 0;
+      for (const auto& row : simulation::entropy_by_gen)
+        n_cols = std::max(n_cols, row.size());
+
+      xt::xtensor<double, 2> ent_by_gen({n_rows, std::max<size_t>(n_cols, 1)});
+      ent_by_gen.fill(std::numeric_limits<double>::quiet_NaN());
+      for (size_t i = 0; i < n_rows; ++i) {
+        for (size_t g = 0; g < simulation::entropy_by_gen[i].size(); ++g) {
+          ent_by_gen(i, g) = simulation::entropy_by_gen[i][g];
+        }
+      }
+      write_dataset(group, "entropy_by_gen", ent_by_gen);
+    }
+  }
+
+  // --- Full k_by_gen history -----------------------------------------------
+  // simulation::k_by_gen_generation[g] is the time series of {mean, std} for
+  // generation tag g. Later tags start being tracked later, so their series
+  // are shorter; they are right-aligned (a tag, once present, is evaluated
+  // every subsequent generation). Padded with NaN.
+  if (!simulation::k_by_gen_generation.empty()) {
+    size_t n_g = simulation::k_by_gen_generation.size();
+    size_t n_rows = 0;
+    for (const auto& series : simulation::k_by_gen_generation)
+      n_rows = std::max(n_rows, series.size());
+
+    if (n_rows > 0) {
+      xt::xtensor<double, 3> kbg({n_rows, n_g, 2});
+      kbg.fill(std::numeric_limits<double>::quiet_NaN());
+      for (size_t g = 0; g < n_g; ++g) {
+        const auto& series = simulation::k_by_gen_generation[g];
+        size_t offset = n_rows - series.size(); // right-align
+        for (size_t i = 0; i < series.size(); ++i) {
+          kbg(offset + i, g, 0) = series[i][0];
+          kbg(offset + i, g, 1) = series[i][1];
+        }
+      }
+      write_dataset(group, "k_by_gen_generation", kbg);
+    }
+
+    // Final batch-averaged value per generation tag
+    size_t n_avg = simulation::k_by_gen.size();
+    if (n_avg > 0) {
+      xt::xtensor<double, 2> kbg_avg({n_avg, 2});
+      for (size_t g = 0; g < n_avg; ++g) {
+        kbg_avg(g, 0) = simulation::k_by_gen[g];
+        kbg_avg(g, 1) = (g < simulation::k_by_gen_std.size())
+                          ? simulation::k_by_gen_std[g]
+                          : 0.0;
+      }
+      write_dataset(group, "k_by_gen", kbg_avg);
+    }
+
+    if (!simulation::particles_per_generation.empty()) {
+      write_dataset(group, "particles_per_generation",
+        simulation::particles_per_generation);
+    }
+    if (!simulation::cumulative_multiplication_by_gen.empty()) {
+      write_dataset(group, "cumulative_multiplication_by_gen",
+        simulation::cumulative_multiplication_by_gen);
+    }
   }
   if (settings::eigenvalue_like()) {
     write_dataset(group, "k_col_abs", simulation::k_col_abs);

@@ -38,6 +38,10 @@ extern array<double, 2> mG_sum;
 extern array<double, 2> RG_sum;
 extern array<double, 2> keff_fixed_src_sum;
 extern vector<double> entropy; //!< Shannon entropy at each generation
+//! Shannon entropy of the source, resolved by generation tag.
+//! entropy_by_gen[i][g] = entropy of the generation-g subset of the source at
+//! simulation generation i. Ragged: row i has length (n_max at gen i) + 1.
+extern std::vector<std::vector<double>> entropy_by_gen;
 extern xt::xtensor<double, 1> source_frac; //!< Source fraction for UFS
 
 } // namespace simulation
@@ -99,6 +103,10 @@ void synchronize_bank();
 //! Calculates the Shannon entropy of the fission source distribution to assess
 //! source convergence
 void shannon_entropy();
+
+//! Calculate Shannon entropy separately for each generation tag present in the
+//! source bank. Must be called on all MPI ranks (count_sites is collective).
+void shannon_entropy_by_gen();
 
 //! Determines the source fraction in each UFS mesh cell and reweights the
 //! source bank so that the sum of the weights is equal to n_particles. The

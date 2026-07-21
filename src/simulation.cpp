@@ -140,6 +140,7 @@ int openmc_simulation_init()
   simulation::n_external_source_gen.clear();
   simulation::global_tally_external_source = 0;
   simulation::entropy.clear();
+  simulation::entropy_by_gen.clear();
   openmc_reset();
 
   // If this is a restart run, load the state point data and binary source
@@ -752,8 +753,14 @@ void finalize_generation()
         settings::calculate_subcritical_k)) {
     // Calculate shannon entropy
     if (settings::entropy_on &&
-        settings::solver_type == SolverType::MONTE_CARLO)
+        settings::solver_type == SolverType::MONTE_CARLO) {
       shannon_entropy();
+      if ((settings::run_mode == RunMode::FIXED_SOURCE &&
+            settings::calculate_subcritical_k) ||
+          settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+        shannon_entropy_by_gen();
+      }
+    }
 
     // Collect results and statistics
     calculate_generation_k();
@@ -1111,6 +1118,7 @@ void free_memory_simulation()
   simulation::k_generation.clear();
   simulation::kq_generation.clear();
   simulation::entropy.clear();
+  simulation::entropy_by_gen.clear();
 }
 
 void accumulate_generation_k_estimators(Particle& p)

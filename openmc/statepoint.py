@@ -61,6 +61,18 @@ class StatePoint:
         Date and time at which statepoint was written
     entropy : numpy.ndarray
         Shannon entropy of fission source at each batch
+    entropy_by_gen : numpy.ndarray
+        Shannon entropy of the source resolved by generation tag, shape
+        (n_generations, n_generation_tags), NaN-padded
+    k_by_gen : numpy.ndarray
+        Batch-averaged k estimate for each generation tag, as ufloats
+    k_by_gen_generation : numpy.ndarray
+        Per-generation-tag k estimate for every simulation generation, as
+        ufloats, shape (n_generations, n_generation_tags)
+    particles_per_generation : numpy.ndarray
+        Number of source particles carrying each generation tag
+    cumulative_multiplication_by_gen : numpy.ndarray
+        Cumulative product of k_by_gen through each generation
     filters : dict
         Dictionary whose keys are filter IDs and whose values are Filter
         objects
@@ -252,6 +264,19 @@ class StatePoint:
             return None
 
     @property
+    def entropy_by_gen(self):
+        """Shannon entropy of each generation-tagged subset of the source.
+
+        Shape is (n_simulation_generations, n_generation_tags). Entries are
+        NaN where that generation tag was not yet present in the source or
+        contained no particles.
+        """
+        if 'entropy_by_gen' in self._f:
+            return self._f['entropy_by_gen'][()]
+        else:
+            return None
+
+    @property
     def filters(self):
         if not self._filters_read:
             filters_group = self._f['tallies/filters']
@@ -352,6 +377,49 @@ class StatePoint:
                 raise ValueError(
                     f'keff_fixed_src_generation shape ({arr.shape}) must be either 1d or 2d'
                 )
+        else:
+            return None
+        
+    @property
+    def k_by_gen_generation(self):
+        """Per-generation-tag k estimate for every simulation generation.
+
+        Returns an array of ufloats with shape
+        (n_simulation_generations, n_generation_tags). Entries are NaN before
+        that generation tag existed.
+        """
+        if 'k_by_gen_generation' in self._f:
+            arr = self._f['k_by_gen_generation'][()]
+            if arr.ndim != 3 or arr.shape[-1] != 2:
+                raise ValueError(
+                    f'k_by_gen_generation shape ({arr.shape}) must be (n, g, 2)'
+                )
+            return uarray(arr[:, :, 0], arr[:, :, 1])
+        else:
+            return None
+
+    @property
+    def k_by_gen(self):
+        """Batch-averaged k estimate for each generation tag, as ufloats."""
+        if 'k_by_gen' in self._f:
+            arr = self._f['k_by_gen'][()]
+            return uarray(arr[:, 0], arr[:, 1])
+        else:
+            return None
+
+    @property
+    def particles_per_generation(self):
+        """Number of particles carrying each generation tag (last generation)."""
+        if 'particles_per_generation' in self._f:
+            return self._f['particles_per_generation'][()]
+        else:
+            return None
+
+    @property
+    def cumulative_multiplication_by_gen(self):
+        """Cumulative product of k_by_gen up to and including each generation."""
+        if 'cumulative_multiplication_by_gen' in self._f:
+            return self._f['cumulative_multiplication_by_gen'][()]
         else:
             return None
 
