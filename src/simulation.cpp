@@ -277,26 +277,6 @@ int openmc_next_batch(int* status)
       precalculate_generation_counts();
     }
 
-    for (int i = 0; i < simulation::k_by_gen.size(); i++) {
-      double kq = simulation::kq * settings::n_particles /
-                  simulation::particles_per_generation[0]; // Normalize
-      fmt::print(
-        "Generation {}: cumulative_multiplication_by_gen = {}, particles per "
-        "generation = {}, fraction = {}, k_by_gen = {} kq = {}\n ",
-        i + 1, simulation::cumulative_multiplication_by_gen[i],
-        simulation::particles_per_generation[i + 1],
-        (double)simulation::particles_per_generation[i + 1] /
-          settings::n_particles,
-        simulation::k_by_gen[i], kq);
-      //   fmt::print("Generation {}: cumulative_multiplication_by_gen = {},
-      //   "
-      //              "particles per generation = {}, fraction = {}\n ",
-      //     i + 1, simulation::cumulative_multiplication_by_gen[i],
-      //     simulation::particles_per_generation[i],
-      //     (double)simulation::particles_per_generation[i] /
-      //       settings::n_particles);
-    }
-
     // Start timer for transport
     simulation::time_transport.start();
 
@@ -752,9 +732,10 @@ void finalize_generation()
     if (settings::entropy_on &&
         settings::solver_type == SolverType::MONTE_CARLO) {
       shannon_entropy();
-      if ((settings::run_mode == RunMode::FIXED_SOURCE &&
-            settings::calculate_subcritical_k) ||
-          settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+      if (((settings::run_mode == RunMode::FIXED_SOURCE &&
+             settings::calculate_subcritical_k) ||
+            (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION)) &&
+          !settings::subcritical_light) {
         shannon_entropy_by_gen();
       }
     }

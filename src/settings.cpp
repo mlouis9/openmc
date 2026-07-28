@@ -134,6 +134,7 @@ bool calculate_subcritical_k {false};
 bool print_all_k_factors {false};
 bool tally_covariance_with_k {false};
 bool embedded_tally_scaling {false};
+bool subcritical_light {false};
 std::unordered_set<int> source_write_surf_id;
 CollisionTrackConfig collision_track_config {};
 int64_t ssw_max_particles;

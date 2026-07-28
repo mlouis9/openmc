@@ -378,6 +378,8 @@ class Settings:
         Indicate whether to calculate the covariance of tallies with k in subcritical multiplication simulations
     embedded_tally_scaling : bool
         Whether to enable embedded tally scaling in subcritical multiplicaiton simulations
+    subcritical_light : bool
+        Whether to enable a lighter, in terms of memory usage, simulation which does not store by generation entropy.
     """
 
     def __init__(self, **kwargs):
@@ -394,7 +396,7 @@ class Settings:
         self._print_all_k_factors = False
         self._tally_covariance_with_k = False
         self._embedded_tally_scaling = False
-
+        self._subcritical_light = False
         # Energy mode subelement
         self._energy_mode = None
         self._max_order = None
@@ -1449,6 +1451,15 @@ class Settings:
         self._tally_covariance_with_k = tally_covariance_with_k
 
     @property
+    def subcritical_light(self) -> bool:
+        return self._subcritical_light
+
+    @subcritical_light.setter
+    def subcritical_light(self, subcritical_light: bool):
+        cv.check_type('subcritical light', subcritical_light, bool)
+        self._subcritical_light = subcritical_light
+
+    @property
     def embedded_tally_scaling(self) -> bool:
         return self._embedded_tally_scaling
     
@@ -2014,6 +2025,11 @@ class Settings:
             elem = ET.SubElement(root, "embedded_tally_scaling")
             elem.text = str(self._embedded_tally_scaling).lower()
 
+    def _create_subcritical_light_subelement(self, root):
+        if self._subcritical_light:
+            elem = ET.SubElement(root, "subcritical_light")
+            elem.text = str(self._subcritical_light).lower()
+
     def _eigenvalue_from_xml_element(self, root):
         elem = root.find('eigenvalue')
         if elem is not None:
@@ -2500,6 +2516,11 @@ class Settings:
         if text is not None:
             self.embedded_tally_scaling = text in ('true', '1')
 
+    def _subcritical_light_from_xml_element(self, root):
+        text = get_text(root, 'subcritical_light')
+        if text is not None:
+            self.subcritical_light = text in ('true', '1')
+
     def to_xml_element(self, mesh_memo=None):
         """Create a 'settings' element to be written to an XML file.
 
@@ -2575,6 +2596,7 @@ class Settings:
         self._create_calculate_subcritical_k_subelement(element)
         self._create_print_all_k_factors_subelement(element)
         self._create_tally_covariance_with_k_subelement(element)
+        self._create_subcritical_light_subelement(element)
         self._create_embedded_tally_scaling_subelement(element)
 
         # Clean the indentation in the file to be user-readable
