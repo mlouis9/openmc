@@ -119,6 +119,10 @@ int openmc_simulation_init()
     resize_per_generation_tallies(settings::n_batches);
     simulation::k_by_gen_generation_val.clear();
     simulation::particles_per_generation.assign(settings::n_batches, 0);
+    // G is determined entirely by n_inactive; set it once here so that
+    // initialize_generation() — which runs before any history sets it —
+    // never indexes global_tallies_by_gen[G-1] with G == 0.
+    simulation::G = settings::n_inactive > 0 ? settings::n_inactive + 1 : 10;
   }
 
   // Set up material nuclide index mapping
@@ -801,7 +805,6 @@ void initialize_history(Particle& p, int64_t index_source)
                    settings::n_particles +
                  simulation::work_index[mpi::rank] + index_source;
     uint64_t seed = init_seed(id, STREAM_SOURCE);
-    simulation::G = settings::n_inactive > 0 ? settings::n_inactive + 1 : 10;
     if (settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
       double rnd = prn(&seed);
       double k_avg = 0.0;

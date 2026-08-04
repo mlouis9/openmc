@@ -706,6 +706,20 @@ void read_settings_xml(pugi::xml_node root)
     }
   }
 
+  if (check_for_node(root, "subcritical_light")) {
+    if (run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
+      if (solver_type != SolverType::MONTE_CARLO) {
+        fatal_error("The 'subcritical_light' setting is only valid in "
+                    "subcritical multiplication mode with the Monte Carlo "
+                    "solver.");
+      }
+      subcritical_light = get_node_value_bool(root, "subcritical_light");
+    } else {
+      fatal_error("The 'subcritical_light' setting is only valid in "
+                  "subcritical multiplication mode.");
+    }
+  }
+
   if (check_for_node(root, "print_all_k_factors")) {
     if ((run_mode == RunMode::FIXED_SOURCE &&
           settings::calculate_subcritical_k) ||
