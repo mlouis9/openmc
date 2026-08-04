@@ -670,6 +670,9 @@ void finalize_generation()
       settings::n_particles + global_tally_tracklength_sq;
   }
 
+  // Per-generation-tag tally accumulation. Bounded (fixed n_batches storage)
+  // and feeds the scalar kq/mG/RG estimators below, so it stays on in light
+  // mode.
   if ((settings::run_mode == RunMode::FIXED_SOURCE &&
         settings::calculate_subcritical_k) ||
       settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION) {
@@ -770,16 +773,25 @@ void finalize_generation()
         }
       }
 
-      calculate_all_generation_k_by_tag();
+      // ---- Per-generation-TAG breakdown (subcritical_light gates this) -----
+      // This is the ONLY part that is O(n_batches^2) in memory and
+      // O(n_batches^3) in time. calculate_all_generation_k_by_tag() loops all
+      // n_batches tags every generation and unconditionally push_backs onto
+      // k_by_gen_generation[g] for every g, so that structure grows to
+      // ~n_batches^2 entries (~10 GB at 25000). Light mode skips it, and the
+      // cumulative-multiplication weighting that depends on it.
+      if (!settings::subcritical_light) {
+        calculate_all_generation_k_by_tag();
 
-      // Update cumulative multiplication by gen
-      double product = 1.0;
-      for (int i = 0; i < simulation::k_by_gen.size(); i++) {
-        product *= simulation::k_by_gen[i];
-        if (i < simulation::cumulative_multiplication_by_gen.size()) {
-          simulation::cumulative_multiplication_by_gen[i] = product;
-        } else {
-          simulation::cumulative_multiplication_by_gen.push_back(product);
+        // Update cumulative multiplication by gen
+        double product = 1.0;
+        for (int i = 0; i < simulation::k_by_gen.size(); i++) {
+          product *= simulation::k_by_gen[i];
+          if (i < simulation::cumulative_multiplication_by_gen.size()) {
+            simulation::cumulative_multiplication_by_gen[i] = product;
+          } else {
+            simulation::cumulative_multiplication_by_gen.push_back(product);
+          }
         }
       }
     }
@@ -838,16 +850,22 @@ void initialize_history(Particle& p, int64_t index_source)
   }
   // weight particle according to generation_weight and
   // generation_cumulative_weight
-  if (settings::embedded_tally_scaling) {
+  if (settings::embedded_tally_scaling && !settings::subcritical_light) {
     p.generation_weight() =
       (double)settings::n_particles /
       simulation::particles_per_generation[p.generation_tag()];
     if (p.generation_tag() >= 1) {
-      p.generation_cumulative_weight() = p.generation_cumulative_weight() =
+      p.generation_cumulative_weight() =
         simulation::cumulative_multiplication_by_gen[p.generation_tag() - 1];
     } else {
       p.generation_cumulative_weight() = 1.0;
     }
+  } else if (settings::embedded_tally_scaling) {
+    // subcritical_light: the per-tag cumulative multiplication needed for
+    // embedded generation weighting is not computed, so fall back to unit
+    // weights rather than indexing the (empty) per-generation arrays.
+    p.generation_weight() = 1.0;
+    p.generation_cumulative_weight() = 1.0;
   }
 
   p.current_work() = index_source;
