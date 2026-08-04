@@ -1404,8 +1404,7 @@ class CMFDRun:
         # RHS b = Q in matrix-row (cell*ng + g) order; undo the flip(energy) +
         # swap(x,z) that maps between the C++ and Python CMFD conventions.
         nx, ny, nz, ng = self._indices
-        Q = np.flip(self._external_src_cmfd, axis=3)
-        Q = np.swapaxes(Q, 0, 2)
+        Q = self._external_src_cmfd
         idx = self._accel_idxs
         b = np.zeros((self._mat_dim, ng))
         for g in range(ng):
