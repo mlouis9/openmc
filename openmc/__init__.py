@@ -38,6 +38,16 @@ from .config import *
 
 # Import a few names from the model module
 from openmc.model import Model, SearchResult
+from .scm_transport import SCMOperatorResult, SCMCoupledOperator, KFactors, \
+    KOverride, ForcedKSequence, FrozenComposition, CompositionPerturbation, \
+    VariableParticleCount
+from .scm_matrix_utils import split_full_matrix, exposure_matrix, calendar_matrix
+from .scm_integrators import ExposureIntegrator, CalendarIntegrator, \
+    RegulatedBeamIntegrator, StepStats
+from .scm_trajectory import SCMTrajectory, StepRecord, WindowTooShort
+from .scm_loop_gain import (measure_forward_injection, measure_return_path,
+    predicted_loop_gain, cumulative_gain, step_stability_margin, critical_step_size)
+from . import scm_ensembles
 
 from . import examples
 

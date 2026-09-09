@@ -72,6 +72,27 @@ int openmc_get_material_index(int32_t id, int32_t* index);
 int openmc_get_mesh_index(int32_t id, int32_t* index);
 int openmc_get_n_batches(int* n_batches, bool get_max_batches);
 int openmc_get_nuclide_index(const char name[], int* index);
+
+//! Return the subcritical multiplication estimators (k, kq, ks) and their
+//! standard errors accumulated over the just-completed run.
+//!
+//! Valid after openmc_run() (or a openmc_simulation_init/next_batch/
+//! finalize sequence) in RunMode::SUBCRITICAL_MULTIPLICATION, or in
+//! RunMode::FIXED_SOURCE with settings::calculate_subcritical_k == true.
+//! In the latter case k_out is converted from the internally tallied
+//! multiplication factor via the same k = 1 - 1/M transform
+//! print_generation() applies for display (eigenvalue.cpp:convert_m_to_k);
+//! kq_out and ks_out are returned as tallied, unconverted, matching
+//! existing print_all_k_factors output in both run modes.
+//!
+//! \param[out] k_out  {mean, std} of k
+//! \param[out] kq_out {mean, std} of kq
+//! \param[out] ks_out {mean, std} of ks
+//! \return Error code: OPENMC_E_ALLOCATE if the simulation has not been
+//!   initialized; OPENMC_E_INVALID_ARGUMENT if the run mode does not
+//!   compute these estimators at all.
+int openmc_get_subcritical_k_factors(
+  double k_out[2], double kq_out[2], double ks_out[2]);
 int openmc_add_unstructured_mesh(
   const char filename[], const char library[], int* id);
 int64_t openmc_get_seed();

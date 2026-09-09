@@ -323,6 +323,47 @@ bool openmc_is_statepoint_batch()
     return contains(settings::statepoint_batch, simulation::current_batch);
 }
 
+int openmc_get_subcritical_k_factors(
+  double k_out[2], double kq_out[2], double ks_out[2])
+{
+  using namespace openmc;
+
+  if (!simulation::initialized) {
+    set_errmsg("Simulation has not been initialized yet.");
+    return OPENMC_E_ALLOCATE;
+  }
+
+  bool computed = settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION ||
+                  (settings::run_mode == RunMode::FIXED_SOURCE &&
+                    settings::calculate_subcritical_k);
+  if (!computed) {
+    set_errmsg("Subcritical multiplication estimators (k, kq, ks) are only "
+               "computed in RunMode::SUBCRITICAL_MULTIPLICATION, or in "
+               "RunMode::FIXED_SOURCE with settings.calculate_subcritical_k "
+               "= True.");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  if (settings::run_mode == RunMode::FIXED_SOURCE) {
+    // simulation::k stores the raw tallied multiplication factor in this
+    // mode; convert to k the same way print_generation() does for display
+    // (see eigenvalue.cpp:convert_m_to_k).
+    auto [k0, k1] = convert_m_to_k(simulation::k, simulation::k_std);
+    k_out[0] = k0;
+    k_out[1] = k1;
+  } else {
+    k_out[0] = simulation::k;
+    k_out[1] = simulation::k_std;
+  }
+
+  kq_out[0] = simulation::kq;
+  kq_out[1] = simulation::kq_std;
+  ks_out[0] = simulation::ks;
+  ks_out[1] = simulation::ks_std;
+
+  return 0;
+}
+
 namespace openmc {
 
 //==============================================================================
