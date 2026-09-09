@@ -60,6 +60,10 @@ _dll.openmc_init.errcheck = _error_handler
 _dll.openmc_get_keff.argtypes = [POINTER(c_double*2)]
 _dll.openmc_get_keff.restype = c_int
 _dll.openmc_get_keff.errcheck = _error_handler
+_dll.openmc_get_subcritical_k_factors.argtypes = [
+    POINTER(c_double*2), POINTER(c_double*2), POINTER(c_double*2)]
+_dll.openmc_get_subcritical_k_factors.restype = c_int
+_dll.openmc_get_subcritical_k_factors.errcheck = _error_handler
 _dll.openmc_initialize_mesh_egrid.argtypes = [
     c_int, _array_1d_int, c_double
 ]
@@ -410,6 +414,29 @@ def keff():
     k = (c_double*2)()
     _dll.openmc_get_keff(k)
     return tuple(k)
+
+
+def subcritical_k_factors():
+    """Return the subcritical multiplication estimators (k, kq, ks) and
+    their standard deviations, accumulated over the just-completed run.
+
+    Valid after :func:`run` (or an :func:`simulation_init` /
+    :func:`next_batch` / :func:`simulation_finalize` sequence) in
+    ``RunMode.SUBCRITICAL_MULTIPLICATION``, or in ``RunMode.FIXED_SOURCE``
+    with ``settings.calculate_subcritical_k = True``. Mirrors
+    ``openmc_get_subcritical_k_factors`` in simulation.cpp.
+
+    Returns
+    -------
+    tuple
+        (k, k_std, kq, kq_std, ks, ks_std)
+
+    """
+    k = (c_double*2)()
+    kq = (c_double*2)()
+    ks = (c_double*2)()
+    _dll.openmc_get_subcritical_k_factors(k, kq, ks)
+    return tuple(k) + tuple(kq) + tuple(ks)
 
 
 def master():
