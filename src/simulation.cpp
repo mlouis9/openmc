@@ -328,10 +328,17 @@ int openmc_get_subcritical_k_factors(
 {
   using namespace openmc;
 
-  if (!simulation::initialized) {
-    set_errmsg("Simulation has not been initialized yet.");
-    return OPENMC_E_ALLOCATE;
-  }
+  // No simulation::initialized check here, deliberately: openmc_run()
+  // (bound as openmc.lib.run()) performs simulation_init(), all batches,
+  // and simulation_finalize() as a single atomic call, so by the time
+  // control returns to Python, simulation::initialized is already false
+  // -- exactly the same state openmc_get_keff() is read in for every
+  // ordinary (non-SCM) depletion step, immediately after run(). An
+  // initialized-only guard here breaks that same, standard call
+  // pattern; simulation::k/kq/ks are plain doubles set during the run
+  // and are not deallocated or invalidated by simulation_finalize(), so
+  // reading them afterward is exactly as safe as openmc_get_keff()
+  // already assumes it is.
 
   bool computed = settings::run_mode == RunMode::SUBCRITICAL_MULTIPLICATION ||
                   (settings::run_mode == RunMode::FIXED_SOURCE &&
