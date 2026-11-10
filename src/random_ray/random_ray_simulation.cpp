@@ -276,6 +276,21 @@ void validate_random_ray_inputs()
       "quality FW-CADIS weight windows. We recommend you use flat source "
       "mode when generating weight windows with an overlaid mesh tally.");
   }
+
+  // Validate the tandem residual method field export
+  ///////////////////////////////////////////////////////////////////
+  if (!FlatSourceDomain::rmc_field_file_.empty()) {
+    if (settings::run_mode != RunMode::EIGENVALUE) {
+      fatal_error("rmc_field_file requires an eigenvalue random ray run.");
+    }
+    if (FlatSourceDomain::adjoint_requested_) {
+      fatal_error("rmc_field_file is not supported with adjoint solves.");
+    }
+    if (mpi::n_procs > 1) {
+      fatal_error(
+        "rmc_field_file does not yet support more than one MPI rank.");
+    }
+  }
 }
 
 void openmc_finalize_random_ray()

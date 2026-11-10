@@ -3,6 +3,7 @@ from enum import Enum
 import itertools
 from math import ceil
 from numbers import Integral, Real
+import os
 from pathlib import Path
 import traceback
 
@@ -225,6 +226,11 @@ class Settings:
         :adjoint:
             Whether to run the random ray solver in adjoint mode (bool). The
             default is 'False'.
+        :rmc_field_file:
+            Path of an HDF5 file to which the converged source-region
+            emission sources are written for the tandem residual method
+            (str or os.PathLike, experimental). Requires an eigenvalue run
+            on a single MPI rank, without adjoint mode.
         :sample_method:
             Sampling method for the ray starting location and direction of
             travel. Options are `prng` (default), `halton`, or `s2`. `s2`
@@ -1446,6 +1452,8 @@ class Settings:
                 cv.check_type('source gradient limiter', value, bool)
             elif key == 'adjoint':
                 cv.check_type('adjoint', value, bool)
+            elif key == 'rmc_field_file':
+                cv.check_type('RMC field file', value, (str, os.PathLike))
             elif key == 'source_region_meshes':
                 cv.check_type('source region meshes', value, Iterable)
                 for mesh, domains in value:
@@ -2537,6 +2545,8 @@ class Settings:
                     self.random_ray['adjoint'] = (
                         child.text in ('true', '1')
                     )
+                elif child.tag == 'rmc_field_file':
+                    self.random_ray['rmc_field_file'] = child.text
                 elif child.tag == 'source_gradient_limiter':
                     self.random_ray['source_gradient_limiter'] = (
                         child.text in ('true', '1')

@@ -7,6 +7,7 @@
 #include "openmc/random_ray/parallel_map.h"
 #include "openmc/random_ray/source_region.h"
 #include "openmc/source.h"
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -124,6 +125,8 @@ public:
   static bool volume_normalized_flux_tallies_;
   // If the user wants outputs based on the adjoint flux
   static bool adjoint_requested_;
+  // Path of the tandem residual method field export; empty means no export
+  static std::string rmc_field_file_;
   // If the user wants linear source gradients rescaled so the modeled source
   // stays non-negative over each source region
   static bool source_gradient_limiter_;

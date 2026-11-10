@@ -34,6 +34,7 @@ RandomRayVolumeEstimator FlatSourceDomain::resolved_volume_estimator_ {
   RandomRayVolumeEstimator::AUTO};
 bool FlatSourceDomain::volume_normalized_flux_tallies_ {false};
 bool FlatSourceDomain::adjoint_requested_ {false};
+std::string FlatSourceDomain::rmc_field_file_;
 bool FlatSourceDomain::source_gradient_limiter_ {false};
 RandomRaySolve FlatSourceDomain::solve_ {RandomRaySolve::FORWARD};
 bool FlatSourceDomain::fw_cadis_local_ {false};
