@@ -2,8 +2,8 @@ import sys
 import pytest
 from pathlib import Path
 
-# Make examples/rmc_tandem importable as plain modules: `import problems`
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'examples' / 'rmc_tandem'))
+# Make examples/rmc importable as plain modules: `import problems`
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'examples' / 'rmc'))
 
 @pytest.fixture
 def run_in_tmpdir(monkeypatch, tmp_path):

@@ -228,7 +228,7 @@ class Settings:
             default is 'False'.
         :rmc_field_file:
             Path of an HDF5 file to which the converged source-region
-            emission sources are written for the tandem residual method
+            emission sources are written for multilevel residual Monte Carlo
             (str or os.PathLike, experimental). Requires an eigenvalue run
             on a single MPI rank, without adjoint mode.
         :sample_method:

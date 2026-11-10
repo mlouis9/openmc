@@ -1,6 +1,9 @@
 //! \file kinematics.h
-//! Two-body elastic kinematics for a stationary target (A > 1).
-//! Used by the common-output elastic evaluator (method doc §10).
+//! \brief Elastic kinematics for a stationary target with A > 1.
+//!
+//! Theory: docs/source/methods/rmc.rst, section "Elastic Kinematics,
+//! Stationary Target" (label methods_rmc_kinematics). Equation labels are
+//! given per function.
 
 #ifndef OPENMC_RMC_KINEMATICS_H
 #define OPENMC_RMC_KINEMATICS_H
@@ -8,15 +11,22 @@
 namespace openmc {
 namespace rmc {
 
-//! Ratio E_out / E_in for elastic scattering at laboratory cosine mu0.
-//! \param A    target-to-neutron mass ratio, A > 1
-//! \param mu0  laboratory scattering cosine in [-1, 1]
+//! Ratio of outgoing to incident energy, E/E', eq. rmc-gamma.
+//! \param A    Target-to-neutron mass ratio, A > 1
+//! \param mu0  Laboratory scattering cosine in [-1, 1]
+//! \return     E/E' in [((A-1)/(A+1))^2, 1]
 double gamma_A(double A, double mu0);
 
-//! Centre-of-mass cosine corresponding to laboratory cosine mu0.
+//! Center-of-mass cosine for laboratory cosine mu0, eq. rmc-mu-cm.
+//! \param A    Target-to-neutron mass ratio, A > 1
+//! \param mu0  Laboratory scattering cosine in [-1, 1]
+//! \return     Center-of-mass cosine in [-1, 1]
 double mu_cm_from_lab(double A, double mu0);
 
-//! Derivative d(mu_cm)/d(mu0). Positive for A > 1.
+//! Jacobian d(mu_cm)/d(mu0), eq. rmc-dmu. Positive for A > 1.
+//! \param A    Target-to-neutron mass ratio, A > 1
+//! \param mu0  Laboratory scattering cosine in [-1, 1]
+//! \return     d(mu_cm)/d(mu0)
 double dmu_cm_dmu_lab(double A, double mu0);
 
 } // namespace rmc

@@ -277,7 +277,7 @@ void validate_random_ray_inputs()
       "mode when generating weight windows with an overlaid mesh tally.");
   }
 
-  // Validate the tandem residual method field export
+  // Validate the multilevel RMC field export
   ///////////////////////////////////////////////////////////////////
   if (!FlatSourceDomain::rmc_field_file_.empty()) {
     if (settings::run_mode != RunMode::EIGENVALUE) {
