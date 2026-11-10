@@ -24,3 +24,4 @@ Theory and Methodology
     cmfd
     variance_reduction
     random_ray
+    tandem_residual
