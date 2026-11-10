@@ -4,6 +4,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "openmc/rmc/kinematics.h"
+#include <algorithm>
 
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
