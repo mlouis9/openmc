@@ -465,79 +465,8 @@ void RandomRaySimulation::simulate()
     // Update source term (scattering + fission)
     domain_->update_all_neutron_sources();
 
-    // Reset scalar fluxes, iteration volume tallies, and region hit flags
-    // to zero
-    domain_->batch_reset();
-
-    // Check if geometry is 2D or 3D and generate the Voronoi cells that
-    // define each rank's subdomain. Only needed when the problem is actually
-    // decomposed, and only once for this simulation object.
-#ifdef OPENMC_MPI
-    if (mpi::n_procs > 1 && !geometry_setup_complete_) {
-
-      // Check if problem is 3D. This probes the geometry with a few thousand
-      // cell lookups, so it is skipped entirely when not decomposed: geom_dim_
-      // is only read when laying out the Voronoi grid.
-      if (!domain_->is_geometry_3D()) {
-        RandomRay::geom_dim_ = RandomRayGeomDim::TWO_DIM;
-      }
-
-      // Generate Voronoi cells, each of which corresponds to a rank subdomain
-      simulation::time_generate_voronoi_centers.start();
-      mpi::decomp_map.generate_rank_centers();
-      simulation::time_generate_voronoi_centers.stop();
-
-      geometry_setup_complete_ = true;
-    }
-#endif
-
-    // Transport sweep over all random rays for the iteration
-#ifdef OPENMC_MPI
-    if (mpi::n_procs > 1) {
-
-      // Create ray bank to store rays
-      RayBank RB;
-
-      transport_sweep_decomp(RB);
-
-      // Check if any new source regions discovered and if so, exchange
-      // discovered cell data between ranks
-      if (mpi::decomp_map.any_discovered_source_regions(
-            domain_->discovered_source_regions_)) {
-        simulation::time_source_region_exchange.start();
-        mpi::decomp_map.exchange_sr_info(domain_->discovered_source_regions_);
-        MPI_Barrier(mpi::intracomm);
-        simulation::time_source_region_exchange.stop();
-      }
-
-    } else {
-      transport_sweep();
-    }
-#else
-    transport_sweep();
-#endif
-
-    // Add any newly discovered source regions to the main source region
-    // container
-    domain_->finalize_discovered_source_regions();
-
-    // Normalize scalar flux and update volumes
-    domain_->normalize_scalar_flux_and_volumes(
-      settings::n_particles * RandomRay::distance_active_);
-
-#ifdef OPENMC_MPI
-    if (mpi::n_procs > 1 && simulation::current_batch <= ITER_LOAD_BALANCE) {
-      // Balance load between MPI ranks by exchanging source regions
-      simulation::time_load_balance.start();
-      mpi::decomp_map.balance_load(domain_.get());
-      MPI_Barrier(mpi::intracomm);
-      simulation::time_load_balance.stop();
-    }
-#endif
-
-    // Add source to scalar flux (applying any transport stabilization
-    // factors), compute number of FSR hits
-    int64_t n_hits = domain_->add_source_to_scalar_flux();
+    // Transport sweep and new scalar flux iterate
+    int64_t n_hits = sweep();
 
     if (settings::run_mode == RunMode::EIGENVALUE) {
       // Compute random ray k-eff
@@ -606,6 +535,83 @@ void RandomRaySimulation::simulate()
 
   // Output all simulation results
   output_simulation_results();
+}
+
+int64_t RandomRaySimulation::sweep()
+{
+  // Reset scalar fluxes, iteration volume tallies, and region hit flags
+  // to zero
+  domain_->batch_reset();
+
+  // Check if geometry is 2D or 3D and generate the Voronoi cells that
+  // define each rank's subdomain. Only needed when the problem is actually
+  // decomposed, and only once for this simulation object.
+#ifdef OPENMC_MPI
+  if (mpi::n_procs > 1 && !geometry_setup_complete_) {
+
+    // Check if problem is 3D. This probes the geometry with a few thousand
+    // cell lookups, so it is skipped entirely when not decomposed: geom_dim_
+    // is only read when laying out the Voronoi grid.
+    if (!domain_->is_geometry_3D()) {
+      RandomRay::geom_dim_ = RandomRayGeomDim::TWO_DIM;
+    }
+
+    // Generate Voronoi cells, each of which corresponds to a rank subdomain
+    simulation::time_generate_voronoi_centers.start();
+    mpi::decomp_map.generate_rank_centers();
+    simulation::time_generate_voronoi_centers.stop();
+
+    geometry_setup_complete_ = true;
+  }
+#endif
+
+  // Transport sweep over all random rays for the iteration
+#ifdef OPENMC_MPI
+  if (mpi::n_procs > 1) {
+
+    // Create ray bank to store rays
+    RayBank RB;
+
+    transport_sweep_decomp(RB);
+
+    // Check if any new source regions discovered and if so, exchange
+    // discovered cell data between ranks
+    if (mpi::decomp_map.any_discovered_source_regions(
+          domain_->discovered_source_regions_)) {
+      simulation::time_source_region_exchange.start();
+      mpi::decomp_map.exchange_sr_info(domain_->discovered_source_regions_);
+      MPI_Barrier(mpi::intracomm);
+      simulation::time_source_region_exchange.stop();
+    }
+
+  } else {
+    transport_sweep();
+  }
+#else
+  transport_sweep();
+#endif
+
+  // Add any newly discovered source regions to the main source region
+  // container
+  domain_->finalize_discovered_source_regions();
+
+  // Normalize scalar flux and update volumes
+  domain_->normalize_scalar_flux_and_volumes(
+    settings::n_particles * RandomRay::distance_active_);
+
+#ifdef OPENMC_MPI
+  if (mpi::n_procs > 1 && simulation::current_batch <= ITER_LOAD_BALANCE) {
+    // Balance load between MPI ranks by exchanging source regions
+    simulation::time_load_balance.start();
+    mpi::decomp_map.balance_load(domain_.get());
+    MPI_Barrier(mpi::intracomm);
+    simulation::time_load_balance.stop();
+  }
+#endif
+
+  // Add source to scalar flux (applying any transport stabilization
+  // factors), compute number of FSR hits
+  return domain_->add_source_to_scalar_flux();
 }
 
 void RandomRaySimulation::output_simulation_results()

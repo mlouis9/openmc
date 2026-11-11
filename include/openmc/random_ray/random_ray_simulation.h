@@ -25,6 +25,13 @@ public:
   void prepare_local_fixed_sources_adjoint();
   void prepare_adjoint_simulation(bool from_forward);
   void simulate();
+  //! One random ray iteration from the current region sources: reset the
+  //! iteration tallies, transport every ray, add newly discovered source
+  //! regions, normalize, and form the new scalar flux iterate. Does not
+  //! update the sources, compute k, or tally, so that a caller can set the
+  //! sources itself (as multilevel RMC will). Returns the number of source
+  //! regions hit in this iteration.
+  int64_t sweep();
   void output_simulation_results();
   void instability_check(
     int64_t n_hits, double k_eff, double& avg_miss_rate) const;

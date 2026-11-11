@@ -298,4 +298,27 @@ Verified by ``tests/rmc/test_random_ray_ce.py`` (gate G2.5)
 
 Known limitations
     One temperature per material (as the field export). No per-generation
-    entry point from Python yet.
+    entry point from Python yet; see the next entry.
+
+.. _devguide_rmc_sweep_split:
+
+Per-iteration sweep
+-------------------
+
+**Commit:** "random ray: split the transport sweep out of simulate()".
+
+Added
+    ``RandomRaySimulation::sweep()``: one random ray iteration from the
+    current region sources (reset the iteration tallies, transport every
+    ray, add discovered regions, normalize, form the new flux iterate).
+    ``simulate()`` calls it between the source update and the eigenvalue
+    update. Multilevel RMC will call it after setting the sources itself.
+
+Verified
+    The random ray regression tests produce bitwise identical results
+    before and after the split.
+
+Not yet done
+    A C API that sets region sources from an RMC field and calls ``sweep()``
+    once. It needs the mapping from field regions to the domain's regions,
+    which belongs with the segment records and the generation driver.
