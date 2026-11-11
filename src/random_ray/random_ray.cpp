@@ -4,9 +4,9 @@
 #include "openmc/constants.h"
 #include "openmc/geometry.h"
 #include "openmc/message_passing.h"
-#include "openmc/mgxs_interface.h"
 #include "openmc/random_ray/flat_source_domain.h"
 #include "openmc/random_ray/linear_source_domain.h"
+#include "openmc/random_ray/mg_data.h"
 #include "openmc/search.h"
 #include "openmc/settings.h"
 #include "openmc/simulation.h"
@@ -244,9 +244,9 @@ RandomRayGeomDim RandomRay::geom_dim_ {RandomRayGeomDim::THREE_DIM};
 RandomRaySampleMethod RandomRay::sample_method_ {RandomRaySampleMethod::PRNG};
 
 RandomRay::RandomRay()
-  : angular_flux_(data::mg.num_energy_groups_),
-    delta_psi_(data::mg.num_energy_groups_),
-    negroups_(data::mg.num_energy_groups_)
+  : angular_flux_(data::random_ray_mg.n_groups),
+    delta_psi_(data::random_ray_mg.n_groups),
+    negroups_(data::random_ray_mg.n_groups)
 {
   if (source_shape_ == RandomRaySourceShape::LINEAR ||
       source_shape_ == RandomRaySourceShape::LINEAR_XY) {

@@ -3,10 +3,10 @@
 #include "openmc/cell.h"
 #include "openmc/constants.h"
 #include "openmc/message_passing.h"
-#include "openmc/mgxs_interface.h"
 #include "openmc/output.h"
 #include "openmc/random_lcg.h"
 #include "openmc/random_ray/flat_source_domain.h"
+#include "openmc/random_ray/mg_data.h"
 #include "openmc/random_ray/random_ray.h"
 #include "openmc/simulation.h"
 #include "openmc/timer.h"
@@ -26,7 +26,7 @@ DecompositionMap::DecompositionMap() {}
 
 void DecompositionMap::initialize()
 {
-  negroups_ = data::mg.num_energy_groups_;
+  negroups_ = data::random_ray_mg.n_groups;
   estimated_rank_load_fractions_.resize(mpi::n_procs, 0.0);
   measured_rank_load_fractions_.resize(mpi::n_procs, 0.0);
   estimated_rank_load_totals_.resize(mpi::n_procs, 0.0);

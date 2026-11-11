@@ -5,8 +5,8 @@
 
 #include "openmc/geometry.h"
 #include "openmc/message_passing.h"
-#include "openmc/mgxs_interface.h"
 #include "openmc/random_ray/decomposition_map.h"
+#include "openmc/random_ray/mg_data.h"
 #include "openmc/random_ray/random_ray.h"
 #include "openmc/random_ray/source_region.h"
 #include "openmc/timer.h"
@@ -19,7 +19,7 @@ namespace openmc {
 // Constructor
 RayBank::RayBank()
 {
-  negroups_ = data::mg.num_energy_groups_;
+  negroups_ = data::random_ray_mg.n_groups;
   num_messages_receiving_.resize(mpi::n_procs, 0);
   num_messages_sending_.resize(mpi::n_procs, 0);
 }

@@ -12,6 +12,7 @@
 #include "openmc/output.h"
 #include "openmc/plot.h"
 #include "openmc/random_ray/decomposition_map.h"
+#include "openmc/random_ray/mg_data.h"
 #include "openmc/random_ray/random_ray.h"
 #include "openmc/simulation.h"
 #include "openmc/tallies/filter.h"
@@ -46,7 +47,7 @@ std::unordered_map<int, vector<std::pair<Source::DomainType, int>>>
   FlatSourceDomain::mesh_domain_map_;
 std::vector<size_t> FlatSourceDomain::fw_cadis_local_targets_;
 
-FlatSourceDomain::FlatSourceDomain() : negroups_(data::mg.num_energy_groups_)
+FlatSourceDomain::FlatSourceDomain() : negroups_(data::random_ray_mg.n_groups)
 {
   // Count the number of source regions, compute the cell offset
   // indices, and store the material type The reason for the offsets is that
@@ -947,7 +948,7 @@ void FlatSourceDomain::convert_source_regions_to_tallies(int64_t start_sr_id)
       // Set particle to the current energy
       p.g() = g;
       p.g_last() = g;
-      p.E() = data::mg.energy_bin_avg_[p.g()];
+      p.E() = data::random_ray_mg.energy_bin_avg[p.g()];
       p.E_last() = p.E();
 
       // If this task has already been populated, we don't need to do
@@ -1966,7 +1967,7 @@ void FlatSourceDomain::apply_external_source_to_source_region(
   srh.external_source_present() = 1;
 
   for (int i = 0; i < discrete_energies.size(); i++) {
-    int g = data::mg.get_group_index(discrete_energies[i]);
+    int g = data::random_ray_mg.group_index(discrete_energies[i]);
     srh.external_source(g) += discrete_probs[i] * strength_factor;
   }
 }
@@ -2108,76 +2109,37 @@ void FlatSourceDomain::flux_swap()
 
 void FlatSourceDomain::flatten_xs()
 {
-  // Temperature and angle indices, if using multiple temperature
-  // data sets and/or anisotropic data sets.
-  // TODO: Currently assumes we are only using single angle data.
-  const int a = 0;
+  // Copy the flat multigroup tables. The domain keeps its own copies because
+  // an adjoint solve transposes the scattering matrix and swaps nu_sigma_f
+  // and chi in place.
+  const auto& mg = data::random_ray_mg;
+  n_materials_ = mg.n_materials;
+  ntemperature_ = mg.n_temperatures;
+  sigma_t_ = mg.sigma_t;
+  nu_sigma_f_ = mg.nu_sigma_f;
+  sigma_f_ = mg.sigma_f;
+  chi_ = mg.chi;
+  kappa_fission_ = mg.kappa_fission;
+  sigma_s_ = mg.sigma_s;
 
-  n_materials_ = data::mg.macro_xs_.size();
-  ntemperature_ = 1;
   for (int i = 0; i < n_materials_; i++) {
-    ntemperature_ =
-      std::max(ntemperature_, data::mg.macro_xs_[i].n_temperature_points());
-  }
-
-  for (int i = 0; i < n_materials_; i++) {
-    auto& m = data::mg.macro_xs_[i];
     for (int t = 0; t < ntemperature_; t++) {
       for (int g_out = 0; g_out < negroups_; g_out++) {
-        if (m.exists_in_model && t < m.n_temperature_points()) {
-          double sigma_t =
-            m.get_xs(MgxsType::TOTAL, g_out, NULL, NULL, NULL, t, a);
-          sigma_t_.push_back(sigma_t);
-
-          if (sigma_t < MINIMUM_MACRO_XS) {
-            Material* mat = model::materials[i].get();
-            warning(fmt::format(
-              "Material \"{}\" (id: {}) has a group {} total cross section "
-              "({:.3e}) below the minimum threshold "
-              "({:.3e}). Material will be treated as pure void.",
-              mat->name(), mat->id(), g_out, sigma_t, MINIMUM_MACRO_XS));
-          }
-
-          double nu_sigma_f =
-            m.get_xs(MgxsType::NU_FISSION, g_out, NULL, NULL, NULL, t, a);
-          nu_sigma_f_.push_back(nu_sigma_f);
-
-          double sigma_f =
-            m.get_xs(MgxsType::FISSION, g_out, NULL, NULL, NULL, t, a);
-          sigma_f_.push_back(sigma_f);
-
-          double chi =
-            m.get_xs(MgxsType::CHI_PROMPT, g_out, &g_out, NULL, NULL, t, a);
-          if (!std::isfinite(chi)) {
-            // MGXS interface may return NaN in some cases, such as when
-            // material is fissionable but has very small sigma_f.
-            chi = 0.0;
-          }
-          chi_.push_back(chi);
-
-          double kappa_fission =
-            m.get_xs(MgxsType::KAPPA_FISSION, g_out, NULL, NULL, NULL, t, a);
-          kappa_fission_.push_back(kappa_fission);
-
-          for (int g_in = 0; g_in < negroups_; g_in++) {
-            double sigma_s =
-              m.get_xs(MgxsType::NU_SCATTER, g_in, &g_out, NULL, NULL, t, a);
-            sigma_s_.push_back(sigma_s);
-            // For transport corrected XS data, diagonal elements may be
-            // negative. In this case, set a flag to enable transport
-            // stabilization for the simulation.
-            if (g_out == g_in && sigma_s < 0.0)
-              is_transport_stabilization_needed_ = true;
-          }
-        } else {
-          sigma_t_.push_back(0);
-          nu_sigma_f_.push_back(0);
-          sigma_f_.push_back(0);
-          chi_.push_back(0);
-          kappa_fission_.push_back(0);
-          for (int g_in = 0; g_in < negroups_; g_in++) {
-            sigma_s_.push_back(0);
-          }
+        int64_t i_xs = (i * ntemperature_ + t) * negroups_ + g_out;
+        if (mg.exists_in_model[i] && t < mg.kTs[i].size() &&
+            sigma_t_[i_xs] < MINIMUM_MACRO_XS) {
+          Material* mat = model::materials[i].get();
+          warning(fmt::format(
+            "Material \"{}\" (id: {}) has a group {} total cross section "
+            "({:.3e}) below the minimum threshold "
+            "({:.3e}). Material will be treated as pure void.",
+            mat->name(), mat->id(), g_out, sigma_t_[i_xs], MINIMUM_MACRO_XS));
+        }
+        // For transport corrected XS data, diagonal elements may be
+        // negative. In this case, set a flag to enable transport
+        // stabilization for the simulation.
+        if (sigma_s_[i_xs * negroups_ + g_out] < 0.0) {
+          is_transport_stabilization_needed_ = true;
         }
       }
     }
@@ -2510,7 +2472,7 @@ void FlatSourceDomain::export_rmc_field(const std::string& path) const
   write_attribute(file, "n_groups", G);
   write_attribute(file, "n_regions", R);
   write_attribute(file, "group_order", "ascending energy");
-  write_dataset(file, "group_edges", data::mg.rev_energy_bins_);
+  write_dataset(file, "group_edges", data::random_ray_mg.rev_energy_bins);
   hid_t grp = create_group(file, "regions");
   write_dataset(grp, "cell_id", cell_id);
   write_dataset(grp, "instance", instance);
@@ -2820,8 +2782,8 @@ SourceRegionHandle FlatSourceDomain::get_subdivided_source_region_handle(
   // If material total XS is extremely low, just set it to void to avoid
   // problems with 1/Sigma_t
   if (material != MATERIAL_VOID) {
-    temp = data::mg.macro_xs_[material].get_temperature_index(
-      cell.sqrtkT(gs.cell_instance()));
+    temp = data::random_ray_mg.temperature_index(
+      material, cell.sqrtkT(gs.cell_instance()));
     for (int g = 0; g < negroups_; g++) {
       double sigma_t =
         sigma_t_[(material * ntemperature_ + temp) * negroups_ + g];

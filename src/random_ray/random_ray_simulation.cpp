@@ -5,11 +5,11 @@
 #include "openmc/eigenvalue.h"
 #include "openmc/geometry.h"
 #include "openmc/message_passing.h"
-#include "openmc/mgxs_interface.h"
 #include "openmc/output.h"
 #include "openmc/plot.h"
 #include "openmc/random_ray/decomposition_map.h"
 #include "openmc/random_ray/flat_source_domain.h"
+#include "openmc/random_ray/mg_data.h"
 #include "openmc/random_ray/random_ray.h"
 #include "openmc/random_ray/ray_bank.h"
 #include "openmc/simulation.h"
@@ -78,21 +78,19 @@ void validate_random_ray_inputs()
 
   // Validate MGXS data
   ///////////////////////////////////////////////////////////////////
-  for (auto& material : data::mg.macro_xs_) {
-    if (!material.is_isotropic) {
+  const auto& mg = data::random_ray_mg;
+  for (int m = 0; m < mg.n_materials; m++) {
+    if (!mg.is_isotropic[m]) {
       fatal_error("Anisotropic MGXS detected. Only isotropic XS data sets "
                   "supported in random ray mode.");
     }
-    for (int g = 0; g < data::mg.num_energy_groups_; g++) {
-      if (material.exists_in_model) {
-        // Temperature and angle indices, if using multiple temperature
-        // data sets and/or anisotropic data sets.
-        // TODO: Currently assumes we are only using single temp/single angle
-        // data.
+    for (int g = 0; g < mg.n_groups; g++) {
+      if (mg.exists_in_model[m]) {
+        // Temperature index, if using multiple temperature data sets.
+        // TODO: Currently assumes we are only using single temp data.
         const int t = 0;
-        const int a = 0;
         double sigma_t =
-          material.get_xs(MgxsType::TOTAL, g, NULL, NULL, NULL, t, a);
+          mg.sigma_t[(m * mg.n_temperatures + t) * mg.n_groups + g];
         if (sigma_t <= 0.0) {
           fatal_error("No zero or negative total macroscopic cross sections "
                       "allowed in random ray mode. If the intention is to make "
@@ -323,6 +321,7 @@ void openmc_finalize_random_ray()
   FlatSourceDomain::adjoint_requested_ = false;
   FlatSourceDomain::rmc_field_file_.clear();
   FlatSourceDomain::source_region_volume_file_.clear();
+  data::random_ray_mg.clear();
   FlatSourceDomain::source_gradient_limiter_ = false;
   FlatSourceDomain::solve_ = RandomRaySolve::FORWARD;
   FlatSourceDomain::fw_cadis_local_ = false;
@@ -339,7 +338,7 @@ void openmc_finalize_random_ray()
 //==============================================================================
 
 RandomRaySimulation::RandomRaySimulation()
-  : negroups_(data::mg.num_energy_groups_)
+  : negroups_(data::random_ray_mg.n_groups)
 {
   // There are no source sites in random ray mode, so be sure to disable to
   // ensure we don't attempt to write source sites to statepoint
@@ -1135,6 +1134,10 @@ void openmc_run_random_ray()
 
   // Initialize OpenMC general data structures
   openmc_simulation_init();
+
+  // The solver reads its multigroup data from data::random_ray_mg, filled
+  // here from the MGXS library of this multigroup run
+  data::random_ray_mg.fill_from_mgxs();
 
   // Validate that inputs meet requirements for random ray mode
   if (mpi::master)

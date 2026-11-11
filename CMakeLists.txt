@@ -385,6 +385,7 @@ list(APPEND libopenmc_SOURCES
   src/random_ray/random_ray.cpp
   src/random_ray/flat_source_domain.cpp
   src/random_ray/linear_source_domain.cpp
+  src/random_ray/mg_data.cpp
   src/random_ray/moment_matrix.cpp
   src/random_ray/source_region.cpp
   src/rmc/capi.cpp

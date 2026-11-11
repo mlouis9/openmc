@@ -118,6 +118,12 @@ public:
   //! @return The number of temperature data points for this MGXS
   inline int n_temperature_points() { return kTs.size(); }
 
+  //! \brief Provides the temperature of one data point
+  //!
+  //! @param t Index of the temperature data point
+  //! @return kT of that data point [eV]
+  inline double kT(int t) const { return kTs[t]; }
+
   //! \brief Provides a cross section value given certain parameters
   //!
   //! @param xstype Type of cross section requested, according to the
