@@ -10,14 +10,19 @@ import openmc
 
 
 def run_random_ray(ce_model, mesh, workdir, groups='CASMO-8', mgxs_particles=20_000,
-                   rays=2_000, batches=150, inactive=50, field_file='rmc_field.h5'):
+                   rays=2_000, batches=150, inactive=50, field_file='rmc_field.h5',
+                   mgxs_path=None, random_ray=None, seed=None):
     """Convert to multigroup, run random ray, and export the frozen field.
+
+    mgxs_path names an existing MGXS library to reuse (it is generated there
+    if absent); by default it is generated in workdir. random_ray holds extra
+    entries for Settings.random_ray, e.g. the prescribed volume estimator.
 
     Returns (field file path, statepoint path, mgxs.h5 path, MG model).
     """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
-    mgxs_path = workdir / 'mgxs.h5'
+    mgxs_path = Path(mgxs_path) if mgxs_path else workdir / 'mgxs.h5'
 
     mg = copy.deepcopy(ce_model)
     mg.convert_to_multigroup(method='material_wise', groups=groups,
@@ -27,6 +32,10 @@ def run_random_ray(ce_model, mesh, workdir, groups='CASMO-8', mgxs_particles=20_
     mg.settings.random_ray['source_region_meshes'] = [(mesh, [root])]
     mg.settings.random_ray['source_shape'] = 'flat'
     mg.settings.random_ray['rmc_field_file'] = field_file
+    for key, value in (random_ray or {}).items():
+        mg.settings.random_ray[key] = value
+    if seed is not None:
+        mg.settings.seed = seed
     mg.settings.particles = rays
     mg.settings.batches = batches
     mg.settings.inactive = inactive

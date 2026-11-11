@@ -277,6 +277,28 @@ void validate_random_ray_inputs()
       "mode when generating weight windows with an overlaid mesh tally.");
   }
 
+  // Validate prescribed source region volumes
+  ///////////////////////////////////////////////////////////////////
+  bool prescribed = FlatSourceDomain::resolved_volume_estimator_ ==
+                    RandomRayVolumeEstimator::PRESCRIBED;
+  bool have_volume_file = !FlatSourceDomain::source_region_volume_file_.empty();
+  if (prescribed && !have_volume_file) {
+    fatal_error("The prescribed volume estimator requires a "
+                "source_region_volumes file.");
+  }
+  if (have_volume_file && !prescribed) {
+    fatal_error("A source_region_volumes file is used only with the "
+                "prescribed volume estimator.");
+  }
+  if (prescribed && RandomRay::source_shape_ != RandomRaySourceShape::FLAT) {
+    fatal_error("The prescribed volume estimator is only implemented for "
+                "flat source regions.");
+  }
+  if (prescribed && mpi::n_procs > 1) {
+    fatal_error("The prescribed volume estimator does not yet support more "
+                "than one MPI rank.");
+  }
+
   // Validate the multilevel RMC field export
   ///////////////////////////////////////////////////////////////////
   if (!FlatSourceDomain::rmc_field_file_.empty()) {
@@ -299,6 +321,8 @@ void openmc_finalize_random_ray()
   FlatSourceDomain::resolved_volume_estimator_ = RandomRayVolumeEstimator::AUTO;
   FlatSourceDomain::volume_normalized_flux_tallies_ = false;
   FlatSourceDomain::adjoint_requested_ = false;
+  FlatSourceDomain::rmc_field_file_.clear();
+  FlatSourceDomain::source_region_volume_file_.clear();
   FlatSourceDomain::source_gradient_limiter_ = false;
   FlatSourceDomain::solve_ = RandomRaySolve::FORWARD;
   FlatSourceDomain::fw_cadis_local_ = false;
@@ -345,6 +369,7 @@ RandomRaySimulation::RandomRaySimulation()
 void RandomRaySimulation::apply_fixed_sources_and_mesh_domains()
 {
   domain_->apply_meshes();
+  domain_->load_prescribed_volumes();
   if (settings::run_mode == RunMode::FIXED_SOURCE) {
     // Transfer external source user inputs onto random ray source regions
     domain_->convert_external_sources(false);
@@ -397,6 +422,7 @@ void RandomRaySimulation::prepare_adjoint_simulation(bool from_forward)
   } else {
     // Initialize adjoint fixed sources
     domain_->apply_meshes();
+    domain_->load_prescribed_volumes();
     prepare_local_fixed_sources_adjoint();
     domain_->count_external_source_regions();
   }
@@ -794,6 +820,9 @@ void RandomRaySimulation::print_results_random_ray(
       break;
     case RandomRayVolumeEstimator::STRICT_ADAPTIVE:
       estimator = "Strict Adaptive";
+      break;
+    case RandomRayVolumeEstimator::PRESCRIBED:
+      estimator = "Prescribed";
       break;
     default:
       fatal_error("Invalid volume estimator type");

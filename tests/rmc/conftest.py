@@ -46,4 +46,4 @@ def field_files(pincell, tmp_path_factory):
         pipeline.build_volumes(field_path, lift_path, mesh, volume_path,
                                n_per_voxel=2_000, method='python')
     return dict(work=work, field=field_path, lifts=lift_path, volumes=volume_path,
-                statepoint=sp, mgxs=mgxs)
+                statepoint=sp, mgxs=mgxs, rr_kwargs=RR_KWARGS)

@@ -314,6 +314,9 @@ void get_run_parameters(pugi::xml_node node_base)
       } else if (temp_str == "strict_adaptive") {
         FlatSourceDomain::volume_estimator_ =
           RandomRayVolumeEstimator::STRICT_ADAPTIVE;
+      } else if (temp_str == "prescribed") {
+        FlatSourceDomain::volume_estimator_ =
+          RandomRayVolumeEstimator::PRESCRIBED;
       } else if (temp_str == "auto") {
         FlatSourceDomain::volume_estimator_ = RandomRayVolumeEstimator::AUTO;
       } else {
@@ -340,6 +343,10 @@ void get_run_parameters(pugi::xml_node node_base)
     if (check_for_node(random_ray_node, "adjoint")) {
       FlatSourceDomain::adjoint_requested_ =
         get_node_value_bool(random_ray_node, "adjoint");
+    }
+    if (check_for_node(random_ray_node, "source_region_volumes")) {
+      FlatSourceDomain::source_region_volume_file_ =
+        get_node_value(random_ray_node, "source_region_volumes");
     }
     if (check_for_node(random_ray_node, "rmc_field_file")) {
       FlatSourceDomain::rmc_field_file_ =

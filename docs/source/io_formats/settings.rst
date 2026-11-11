@@ -629,10 +629,18 @@ found in the :ref:`random ray user guide <random_ray>`.
   :volume_estimator:
     Specifies choice of volume estimator for the random ray solver. Options
     are 'naive', 'simulation_averaged', 'hybrid', 'adaptive',
-    'strict_adaptive', or 'auto'. The default is 'auto', which selects
-    'adaptive' for standard solves and 'strict_adaptive' for solves whose
-    results feed variance reduction (weight window generation and adjoint
-    workflows).
+    'strict_adaptive', 'prescribed', or 'auto'. The default is 'auto', which
+    selects 'adaptive' for standard solves and 'strict_adaptive' for solves
+    whose results feed variance reduction (weight window generation and
+    adjoint workflows). 'prescribed' reads known volumes from the file given
+    by ``source_region_volumes``.
+
+    *Default*: None
+
+  :source_region_volumes:
+    Path of an HDF5 file of prescribed source region volumes, with datasets
+    ``cell_id``, ``instance``, ``mesh_bin``, and ``volume`` [cm^3]. Required
+    by, and only used with, the 'prescribed' volume estimator.
 
     *Default*: None
 

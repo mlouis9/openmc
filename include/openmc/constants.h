@@ -392,6 +392,7 @@ enum class RandomRayVolumeEstimator {
   HYBRID,
   ADAPTIVE,
   STRICT_ADAPTIVE,
+  PRESCRIBED,
   AUTO
 };
 enum class RandomRaySourceShape { FLAT, LINEAR, LINEAR_XY };

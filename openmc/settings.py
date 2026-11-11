@@ -204,10 +204,21 @@ class Settings:
         :volume_estimator:
             Choice of volume estimator for the random ray solver. Options are
             'naive', 'simulation_averaged', 'hybrid', 'adaptive',
-            'strict_adaptive', or 'auto'. The default is 'auto', which
-            selects 'adaptive' for standard solves and 'strict_adaptive' for
-            solves whose results feed variance reduction (weight window
-            generation and adjoint workflows).
+            'strict_adaptive', 'prescribed', or 'auto'. The default is
+            'auto', which selects 'adaptive' for standard solves and
+            'strict_adaptive' for solves whose results feed variance
+            reduction (weight window generation and adjoint workflows).
+            'prescribed' uses known source region volumes read from the
+            'source_region_volumes' file instead of estimating them.
+        :source_region_volumes:
+            Path of an HDF5 file of prescribed source region volumes, used
+            with the 'prescribed' volume estimator (str or os.PathLike). The
+            file holds four 1D datasets of equal length, one entry per source
+            region: 'cell_id' (int32), 'instance' (int32), 'mesh_bin'
+            (int64; 0 for a cell instance without a source region mesh), and
+            'volume' (float64, in cm^3). Every source region that rays reach
+            must be listed. Only flat source regions on a single MPI rank are
+            supported.
         :source_shape:
             Assumed shape of the source distribution within each source region.
             Options are 'flat' (default), 'linear', or 'linear_xy'.
@@ -1442,7 +1453,7 @@ class Settings:
                 cv.check_value('volume estimator', value,
                                ('naive', 'simulation_averaged',
                                 'hybrid', 'adaptive', 'strict_adaptive',
-                                'auto'))
+                                'prescribed', 'auto'))
             elif key == 'source_shape':
                 cv.check_value('source shape', value,
                                ('flat', 'linear', 'linear_xy'))
@@ -1452,6 +1463,9 @@ class Settings:
                 cv.check_type('source gradient limiter', value, bool)
             elif key == 'adjoint':
                 cv.check_type('adjoint', value, bool)
+            elif key == 'source_region_volumes':
+                cv.check_type('source region volumes', value,
+                              (str, os.PathLike))
             elif key == 'rmc_field_file':
                 cv.check_type('RMC field file', value, (str, os.PathLike))
             elif key == 'source_region_meshes':
@@ -2545,6 +2559,8 @@ class Settings:
                     self.random_ray['adjoint'] = (
                         child.text in ('true', '1')
                     )
+                elif child.tag == 'source_region_volumes':
+                    self.random_ray['source_region_volumes'] = child.text
                 elif child.tag == 'rmc_field_file':
                     self.random_ray['rmc_field_file'] = child.text
                 elif child.tag == 'source_gradient_limiter':

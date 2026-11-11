@@ -1152,6 +1152,16 @@ following methods are currently available in OpenMC:
        * Improves the quality of generated weight windows
      - * The one-sided fixup introduces a small conservative bias, so it is
          not recommended where unbiased results are the priority
+   * - ``prescribed``
+     - Uses known source region volumes, read from a file, in place of any
+       estimate.
+     - * No volume estimation error: the flux update in each iteration is an
+         unbiased estimator given exact volumes
+       * Volumes are identical in every iteration and in every run
+     - * The user must supply a volume for every source region that rays
+         reach
+       * Exact only if the supplied volumes are exact
+       * Flat source regions on a single MPI rank only
 
 By default, the ``volume_estimator`` field is set to ``auto``, which selects
 ``strict_adaptive`` for solves whose results feed variance reduction (weight
@@ -1166,6 +1176,51 @@ estimator, the following code would be used:
 ::
 
     settings.random_ray['volume_estimator'] = 'naive'
+
+Prescribed volumes
+------------------
+
+When the volumes of the source regions are known, for example from the
+analytic geometry of a pin cell, they can be supplied directly::
+
+    settings.random_ray['volume_estimator'] = 'prescribed'
+    settings.random_ray['source_region_volumes'] = 'volumes.h5'
+
+The file is an HDF5 file with four one-dimensional datasets of equal length,
+one entry per source region:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Dataset
+     - Type
+     - Contents
+   * - ``cell_id``
+     - int32
+     - ID of the material-filled cell
+   * - ``instance``
+     - int32
+     - Instance of that cell (0 for a cell that appears once)
+   * - ``mesh_bin``
+     - int64
+     - Bin of the source region mesh applied to the cell instance, or 0 when
+       no mesh is applied
+   * - ``volume``
+     - float64
+     - Volume of the source region [cm\ :sup:`3`]
+
+Source regions are discovered during the simulation. When a newly discovered
+region has no entry in the file, the run stops with an error naming the cell,
+instance, and mesh bin, rather than falling back to an estimated volume.
+Entries for regions that rays never reach are ignored. The track-length
+volume estimates are still accumulated, and are used only to decide whether a
+region was hit in a given iteration and to compute its centroid.
+
+A region whose mesh bin lies entirely inside one cell instance has the
+volume of the mesh bin, so prescribed volumes are simplest when the source
+region mesh is aligned with the material boundaries, or when the material
+boundaries have simple shapes (such as a cylinder crossing rectangular mesh
+bins, whose intersection areas have closed forms).
 
 The ``auto`` setting is the default, as it gives reliable behavior out of
 the box across problem types. The adaptive estimator is especially valuable

@@ -37,6 +37,7 @@ RandomRayVolumeEstimator FlatSourceDomain::resolved_volume_estimator_ {
 bool FlatSourceDomain::volume_normalized_flux_tallies_ {false};
 bool FlatSourceDomain::adjoint_requested_ {false};
 std::string FlatSourceDomain::rmc_field_file_;
+std::string FlatSourceDomain::source_region_volume_file_;
 bool FlatSourceDomain::source_gradient_limiter_ {false};
 RandomRaySolve FlatSourceDomain::solve_ {RandomRaySolve::FORWARD};
 bool FlatSourceDomain::fw_cadis_local_ {false};
@@ -334,6 +335,16 @@ void FlatSourceDomain::normalize_scalar_flux_and_volumes(
     source_regions_.scalar_flux_new(se) *= normalization_factor;
   }
 
+  // With the prescribed estimator, the volume used by the flux update, the
+  // eigenvalue, and the tallies is the prescribed volume, expressed (like every
+  // volume in the solver) as a fraction of the ray source box volume. The
+  // track-length estimates below are still accumulated: volume_naive marks a
+  // region as hit in this iteration, and the centroid is a track-length
+  // average either way.
+  const bool prescribed =
+    resolved_volume_estimator_ == RandomRayVolumeEstimator::PRESCRIBED;
+  const double inv_simulation_volume = 1.0 / simulation_volume_;
+
 // Accumulate cell-wise ray length tallies collected this iteration, then
 // update the simulation-averaged cell-wise volume estimates
 #pragma omp parallel for
@@ -346,7 +357,8 @@ void FlatSourceDomain::normalize_scalar_flux_and_volumes(
     source_regions_.volume_sq(sr) =
       source_regions_.volume_sq_t(sr) / source_regions_.volume_t(sr);
     source_regions_.volume(sr) =
-      source_regions_.volume_t(sr) * volume_normalization_factor;
+      prescribed ? prescribed_volume_[sr] * inv_simulation_volume
+                 : source_regions_.volume_t(sr) * volume_normalization_factor;
     if (source_regions_.volume_t(sr) > 0.0) {
       double inv_volume = 1.0 / source_regions_.volume_t(sr);
       source_regions_.centroid(sr) = source_regions_.centroid_t(sr);
@@ -621,6 +633,7 @@ int64_t FlatSourceDomain::add_source_to_scalar_flux()
       use_naive_volume = true;
       break;
     case RandomRayVolumeEstimator::SIMULATION_AVERAGED:
+    case RandomRayVolumeEstimator::PRESCRIBED:
       break;
     case RandomRayVolumeEstimator::HYBRID:
       use_naive_volume = external || small;
@@ -2573,6 +2586,82 @@ void FlatSourceDomain::apply_mesh_to_cell_and_children(int32_t i_cell,
   }
 }
 
+void FlatSourceDomain::load_prescribed_volumes()
+{
+  prescribed_volume_map_.clear();
+  prescribed_volume_.clear();
+  if (resolved_volume_estimator_ != RandomRayVolumeEstimator::PRESCRIBED) {
+    return;
+  }
+
+  // The file holds one row per source region: the cell ID and instance that
+  // identify the base source region, the bin of the mesh applied to that
+  // cell instance (0 if none), and the volume in cm^3. Rows for regions that
+  // rays never reach are allowed.
+  hid_t file = file_open(source_region_volume_file_, 'r');
+  vector<int32_t> cell_id, instance;
+  vector<int64_t> mesh_bin;
+  vector<double> volume;
+  read_dataset(file, "cell_id", cell_id);
+  read_dataset(file, "instance", instance);
+  read_dataset(file, "mesh_bin", mesh_bin);
+  read_dataset(file, "volume", volume);
+  file_close(file);
+
+  size_t n = cell_id.size();
+  if (instance.size() != n || mesh_bin.size() != n || volume.size() != n) {
+    fatal_error(fmt::format("Datasets in source region volume file {} have "
+                            "different lengths.",
+      source_region_volume_file_));
+  }
+
+  for (size_t i = 0; i < n; ++i) {
+    auto it = model::cell_map.find(cell_id[i]);
+    if (it == model::cell_map.end()) {
+      fatal_error(fmt::format(
+        "Source region volume file refers to cell {}, which is not in the "
+        "model.",
+        cell_id[i]));
+    }
+    int32_t i_cell = it->second;
+    if (source_region_offsets_[i_cell] < 0) {
+      fatal_error(fmt::format(
+        "Source region volume file refers to cell {}, which is not filled "
+        "with a material.",
+        cell_id[i]));
+    }
+    if (instance[i] < 0 || instance[i] >= model::cells[i_cell]->n_instances()) {
+      fatal_error(fmt::format(
+        "Source region volume file refers to instance {} of cell {}, which "
+        "has {} instances.",
+        instance[i], cell_id[i], model::cells[i_cell]->n_instances()));
+    }
+    int64_t base = source_region_offsets_[i_cell] + instance[i];
+    int mesh_idx = lookup_mesh_idx(base);
+    int64_t n_bins =
+      (mesh_idx == C_NONE) ? 1 : model::meshes[mesh_idx]->n_bins();
+    if (mesh_bin[i] < 0 || mesh_bin[i] >= n_bins) {
+      fatal_error(fmt::format(
+        "Source region volume file refers to mesh bin {} of cell {}, "
+        "instance {}, which has {} bins.",
+        mesh_bin[i], cell_id[i], instance[i], n_bins));
+    }
+    if (!(volume[i] >= 0.0) || !std::isfinite(volume[i])) {
+      fatal_error(fmt::format("Invalid prescribed volume {} for cell {}, "
+                              "instance {}, mesh bin {}.",
+        volume[i], cell_id[i], instance[i], mesh_bin[i]));
+    }
+    bool inserted = prescribed_volume_map_
+                      .emplace(SourceRegionKey {base, mesh_bin[i]}, volume[i])
+                      .second;
+    if (!inserted) {
+      fatal_error(fmt::format("Source region volume file lists cell {}, "
+                              "instance {}, mesh bin {} more than once.",
+        cell_id[i], instance[i], mesh_bin[i]));
+    }
+  }
+}
+
 void FlatSourceDomain::apply_meshes()
 {
   // Skip if there are no mappings between mesh IDs and domains
@@ -2822,10 +2911,43 @@ void FlatSourceDomain::finalize_discovered_source_regions()
     int64_t start_sr_id = source_regions_.n_source_regions();
 
     // Append the source regions in the sorted key order.
+    const bool prescribed =
+      resolved_volume_estimator_ == RandomRayVolumeEstimator::PRESCRIBED;
     for (const auto& key : keys) {
       const SourceRegion& sr = discovered_source_regions_[key];
       source_region_map_[key] = source_regions_.n_source_regions();
       source_regions_.push_back(sr);
+
+      // A region that rays can reach must have a prescribed volume. A missing
+      // entry is an error rather than a fallback to an estimate, because a
+      // silent mixture of exact and estimated volumes would defeat the
+      // purpose of prescribing them.
+      if (prescribed) {
+        auto it = prescribed_volume_map_.find(key);
+        if (it == prescribed_volume_map_.end()) {
+          int64_t base = key.base_source_region_id;
+          int i_cell = 0;
+          for (int i = 0; i < model::cells.size(); ++i) {
+            if (source_region_offsets_[i] >= 0 &&
+                source_region_offsets_[i] <= base) {
+              i_cell = i;
+            }
+          }
+          fatal_error(fmt::format(
+            "No prescribed volume for the source region in cell {}, "
+            "instance {}, mesh bin {} (file {}).",
+            model::cells[i_cell]->id_, base - source_region_offsets_[i_cell],
+            key.mesh_bin, source_region_volume_file_));
+        }
+        if (it->second <= 0.0) {
+          fatal_error(fmt::format(
+            "Rays crossed a source region with prescribed volume {} (base "
+            "source region {}, mesh bin {}). Prescribed volumes of regions "
+            "that rays reach must be positive.",
+            it->second, key.base_source_region_id, key.mesh_bin));
+        }
+        prescribed_volume_.push_back(it->second);
+      }
     }
 
     // Map all new source regions to tallies

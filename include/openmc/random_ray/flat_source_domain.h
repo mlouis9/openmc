@@ -105,6 +105,11 @@ public:
   //! Theory: docs/source/methods/rmc.rst, methods_rmc_field.
   void export_rmc_field(const std::string& path) const;
   void apply_meshes();
+  //! Read the prescribed source-region volumes from
+  //! source_region_volume_file_ when the prescribed volume estimator is in
+  //! use. Requires apply_meshes() to have run, so that mesh bins can be
+  //! checked against the mesh applied to each cell instance.
+  void load_prescribed_volumes();
   void apply_mesh_to_cell_instances(int32_t i_cell, int32_t mesh_idx,
     int target_material_id, const vector<int32_t>& instances,
     bool is_target_void);
@@ -133,6 +138,9 @@ public:
   static bool adjoint_requested_;
   // Path of the multilevel RMC field export; empty means no export
   static std::string rmc_field_file_;
+  // Path of the HDF5 file of prescribed source-region volumes, read when the
+  // prescribed volume estimator is selected
+  static std::string source_region_volume_file_;
   // If the user wants linear source gradients rescaled so the modeled source
   // stays non-negative over each source region
   static bool source_gradient_limiter_;
@@ -233,6 +241,14 @@ public:
   // This map is used to check if there are any volumetric sources within a
   // subdivided source region at the time it is discovered.
   std::unordered_map<int64_t, vector<int>> external_volumetric_source_map_;
+
+  // Prescribed volumes [cm^3] keyed by source region, as read from
+  // source_region_volume_file_, and the same volumes by index into
+  // source_regions_ (filled as source regions are discovered). Both are
+  // empty unless the prescribed volume estimator is in use.
+  std::unordered_map<SourceRegionKey, double, SourceRegionKey::HashFunctor>
+    prescribed_volume_map_;
+  vector<double> prescribed_volume_;
 
   // Map that relates a base source region index to a mesh index. This map
   // is used to check which subdivision mesh is present in a source region.
