@@ -271,6 +271,25 @@ class Settings:
             function.
 
         .. versionadded:: 0.15.0
+    rmc : dict
+        Inputs of multilevel residual Monte Carlo (experimental), read by
+        the continuous-energy process. Acceptable keys are:
+
+        :field_file:
+            Path of the frozen field written by a multigroup random ray run
+            (``random_ray['rmc_field_file']``). Its multigroup tables are
+            what random ray uses when it runs in the continuous-energy
+            process.
+        :lift_file:
+            Path of the within-group emission shapes (lifts) of the field.
+        :volume_file:
+            Path of the region volumes and normalization of the field.
+
+        When this dictionary is not empty, a :attr:`random_ray` block in a
+        continuous-energy model is read rather than rejected, so that random
+        ray can run inside the continuous-energy process as the multigroup
+        sweep of multilevel RMC. The solver of the model remains Monte Carlo.
+
     resonance_scattering : dict
         Settings for resonance elastic scattering. Accepted keys are 'enable'
         (bool), 'method' (str), 'energy_min' (float), 'energy_max' (float), and
@@ -529,6 +548,7 @@ class Settings:
         self._use_decay_photons = None
 
         self._random_ray = {}
+        self._rmc = {}
 
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -1502,6 +1522,23 @@ class Settings:
         self._random_ray = random_ray
 
     @property
+    def rmc(self) -> dict:
+        return self._rmc
+
+    @rmc.setter
+    def rmc(self, rmc: dict):
+        if not isinstance(rmc, Mapping):
+            raise ValueError(f'Unable to set rmc from "{rmc}" which is not a '
+                             'dict.')
+        for key, value in rmc.items():
+            if key in ('field_file', 'lift_file', 'volume_file'):
+                cv.check_type(f'RMC {key}', value, (str, os.PathLike))
+            else:
+                raise ValueError(f'Unable to set rmc to "{key}" which is '
+                                 'unsupported by OpenMC')
+        self._rmc = dict(rmc)
+
+    @property
     def use_decay_photons(self) -> bool:
         return self._use_decay_photons
 
@@ -2096,6 +2133,13 @@ class Settings:
                     subelement = ET.SubElement(element, key)
                     subelement.text = str(value)
 
+    def _create_rmc_subelement(self, root):
+        if self._rmc:
+            element = ET.SubElement(root, "rmc")
+            for key, value in self._rmc.items():
+                subelement = ET.SubElement(element, key)
+                subelement.text = str(value)
+
     def _create_source_rejection_fraction_subelement(self, root):
         if self._source_rejection_fraction is not None:
             element = ET.SubElement(root, "source_rejection_fraction")
@@ -2533,6 +2577,11 @@ class Settings:
         if text is not None:
             self.max_tracks = int(text)
 
+    def _rmc_from_xml_element(self, root):
+        elem = root.find('rmc')
+        if elem is not None:
+            self.rmc = {child.tag: child.text for child in elem}
+
     def _random_ray_from_xml_element(self, root, meshes=None):
         elem = root.find('random_ray')
         if elem is not None:
@@ -2686,6 +2735,7 @@ class Settings:
         self._create_max_tracks_subelement(element)
         self._create_max_secondaries_subelement(element)
         self._create_random_ray_subelement(element, mesh_memo)
+        self._create_rmc_subelement(element)
         self._create_use_decay_photons_subelement(element)
         self._create_source_rejection_fraction_subelement(element)
         self._create_free_gas_threshold_subelement(element)
@@ -2804,6 +2854,7 @@ class Settings:
         settings._max_tracks_from_xml_element(elem)
         settings._max_secondaries_from_xml_element(elem)
         settings._random_ray_from_xml_element(elem, meshes)
+        settings._rmc_from_xml_element(elem)
         settings._use_decay_photons_from_xml_element(elem)
         settings._source_rejection_fraction_from_xml_element(elem)
         settings._free_gas_threshold_from_xml_element(elem)

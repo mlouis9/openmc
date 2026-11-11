@@ -137,6 +137,10 @@ int openmc_finalize()
   settings::surface_grazing_cutoff = 0.001;
   settings::surface_grazing_ratio = 0.5;
   settings::solver_type = SolverType::MONTE_CARLO;
+  settings::rmc_enabled = false;
+  settings::rmc_field_file.clear();
+  settings::rmc_lift_file.clear();
+  settings::rmc_volume_file.clear();
   settings::source_latest = false;
   settings::source_mcpl_write = false;
   settings::source_rejection_fraction = 0.05;

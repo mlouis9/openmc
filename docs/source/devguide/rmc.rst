@@ -208,3 +208,94 @@ Known limitations
     Flat sources only (the linear source domain overrides the volume
     normalization); one MPI rank (load balancing moves source regions
     between ranks).
+
+.. _devguide_rmc_mg_data:
+
+Multigroup data provider
+------------------------
+
+**Commit:** "random ray: read multigroup data through RandomRayMGData".
+
+Why
+    OpenMC loads either continuous-energy or multigroup data in a process,
+    never both. Random ray read the MGXS library (``data::mg``) directly, so
+    it could only run in a multigroup process.
+
+Added
+    - ``random_ray/mg_data.{h,cpp}``: ``RandomRayMGData``, the flat tables
+      random ray reads (group count, edges, group-average energies; per
+      material and temperature :math:`\Sigma_t`, :math:`\nu\Sigma_f`,
+      :math:`\Sigma_f`, :math:`\chi`, :math:`\kappa\Sigma_f`, and the
+      nu-scattering matrix; the temperature points), with a global instance
+      ``data::random_ray_mg``. ``fill_from_mgxs()`` builds them from
+      ``data::mg`` exactly as ``flatten_xs()`` did.
+    - Every random ray read of ``data::mg`` now reads the provider: the group
+      count in the ``FlatSourceDomain``, ``RandomRay``,
+      ``RandomRaySimulation``, ``RayBank``, and ``DecompositionMap``
+      constructors; ``flatten_xs()`` (now a copy, since adjoint solves modify
+      the domain's tables in place); the temperature index of a discovered
+      region; group-average energies for tallies; the group of a discrete
+      external source energy; the MGXS checks of
+      ``validate_random_ray_inputs()``; and the group edges of the field
+      export.
+    - ``Mgxs::kT(t)``, a read accessor for a temperature point.
+
+Verified
+    The random ray regression tests that run with the available nuclear data
+    (53 cases) produce bitwise identical ``results_true.dat`` files before
+    and after the change. Procedure, for each build: run
+    ``pytest tests/regression_tests -k random_ray --update --exe <openmc>``,
+    copy every ``results_true.dat`` aside, and restore the committed files
+    with ``git checkout -- tests/regression_tests``; then compare the two
+    copies with ``diff -r``. Cases that need nuclear data absent from the
+    test library (for example Zr90 and N14) are skipped by this procedure
+    and should be checked with a full library.
+
+.. _devguide_rmc_ce_random_ray:
+
+Random ray in the continuous-energy process
+-------------------------------------------
+
+**Commit:** "rmc: run random ray in the continuous-energy process".
+
+Added
+    - **Field export version 2.** ``materials/`` also holds ``in_model``,
+      ``sigma_f``, and ``kappa_fission``, so the field file carries every
+      table random ray uses.
+    - ``rmc/mg_tables.{h,cpp}``: ``rmc::load_mg_tables()`` fills
+      ``data::random_ray_mg`` from a field file, matching materials by ID and
+      reversing the groups, copying every value exactly.
+    - **Settings.** An ``<rmc>`` element (``Settings.rmc`` in Python, keys
+      ``field_file``, ``lift_file``, ``volume_file``) declares a multilevel
+      RMC model. In a continuous-energy model with ``<rmc>``, the
+      ``<random_ray>`` element is read instead of rejected, and the solver
+      type stays Monte Carlo.
+    - ``openmc_run_random_ray()`` fills the provider from the field file in a
+      continuous-energy process and from the MGXS library otherwise.
+    - ``openmc_rmc_run_random_ray()`` (``src/rmc/random_ray_capi.cpp``) and
+      ``openmc.lib.rmc.run_random_ray()``: run a whole random ray solve in an
+      initialized continuous-energy session. The solver type is set to random
+      ray for the solve (OpenMC's batch, eigenvalue, and tally code branch on
+      it) and restored afterwards, together with ``source_write``, which
+      random ray turns off.
+    - ``examples/rmc/pipeline.py``: ``random_ray_ce_model()`` and
+      ``run_random_ray_in_ce()`` copy the random ray settings, ray count,
+      batches, and seed from the multigroup model.
+    - ``docs/source/methods/rmc.rst``: sections on the multigroup sweep in
+      the continuous-energy run and on region volumes.
+
+Verified by ``tests/rmc/test_random_ray_ce.py`` (gate G2.5)
+    - The tables random ray uses in the continuous-energy process equal the
+      multigroup run's entry by entry.
+    - On one thread, :math:`k`, every region flux, emission, and volume
+      estimate are bitwise equal to the multigroup run's.
+    - On two threads they agree to :math:`10^{-10}` relative; OpenMP
+      reductions sum in a different order from run to run, which changes
+      round-off only.
+    - A continuous-energy Monte Carlo run in the same session afterwards
+      gives a finite, plausible :math:`k`.
+    - Settings round trip and validation of ``Settings.rmc``.
+
+Known limitations
+    One temperature per material (as the field export). No per-generation
+    entry point from Python yet.

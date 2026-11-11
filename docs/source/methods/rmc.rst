@@ -133,6 +133,48 @@ Each site is then an unbiased estimate of the whole source, so OpenMC's
 per-particle tally normalization gives absolute responses without knowledge
 of region volumes.
 
+.. _methods_rmc_sweep:
+
+-------------------------------------------------
+The Multigroup Sweep in the Continuous-Energy Run
+-------------------------------------------------
+
+The residual correction compares continuous-energy production with the
+multigroup prediction along the same rays, so the multigroup sweep runs in the
+same process as the continuous-energy transport. That process has loaded
+continuous-energy data and has no MGXS library. OpenMC's random ray solver
+needs multigroup data only as a few flat tables per material (total,
+nu-scattering, nu-fission, fission, kappa-fission, and :math:`\chi`), the group
+edges, and a temperature lookup. In the continuous-energy run these tables are
+read from the field file, which stores them exactly as the multigroup run
+used them, so the sweep solves the same multigroup problem in both runs. With
+the same seed and ray settings on one thread, the two runs give bitwise
+identical eigenvalues and fluxes.
+
+.. _methods_rmc_volumes:
+
+Region volumes
+--------------
+
+Random ray estimates the volume of each source region from the track length
+its rays deposit there. The multigroup flux iterate divides a track-length sum
+by that volume, and the residual weights sweep segments crossing region
+:math:`R` by
+
+.. math::
+    :label: rmc-sweep-weight
+
+    \omega_j = \frac{4\pi\,\ell_j}{\rho\, V_R},
+
+where :math:`\ell_j` is the segment's length and :math:`\rho` the active track
+length per unit volume. The sum :math:`\sum_j \omega_j f(\mathbf{\Omega}_j)` is an
+unbiased estimate of :math:`\int_{4\pi} f\, d\Omega` averaged over :math:`R` only
+when :math:`V_R` is the true volume. When the volumes are known, for example
+when the source-region mesh is aligned with the material boundaries or the
+boundaries have closed-form intersections with the mesh voxels, random ray's
+prescribed volume estimator uses them directly, and no volume error enters
+either the sweep or the residual weights.
+
 .. _methods_rmc_kinematics:
 
 -------------------------------------

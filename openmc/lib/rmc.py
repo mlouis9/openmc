@@ -21,6 +21,7 @@ for _name, _args in [
     ('openmc_rmc_field_evaluate', [c_int64, _i64p, _f64p, c_int, _f64p]),
     ('openmc_rmc_field_mass', [c_int, POINTER(c_double)]),
     ('openmc_rmc_field_region_volumes', [c_int64, c_uint64, _f64p]),
+    ('openmc_rmc_run_random_ray', []),
 ]:
     _fn = getattr(_dll, _name)
     _fn.argtypes, _fn.restype, _fn.errcheck = _args, c_int, _error_handler
@@ -77,3 +78,15 @@ def field_region_volumes(n_per_voxel, seed):
     out = np.empty(field_n_regions(), dtype=np.float64)
     _dll.openmc_rmc_field_region_volumes(int(n_per_voxel), int(seed), out)
     return out
+
+
+def run_random_ray():
+    """Run OpenMC's random ray solver in this continuous-energy process.
+
+    Random ray uses the multigroup tables of ``settings.rmc['field_file']``
+    and the ``settings.random_ray`` options of the initialized model. The
+    solve is a complete power iteration, as in a multigroup random ray run;
+    its results are reported through the usual random ray output and, if
+    ``random_ray['rmc_field_file']`` is set, a new field file.
+    """
+    _dll.openmc_rmc_run_random_ray()

@@ -39,6 +39,14 @@ int openmc_rmc_field_mass(int tag, double* mass);
 //! entries.
 int openmc_rmc_field_region_volumes(
   int64_t n_per_voxel, uint64_t seed, double* volume);
+
+//! Run OpenMC's random ray solver (a full power iteration with the
+//! <random_ray> settings) inside this continuous-energy process, with the
+//! multigroup tables of the field file named in <rmc>. Requires an
+//! initialized continuous-energy model with an <rmc> element and a
+//! <random_ray> element, and no simulation in progress. Defined in
+//! src/rmc/random_ray_capi.cpp.
+int openmc_rmc_run_random_ray();
 }
 
 #endif // OPENMC_RMC_CAPI_H

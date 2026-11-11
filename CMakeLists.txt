@@ -391,6 +391,8 @@ list(APPEND libopenmc_SOURCES
   src/rmc/capi.cpp
   src/rmc/field.cpp
   src/rmc/kinematics.cpp
+  src/rmc/mg_tables.cpp
+  src/rmc/random_ray_capi.cpp
   src/ray.cpp
   src/reaction.cpp
   src/reaction_product.cpp

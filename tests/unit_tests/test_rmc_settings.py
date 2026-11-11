@@ -33,3 +33,20 @@ def test_source_region_volumes_type():
     s = openmc.Settings()
     with pytest.raises(TypeError):
         s.random_ray = {'source_region_volumes': 3}
+
+
+def test_rmc_inputs_roundtrip(run_in_tmpdir):
+    """The multilevel RMC input files survive export and import."""
+    s = openmc.Settings()
+    s.rmc = {'field_file': 'field.h5', 'lift_file': 'lifts.h5',
+             'volume_file': 'volumes.h5'}
+    s.export_to_xml()
+    assert openmc.Settings.from_xml().rmc == s.rmc
+
+
+def test_rmc_inputs_validation():
+    s = openmc.Settings()
+    with pytest.raises(ValueError):
+        s.rmc = {'unknown': 'x.h5'}
+    with pytest.raises(TypeError):
+        s.rmc = {'field_file': 1}

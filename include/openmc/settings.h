@@ -145,6 +145,15 @@ extern vector<std::string>
   res_scat_nuclides;           //!< Nuclides using res. upscattering treatment
 extern RunMode run_mode;       //!< Run mode (eigenvalue, fixed src, etc.)
 extern SolverType solver_type; //!< Solver Type (Monte Carlo or Random Ray)
+
+// Multilevel RMC inputs (the <rmc> element). When enabled in a
+// continuous-energy model, the <random_ray> element is read so that random
+// ray can run inside the continuous-energy process; the solver type stays
+// Monte Carlo.
+extern bool rmc_enabled;            //!< is an <rmc> element present?
+extern std::string rmc_field_file;  //!< frozen field (with the MG tables)
+extern std::string rmc_lift_file;   //!< within-group emission shapes
+extern std::string rmc_volume_file; //!< region volumes and normalization
 extern std::unordered_set<int>
   sourcepoint_batch; //!< Batches when source should be written
 extern std::unordered_set<int>

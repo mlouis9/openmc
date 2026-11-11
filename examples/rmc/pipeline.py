@@ -8,6 +8,7 @@ Steps 1 and 2 run OpenMC as subprocesses. Step 3 runs in this process through
 openmc.lib, so the CE model must be initialized first (see ce_session()).
 """
 import contextlib
+import copy
 import os
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import numpy as np
 
 import openmc
 import openmc.lib
+import openmc.lib.rmc  # noqa: F401  (registers the rmc bindings)
 
 import field as fld
 import mg
@@ -72,3 +74,52 @@ def build_volumes(field_path, lift_path, mesh, out_path, n_per_voxel, seeds=(11,
     scale = fld.field_scale(F, V[0])
     fld.write_volumes(out_path, V[0], V[1], counts[0], counts[1], scale, n_per_voxel, seeds)
     return out_path
+
+
+def random_ray_ce_model(ce_model, mg_model, field_file, export_file='rmc_field_ce.h5'):
+    """The CE model, configured to run random ray in the CE process.
+
+    The random ray options, ray count, batches, and seed are copied from the
+    multigroup model, so the CE-process solve repeats the multigroup one with
+    the field file's tables. The CE-process solve exports its own field file
+    (export_file), which is how its results are compared.
+    """
+    ce = copy.deepcopy(ce_model)
+    rr = {k: v for k, v in mg_model.settings.random_ray.items()}
+    rr['rmc_field_file'] = export_file
+    ce.settings.random_ray = rr
+    ce.settings.rmc = {'field_file': str(Path(field_file).resolve())}
+    s, m = ce.settings, mg_model.settings
+    s.particles, s.batches, s.inactive = m.particles, m.batches, m.inactive
+    if m.seed is not None:
+        s.seed = m.seed
+    ce.tallies = openmc.Tallies()
+    return ce
+
+
+def run_random_ray_in_ce(ce_model, mg_model, field_file, workdir,
+                         export_file='rmc_field_ce.h5', threads=None,
+                         after=None):
+    """Run random ray inside a CE process (openmc.lib) from the field file's
+    multigroup tables. Returns the path of the field file it exports.
+
+    threads sets the number of OpenMP threads. after, if given, is called
+    with no arguments in the same session once random ray has finished, and
+    its return value is returned as well: (path, after()).
+    """
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    ce = random_ray_ce_model(ce_model, mg_model, field_file, export_file)
+    ce.export_to_model_xml(workdir / 'model.xml')
+    cwd = os.getcwd()
+    os.chdir(workdir)
+    try:
+        args = ['-s', str(threads)] if threads else None
+        openmc.lib.init(args, output=False)
+        openmc.lib.rmc.run_random_ray()
+        extra = after() if after is not None else None
+    finally:
+        openmc.lib.finalize()
+        os.chdir(cwd)
+    path = workdir / export_file
+    return (path, extra) if after is not None else path

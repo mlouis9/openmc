@@ -128,6 +128,10 @@ double res_scat_energy_max {1000.0};
 vector<std::string> res_scat_nuclides;
 RunMode run_mode {RunMode::UNSET};
 SolverType solver_type {SolverType::MONTE_CARLO};
+bool rmc_enabled {false};
+std::string rmc_field_file;
+std::string rmc_lift_file;
+std::string rmc_volume_file;
 std::unordered_set<int> sourcepoint_batch;
 std::unordered_set<int> statepoint_batch;
 double source_rejection_fraction {0.05};
@@ -267,8 +271,10 @@ void get_run_parameters(pugi::xml_node node_base)
     }
   }
 
-  // Random ray variables
-  if (solver_type == SolverType::RANDOM_RAY) {
+  // Random ray variables, read for the random ray solver and for random ray
+  // inside a continuous-energy multilevel RMC process
+  if (solver_type == SolverType::RANDOM_RAY ||
+      (rmc_enabled && check_for_node(node_base, "random_ray"))) {
     xml_node random_ray_node = node_base.child("random_ray");
     if (check_for_node(random_ray_node, "distance_active")) {
       RandomRay::distance_active_ =
@@ -568,8 +574,22 @@ void read_settings_xml(pugi::xml_node root)
     }
   }
 
-  // Check solver type
-  if (check_for_node(root, "random_ray")) {
+  // Multilevel RMC inputs
+  if (check_for_node(root, "rmc")) {
+    xml_node rmc_node = root.child("rmc");
+    rmc_enabled = true;
+    if (check_for_node(rmc_node, "field_file"))
+      rmc_field_file = get_node_value(rmc_node, "field_file");
+    if (check_for_node(rmc_node, "lift_file"))
+      rmc_lift_file = get_node_value(rmc_node, "lift_file");
+    if (check_for_node(rmc_node, "volume_file"))
+      rmc_volume_file = get_node_value(rmc_node, "volume_file");
+  }
+
+  // Check solver type. In a continuous-energy multilevel RMC model, a
+  // <random_ray> element configures the multigroup sweep that runs inside
+  // the continuous-energy process, and the solver remains Monte Carlo.
+  if (check_for_node(root, "random_ray") && !(run_CE && rmc_enabled)) {
     solver_type = SolverType::RANDOM_RAY;
     if (run_CE)
       fatal_error("multi-group energy mode must be specified in settings XML "

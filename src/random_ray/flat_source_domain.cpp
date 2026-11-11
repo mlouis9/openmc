@@ -2448,10 +2448,13 @@ void FlatSourceDomain::export_rmc_field(const std::string& path) const
   // u and the multigroup control of the residual estimator.
   const int M = n_materials_;
   vector<int32_t> mat_ids(M);
+  vector<int32_t> m_in_model(M);
   vector<double> m_sigma_t(M * G), m_nu_sigma_f(M * G), m_chi(M * G);
+  vector<double> m_sigma_f(M * G), m_kappa_fission(M * G);
   vector<double> m_sigma_s(static_cast<int64_t>(M) * G * G);
   for (int m = 0; m < M; ++m) {
     mat_ids[m] = model::materials[m]->id();
+    m_in_model[m] = data::random_ray_mg.exists_in_model[m];
     int64_t mo = static_cast<int64_t>(m) * G; // single temperature
     int64_t so = mo * G;
     for (int g = 0; g < G; ++g) {
@@ -2459,6 +2462,8 @@ void FlatSourceDomain::export_rmc_field(const std::string& path) const
       m_sigma_t[mo + ga] = sigma_t_[mo + g];
       m_nu_sigma_f[mo + ga] = nu_sigma_f_[mo + g];
       m_chi[mo + ga] = chi_[mo + g];
+      m_sigma_f[mo + ga] = sigma_f_[mo + g];
+      m_kappa_fission[mo + ga] = kappa_fission_[mo + g];
     }
     for (int g_out = 0; g_out < G; ++g_out)
       for (int g_in = 0; g_in < G; ++g_in)
@@ -2467,7 +2472,7 @@ void FlatSourceDomain::export_rmc_field(const std::string& path) const
   }
 
   hid_t file = file_open(path, 'w');
-  write_attribute(file, "version", 1);
+  write_attribute(file, "version", 2);
   write_attribute(file, "k_mg", simulation::keff);
   write_attribute(file, "n_groups", G);
   write_attribute(file, "n_regions", R);
@@ -2491,6 +2496,9 @@ void FlatSourceDomain::export_rmc_field(const std::string& path) const
   write_dataset(mgrp, "sigma_s", m_sigma_s);       // [M*G*G], [m][g_in][g_out]
   write_dataset(mgrp, "nu_sigma_f", m_nu_sigma_f); // [M*G]
   write_dataset(mgrp, "chi", m_chi);               // [M*G]
+  write_dataset(mgrp, "in_model", m_in_model);     // [M]
+  write_dataset(mgrp, "sigma_f", m_sigma_f);       // [M*G]
+  write_dataset(mgrp, "kappa_fission", m_kappa_fission); // [M*G]
   close_group(mgrp);
   file_close(file);
 

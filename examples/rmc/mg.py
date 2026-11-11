@@ -11,12 +11,13 @@ import openmc
 
 def run_random_ray(ce_model, mesh, workdir, groups='CASMO-8', mgxs_particles=20_000,
                    rays=2_000, batches=150, inactive=50, field_file='rmc_field.h5',
-                   mgxs_path=None, random_ray=None, seed=None):
+                   mgxs_path=None, random_ray=None, seed=None, threads=None):
     """Convert to multigroup, run random ray, and export the frozen field.
 
     mgxs_path names an existing MGXS library to reuse (it is generated there
     if absent); by default it is generated in workdir. random_ray holds extra
     entries for Settings.random_ray, e.g. the prescribed volume estimator.
+    threads sets the number of OpenMP threads (default: OpenMC's default).
 
     Returns (field file path, statepoint path, mgxs.h5 path, MG model).
     """
@@ -45,7 +46,7 @@ def run_random_ray(ce_model, mesh, workdir, groups='CASMO-8', mgxs_particles=20_
     t.scores = ['nu-fission']
     mg.tallies = openmc.Tallies([t])
 
-    sp = mg.run(cwd=workdir, output=False)
+    sp = mg.run(cwd=workdir, output=False, threads=threads)
     return workdir / field_file, Path(sp), mgxs_path, mg
 
 

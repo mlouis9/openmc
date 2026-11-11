@@ -12,6 +12,7 @@
 #include "openmc/random_ray/mg_data.h"
 #include "openmc/random_ray/random_ray.h"
 #include "openmc/random_ray/ray_bank.h"
+#include "openmc/rmc/mg_tables.h"
 #include "openmc/simulation.h"
 #include "openmc/source.h"
 #include "openmc/tallies/filter.h"
@@ -1135,9 +1136,15 @@ void openmc_run_random_ray()
   // Initialize OpenMC general data structures
   openmc_simulation_init();
 
-  // The solver reads its multigroup data from data::random_ray_mg, filled
-  // here from the MGXS library of this multigroup run
-  data::random_ray_mg.fill_from_mgxs();
+  // The solver reads its multigroup data from data::random_ray_mg. In a
+  // multigroup run it comes from the MGXS library. In a continuous-energy
+  // multilevel RMC process, which has no MGXS library, it comes from the
+  // tables of the frozen field (the ones the multigroup run used).
+  if (settings::run_CE) {
+    rmc::load_mg_tables(settings::rmc_field_file, data::random_ray_mg);
+  } else {
+    data::random_ray_mg.fill_from_mgxs();
+  }
 
   // Validate that inputs meet requirements for random ray mode
   if (mpi::master)
