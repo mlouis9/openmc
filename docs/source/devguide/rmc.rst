@@ -473,9 +473,11 @@ Tests
       its material and the path never ends.
 
 Exercise
-    ``CharacteristicTracer::trace``. Three tests fail until it is written
-    (the start-point test passes, since the C API checks it). A reference
-    implementation passes all of them.
+    ``CharacteristicTracer::trace`` was first committed as a stub, as a
+    learning exercise; three tests fail with the stub (the start-point test
+    passes, since the C API checks it). The reference implementation was
+    committed later ("rmc: reference implementation of the backward
+    tracer"), and all tracer tests pass with it.
 
 .. _devguide_rmc_visual_entry:
 

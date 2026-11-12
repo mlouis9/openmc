@@ -19,45 +19,68 @@ void CharacteristicTracer::trace(
 {
   out.clear();
 
-  // TODO(you): trace the path and fill `out`. Theory: docs/source/methods/
-  // rmc.rst, methods_rmc_tracer. Model it on random ray: read
-  // RandomRay::transport_history_based_single_ray(), event_advance_ray(), and
-  // attenuate_flux() in src/random_ray/random_ray.cpp first.
-  //
-  //   1. Make a scratch Particle (particle.h) at r with direction u. Set r(),
-  //      u(), and also r_last(), u_last(), r_born() so that nothing reads
-  //      uninitialized state. Find its cell with exhaustive_find_cell()
-  //      (geometry.h); if that fails, fatal_error(): the C API checks the
-  //      start point before calling you.
-  //   2. Loop while out.size() < max_segments:
-  //      a. p.boundary() = distance_to_boundary(p); d = its distance().
-  //      b. The cell instance the particle is in: the lowest-level cell
-  //         model::cells[p.lowest_coord().cell()] and p.cell_instance(). From
-  //         the Cell, take material(instance), sqrtkT(instance), and
-  //         density_mult(instance), as random ray does when it discovers a
-  //         region.
-  //      c. field_.mesh_of(cell.id_, instance) says how to split [0, d]:
-  //         - -1 (no mesh): one segment, region field_.region(id, inst, 0);
-  //         - -2 (an instance the field never reached): one segment, region
-  //           -1 (the field is zero there, but the path still attenuates);
-  //         - a mesh index m: call model::meshes[m]->bins_crossed(start, end,
-  //           u, bins_, fractions_) with start = p.r(), end = start + d * u,
-  //           after clearing the two scratch vectors. Each bin is a segment of
-  //           length d * fraction, region field_.region(id, inst, bin). Stop
-  //           as soon as out reaches max_segments. If the fractions do not
-  //           add up to 1 (to 1e-9), the mesh does not cover the cell:
-  //           fatal_error().
-  //         Use out.push_back(length, material, sqrtkT, density_mult, region).
-  //      d. Move every coordinate level to the surface:
-  //         p.coord(j).r() += d * p.coord(j).u() for j < p.n_coord().
-  //      e. p.event_cross_surface() applies the boundary condition: a
-  //         reflection changes the direction, a vacuum boundary kills the
-  //         particle. If !p.alive(), set out.ends_in_vacuum = true and return.
-  //
-  // tests/rmc/test_tracer.py compares the result with closed-form paths in
-  // a slab box to 1e-9 cm, and test_multiple_meshes.py runs it through
-  // several meshes. The C API (openmc_rmc_trace) and the Python binding
-  // (openmc.lib.rmc.trace) are already written.
+  // A scratch particle: only its geometry state and boundary handling are used
+  Particle p;
+  p.r() = r;
+  p.u() = u;
+  p.r_last() = r;
+  p.u_last() = u;
+  p.r_born() = r;
+  if (!exhaustive_find_cell(p)) {
+    fatal_error(fmt::format("RMC tracer: start point ({}, {}, {}) is outside "
+                            "the geometry.",
+      r.x, r.y, r.z));
+  }
+
+  while (out.size() < max_segments) {
+    // Distance to the next surface (or lattice) crossing
+    p.boundary() = distance_to_boundary(p);
+    double d = p.boundary().distance();
+
+    // What the path passes through until then
+    const Cell& cell = *model::cells[p.lowest_coord().cell()];
+    int32_t inst = p.cell_instance();
+    int32_t material = cell.material(inst);
+    double sqrtkT = cell.sqrtkT(inst);
+    double dm = cell.density_mult(inst);
+    int32_t mesh_idx = field_.mesh_of(cell.id_, inst);
+
+    if (mesh_idx < 0) {
+      // No mesh on this instance (or an instance the field never reached)
+      int64_t region = (mesh_idx == -1) ? field_.region(cell.id_, inst, 0) : -1;
+      out.push_back(d, material, sqrtkT, dm, region);
+    } else {
+      // Split at mesh bin crossings, as RandomRay::attenuate_flux() does
+      Position start = p.r();
+      Position end = start + d * p.u();
+      bins_.clear();
+      fractions_.clear();
+      model::meshes[mesh_idx]->bins_crossed(
+        start, end, p.u(), bins_, fractions_);
+      double covered = 0.0;
+      for (size_t b = 0; b < bins_.size(); ++b) {
+        if (out.size() >= max_segments)
+          return;
+        out.push_back(d * fractions_[b], material, sqrtkT, dm,
+          field_.region(cell.id_, inst, bins_[b]));
+        covered += fractions_[b];
+      }
+      if (std::abs(covered - 1.0) > 1e-9) {
+        fatal_error("RMC tracer: a source-region mesh does not cover the cell "
+                    "it is applied to.");
+      }
+    }
+
+    // Move to the surface and cross it: reflection changes the direction,
+    // a vacuum boundary kills the particle
+    for (int j = 0; j < p.n_coord(); ++j)
+      p.coord(j).r() += d * p.coord(j).u();
+    p.event_cross_surface();
+    if (!p.alive()) {
+      out.ends_in_vacuum = true;
+      return;
+    }
+  }
 }
 
 } // namespace rmc
