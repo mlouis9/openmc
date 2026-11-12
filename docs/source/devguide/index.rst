@@ -22,3 +22,4 @@ other related topics.
     docbuild
     docker
     rmc
+    rmc_visual

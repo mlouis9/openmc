@@ -44,6 +44,9 @@ Conventions
   targets for every nuclide with :math:`A>1`), ``ptables = False``, and
   temperatures by nearest point at 294 K.
 
+Figures that show each component working, with the code that makes them,
+are in :ref:`devguide_rmc_visual`.
+
 Running the tests::
 
     pytest tests/unit_tests/test_rmc_settings.py
@@ -473,3 +476,31 @@ Exercise
     ``CharacteristicTracer::trace``. Three tests fail until it is written
     (the start-point test passes, since the C API checks it). A reference
     implementation passes all of them.
+
+.. _devguide_rmc_visual_entry:
+
+Visual checks
+-------------
+
+**Commit:** "docs: visual checks of the RMC components".
+
+Added
+    - ``examples/rmc/visual_checks.py``: one function per figure (lifts,
+      field maps, several meshes with volumes, random ray in the CE process,
+      segment records, backward tracer), with the files they need built once
+      and cached.
+    - ``docs/source/devguide/rmc_visual.rst``: the figures, what to look for
+      in each, and the code that makes them; the PNGs are in
+      ``docs/source/devguide/rmc_figures``.
+
+Findings while making them
+    - The direction distribution of segment records is isotropic when each
+      segment is weighted by its length, not when segments are counted,
+      because axial chords of a voxel are longer than diagonal ones. This is
+      consistent with :math:`\omega_j\propto\ell_j`.
+    - With 200 lift bins per CASMO-8 group, the U-238 resonances at 6.67,
+      20.9, 36.7, and 66 eV are visible in the fuel's flux and scattering
+      emission shapes; higher resonances are narrower than the bins.
+
+The tracer figure was made with a reference implementation of
+``CharacteristicTracer::trace``. With the stub, the figure is empty.
