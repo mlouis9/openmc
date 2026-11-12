@@ -76,6 +76,12 @@ int openmc_rmc_sweep_regions(int32_t* cell_id, int32_t* instance,
   int32_t* mesh_id, int64_t* mesh_bin, double* volume, double* phi, double* k);
 //! End the solve: finalize the simulation and restore the solver type.
 int openmc_rmc_sweep_finalize();
+
+//! Trace one backward path with rmc::CharacteristicTracer on the loaded
+//! field (src/rmc/tracer_capi.cpp). Output arrays hold max_segments entries;
+//! n receives the number used. material is an index into model::materials.
+int openmc_rmc_trace(const double* r, const double* u, int max_segments, int* n,
+  double* length, int32_t* material, int64_t* region, int* ends_in_vacuum);
 }
 
 #endif // OPENMC_RMC_CAPI_H

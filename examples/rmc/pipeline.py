@@ -41,14 +41,18 @@ def ce_session(ce_model, meshes, workdir):
     """Initialize the CE model in this process with openmc.lib, add the
     source-region meshes (the CE model has no tally that would define them),
     and finalize on exit. meshes is one mesh, an iterable of meshes, or the
-    (mesh, domains) pairs of mg.source_region_meshes()."""
+    (mesh, domains) pairs of mg.source_region_meshes().
+
+    The model is initialized for an ordinary run, not in volume-calculation
+    mode (openmc -c): in that mode OpenMC ignores boundary conditions, which
+    the backward tracer needs."""
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     ce_model.export_to_model_xml(workdir / 'model.xml')
     cwd = os.getcwd()
     os.chdir(workdir)
     try:
-        openmc.lib.init(['-c'], output=False)
+        openmc.lib.init(output=False)
         for mesh in mg.meshes_of(meshes):
             if mesh.id not in openmc.lib.meshes:
                 openmc.lib.RegularMesh._from_python(mesh, None)

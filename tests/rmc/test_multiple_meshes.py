@@ -170,3 +170,28 @@ def test_reference_volumes_exact_split_meshes(split, split_ce):
                      n_box, n_vox)
     z = _z_scores(V, exact, V_dom, n_dom)
     assert np.max(np.abs(z)) < 5
+
+
+@pytest.mark.slow
+def test_tracer_regions_match_materials_split_meshes(split_ce):
+    """The backward tracer through the fuel mesh, the unmeshed ring, and the
+    outer mesh (all faces reflective): each segment's region, where the field
+    has one, is a region of the segment's material, and a path never reaches
+    vacuum. (The tracer's exact geometry is tested in test_tracer.py.)"""
+    rmc, ref = split_ce
+    F = ref.F
+    mat_index = {m.id: m._index for m in openmc.lib.materials.values()}
+    rng = np.random.default_rng(11)
+    lo, hi = (np.asarray(v) for v in F.box)
+    n_found = 0
+    for _ in range(20):
+        u = rng.normal(size=3)
+        got = rmc.trace(rng.uniform(lo, hi), u / np.linalg.norm(u), max_segments=300)
+        assert not got['ends_in_vacuum']
+        assert len(got['length']) == 300
+        assert np.all(got['length'] >= 0)
+        for m, reg in zip(got['material'], got['region']):
+            if reg >= 0:
+                n_found += 1
+                assert m == mat_index[int(F.material_id[reg])]
+    assert n_found > 0.9 * 20 * 300

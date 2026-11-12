@@ -174,6 +174,19 @@ FrozenField::FrozenField(const std::string& field_file,
     fatal_error("RMC field: duplicate region keys.");
 }
 
+int32_t FrozenField::mesh_of(int32_t cell_id, int32_t instance) const
+{
+  auto it = mesh_of_base_.find(Base {cell_id, instance});
+  return (it == mesh_of_base_.end()) ? -2 : it->second;
+}
+
+int64_t FrozenField::region(
+  int32_t cell_id, int32_t instance, int64_t mesh_bin) const
+{
+  auto it = key_to_region_.find({cell_id, instance, mesh_bin});
+  return (it == key_to_region_.end()) ? -1 : it->second;
+}
+
 int64_t FrozenField::locate(const GeometryState& p) const
 {
   // The same two steps as random ray's lookup_source_region_key(): the cell

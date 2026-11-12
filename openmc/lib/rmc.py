@@ -32,6 +32,8 @@ for _name, _args in [
     ('openmc_rmc_sweep_regions', [_i32p, _i32p, _i32p, _i64p, _f64p, _f64p,
                                   POINTER(c_double)]),
     ('openmc_rmc_sweep_finalize', []),
+    ('openmc_rmc_trace', [_f64p, _f64p, c_int, POINTER(c_int), _f64p, _i32p, _i64p,
+                          POINTER(c_int)]),
 ]:
     _fn = getattr(_dll, _name)
     _fn.argtypes, _fn.restype, _fn.errcheck = _args, c_int, _error_handler
@@ -181,3 +183,23 @@ def sweep_regions():
 def sweep_finalize():
     """End the batch-by-batch solve and restore the solver type."""
     _dll.openmc_rmc_sweep_finalize()
+
+
+def trace(r, u, max_segments=10_000):
+    """Trace one path with the C++ CharacteristicTracer on the loaded field.
+
+    Returns a dict: length [n] (cm), material [n] (index into the model's
+    materials, -1 for void), region [n] (field region or -1), and
+    ends_in_vacuum.
+    """
+    m = int(max_segments)
+    n, vac = c_int(), c_int()
+    length = np.empty(m)
+    material = np.empty(m, dtype=np.int32)
+    region = np.empty(m, dtype=np.int64)
+    _dll.openmc_rmc_trace(np.ascontiguousarray(r, dtype=float),
+                          np.ascontiguousarray(u, dtype=float), m, n, length,
+                          material, region, vac)
+    k = n.value
+    return {'length': length[:k], 'material': material[:k], 'region': region[:k],
+            'ends_in_vacuum': bool(vac.value)}

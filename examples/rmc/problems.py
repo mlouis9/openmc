@@ -10,6 +10,11 @@ infinite_medium
     and angle.
 graphite_pincell
     A UO2 pin in graphite. Adds spatial structure.
+slab_box
+    Three planar slabs (fuel, graphite, fuel) between vacuum faces in x,
+    reflective in y and z, with a source-region mesh in x whose planes do
+    not coincide with the slab planes. Every straight path through it has a
+    closed form, which tests the backward tracer exactly.
 graphite_pincell_split_meshes
     The graphite pincell with the moderator split by a cylinder into an
     inner ring and an outer region, and a different source-region treatment
@@ -33,7 +38,12 @@ MAT_FUEL, MAT_MOD = 1, 2
 CELL_FUEL, CELL_MOD, CELL_RING = 11, 12, 13
 SURF_PIN, SURF_RING = 31, 32
 UNIV_ROOT = 1
-MESH_SR, MESH_FUEL, MESH_OUTER = 21, 22, 23
+MESH_SR, MESH_FUEL, MESH_OUTER, MESH_SLAB = 21, 22, 23, 24
+CELL_SLABS = (41, 42, 43)
+SURF_SLABS = (51, 52, 53, 54)
+SLAB_HALF_X = 2.0                # cm, vacuum faces at x = +/-2
+SLAB_PLANES = (-0.7, 0.3)        # interior slab planes
+SLAB_MESH_NX = 4                 # mesh planes at -1, 0, 1
 
 PITCH = 1.26     # cm
 R_FUEL = 0.4096  # cm
@@ -148,6 +158,39 @@ def graphite_pincell_split_meshes(n_fuel=4, n_outer=3, particles=10_000,
     m_fuel.dimension = (n_fuel, n_fuel, 1)
     m_outer = source_region_mesh(n_outer, MESH_OUTER)
     return model, [(m_fuel, [c_fuel]), (m_outer, [c_mod])]
+
+
+def slab_box(particles=10_000, batches=110, inactive=10):
+    """Fuel | graphite | fuel slabs in x, vacuum at x = +/-SLAB_HALF_X,
+    reflective in y and z.
+
+    Returns the CE model and a mesh of SLAB_MESH_NX bins in x over the box.
+    """
+    fuel, mod = materials()
+    xs = [openmc.XPlane(-SLAB_HALF_X, boundary_type='vacuum', surface_id=SURF_SLABS[0]),
+          openmc.XPlane(SLAB_PLANES[0], surface_id=SURF_SLABS[1]),
+          openmc.XPlane(SLAB_PLANES[1], surface_id=SURF_SLABS[2]),
+          openmc.XPlane(SLAB_HALF_X, boundary_type='vacuum', surface_id=SURF_SLABS[3])]
+    yz = (+openmc.YPlane(-PITCH / 2, boundary_type='reflective')
+          & -openmc.YPlane(PITCH / 2, boundary_type='reflective')
+          & +openmc.ZPlane(-HEIGHT / 2, boundary_type='reflective')
+          & -openmc.ZPlane(HEIGHT / 2, boundary_type='reflective'))
+    fills = (fuel, mod, fuel)
+    cells = [openmc.Cell(cell_id=CELL_SLABS[i], fill=fills[i],
+                         region=+xs[i] & -xs[i + 1] & yz) for i in range(3)]
+    geom = openmc.Geometry(openmc.Universe(universe_id=UNIV_ROOT, cells=cells))
+    s = _settings(particles, batches, inactive, True)
+    s.source = openmc.IndependentSource(
+        space=openmc.stats.Box((-SLAB_HALF_X, -PITCH / 2, -HEIGHT / 2),
+                               (SLAB_HALF_X, PITCH / 2, HEIGHT / 2)),
+        constraints={'fissionable': True})
+    model = openmc.Model(geometry=geom, materials=openmc.Materials([fuel, mod]),
+                         settings=s)
+    mesh = openmc.RegularMesh(mesh_id=MESH_SLAB)
+    mesh.lower_left = (-SLAB_HALF_X, -PITCH / 2, -HEIGHT / 2)
+    mesh.upper_right = (SLAB_HALF_X, PITCH / 2, HEIGHT / 2)
+    mesh.dimension = (SLAB_MESH_NX, 1, 1)
+    return model, mesh
 
 
 def infinite_medium(particles=10_000, batches=110, inactive=10):

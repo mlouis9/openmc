@@ -430,3 +430,46 @@ Not yet done
     Setting region sources from an RMC field (needed once the field changes
     between generations), and the direction bundle built from the records
     (Stage 4).
+
+.. _devguide_rmc_tracer:
+
+Backward characteristic tracer (exercise)
+-----------------------------------------
+
+**Commit:** "rmc: backward characteristic tracer interface, tests, and
+exercise stub".
+
+Added
+    - ``rmc/tracer.h``: ``SegmentList`` (structure of arrays: length,
+      material, sqrtkT, density multiplier, field region, and whether the
+      path ended in vacuum) and ``CharacteristicTracer``, which holds the
+      field and scratch buffers. ``tracer.cpp`` holds
+      ``CharacteristicTracer::trace`` as a stub with step-by-step comments.
+    - ``FrozenField::mesh_of(cell, instance)`` and
+      ``FrozenField::region(cell, instance, bin)``; ``rmc::loaded_field`` is
+      declared in ``field.h``.
+    - C API ``openmc_rmc_trace`` (``src/rmc/tracer_capi.cpp``), which checks
+      that the start point is inside the geometry, and
+      ``openmc.lib.rmc.trace``.
+    - ``problems.slab_box()``: fuel, graphite, fuel slabs between vacuum
+      faces in x, reflective in y and z, with a mesh in x whose planes do not
+      coincide with the slab planes.
+    - ``pipeline.ce_session`` now initializes an ordinary run. It used
+      volume-calculation mode (``openmc -c``), in which OpenMC ignores
+      boundary conditions, so a reflected path was reported as lost.
+    - ``docs/source/methods/rmc.rst``: the backward characteristic section.
+
+Tests
+    - ``tests/rmc/test_tracer.py`` (G2.1): 40 random paths in the slab box
+      against closed-form segments (union of slab planes, mesh planes, and
+      reflection times in y and z), lengths to :math:`10^{-9}` cm, materials
+      and regions exactly; truncation at ``max_segments``; a start point
+      outside the geometry is an error.
+    - ``tests/rmc/test_multiple_meshes.py``: through a fuel mesh, an
+      unmeshed ring, and an outer mesh, each segment's region is a region of
+      its material and the path never ends.
+
+Exercise
+    ``CharacteristicTracer::trace``. Three tests fail until it is written
+    (the start-point test passes, since the C API checks it). A reference
+    implementation passes all of them.

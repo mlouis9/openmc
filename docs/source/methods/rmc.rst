@@ -182,6 +182,36 @@ boundaries have closed-form intersections with the mesh voxels, random ray's
 prescribed volume estimator uses them directly, and no volume error enters
 either the sweep or the residual weights.
 
+.. _methods_rmc_tracer:
+
+---------------------------------
+The Backward CE Characteristic
+---------------------------------
+
+At a destination :math:`\mathbf{r}^\star`, with incident direction
+:math:`\mathbf{\Omega}'` and energy :math:`E'`, the angular flux due to the
+field source :math:`Q^F` is an integral along the backward path
+:math:`\mathbf{r}(s) = \mathbf{r}^\star - s\,\mathbf{\Omega}'`, folded
+through reflective boundaries and ended at a vacuum boundary. With the path
+split into segments :math:`k` of length :math:`\ell_k`, each inside one cell
+instance and one source-region mesh bin, the field and the cross section are
+constant on each segment, and
+
+.. math::
+    :label: rmc-backward-psi
+
+    \psi(\mathbf{r}^\star, E', \mathbf{\Omega}') = \sum_k e^{-\tau_k(E')}\,
+    Q^F_k(E')\,\Lambda\big(\Sigma_{t,k}(E'), \ell_k\big), \qquad
+    \Lambda(\Sigma, \ell) = \frac{1 - e^{-\Sigma\ell}}{\Sigma},
+
+where :math:`\tau_k` is the optical depth from :math:`\mathbf{r}^\star` to
+the near end of segment :math:`k`, and :math:`\Lambda = \ell` when
+:math:`\Sigma = 0`. Reflections change the path's direction but not the
+integrand, because the field is isotropic, so the segment list needs only
+lengths and what each segment lies in: material, temperature, density
+multiplier, and field region. One trace serves every energy :math:`E'` at
+which the integral is wanted.
+
 .. _methods_rmc_kinematics:
 
 -------------------------------------

@@ -11,6 +11,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "openmc/memory.h"
 #include "openmc/particle_data.h"
 #include "openmc/position.h"
 #include "openmc/vector.h"
@@ -80,6 +81,13 @@ public:
   //! (mesh bin -1). Such regions lie only in the ray source box.
   int32_t region_mesh(int64_t r) const { return region_mesh_[r]; }
 
+  //! Mesh applied to a cell instance: an index into model::meshes, -1 for
+  //! none, or -2 for an instance random ray never reached (no regions).
+  int32_t mesh_of(int32_t cell_id, int32_t instance) const;
+
+  //! Region with the given key, or -1 if the field has no such region.
+  int64_t region(int32_t cell_id, int32_t instance, int64_t mesh_bin) const;
+
   //! Ray source box of the random ray solve, which contains every region
   Position box_lower_left() const { return box_lower_left_; }
   Position box_upper_right() const { return box_upper_right_; }
@@ -141,6 +149,10 @@ private:
 
   double mass_[2] {0.0, 0.0};
 };
+
+//! The field loaded through the C API (openmc_rmc_field_load), defined in
+//! src/rmc/capi.cpp
+extern unique_ptr<FrozenField> loaded_field;
 
 } // namespace rmc
 } // namespace openmc
