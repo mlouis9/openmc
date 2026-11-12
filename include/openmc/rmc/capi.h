@@ -1,5 +1,6 @@
 //! \file capi.h
-//! \brief C API for multilevel RMC, called from Python through openmc.lib.rmc.
+//! \brief C API for residual Monte Carlo (RMC), called from Python through
+//! openmc.lib.rmc.
 //!
 //! Every function returns 0 on success or a negative OpenMC error code, with
 //! the message available from openmc_get_err_msg(). Only C types cross this

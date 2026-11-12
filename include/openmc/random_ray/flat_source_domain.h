@@ -98,7 +98,7 @@ public:
   void flatten_xs();
   void transpose_scattering_matrix();
   void serialize_final_fluxes(vector<double>& flux);
-  //! Write the frozen field for multilevel RMC to an HDF5 file: per source
+  //! Write the frozen field for RMC to an HDF5 file: per source
   //! region its key, material, density multiplier, volume estimate,
   //! active-averaged scalar flux, and MG emission by tag; per material the
   //! MGXS that define them. Arrays are flat, groups in ascending energy.
@@ -136,7 +136,7 @@ public:
   static bool volume_normalized_flux_tallies_;
   // If the user wants outputs based on the adjoint flux
   static bool adjoint_requested_;
-  // Path of the multilevel RMC field export; empty means no export
+  // Path of the RMC field export; empty means no export
   static std::string rmc_field_file_;
   // Path of the HDF5 file of prescribed source-region volumes, read when the
   // prescribed volume estimator is selected

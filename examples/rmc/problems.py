@@ -1,4 +1,4 @@
-"""Verification problems for multilevel residual Monte Carlo (RMC).
+"""Verification problems for residual Monte Carlo (RMC).
 
 Two problems are defined, both 2 cm thick in z with reflective boundaries on
 every face, so that random ray, mesh tallies, and mesh sources all see a
@@ -13,7 +13,7 @@ graphite_pincell
 
 Graphite is used without S(alpha,beta) data, and matched_physics() makes
 OpenMC treat every target nucleus as stationary. These are consistent CE
-physics models, applied identically by multilevel RMC and by the reference
+physics models, applied identically by RMC and by the reference
 Monte Carlo runs, under which stationary-target elastic kinematics are exact.
 
 Every geometry, material, and mesh ID is explicit, because files exchanged

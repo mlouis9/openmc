@@ -1,10 +1,10 @@
 .. _devguide_rmc:
 
-=========================================
-Multilevel RMC: Development Log
-=========================================
+===============================================
+Residual Monte Carlo (RMC): Development Log
+===============================================
 
-This page records the development of multilevel residual Monte Carlo (RMC),
+This page records the development of residual Monte Carlo (RMC),
 the experimental method described in :ref:`methods_rmc`. It is a working
 document for developers: for each stage it lists what was added, where, how
 it was verified, and what is known to be missing. Entries are grouped by
@@ -272,8 +272,8 @@ Added
       ``data::random_ray_mg`` from a field file, matching materials by ID and
       reversing the groups, copying every value exactly.
     - **Settings.** An ``<rmc>`` element (``Settings.rmc`` in Python, keys
-      ``field_file``, ``lift_file``, ``volume_file``) declares a multilevel
-      RMC model. In a continuous-energy model with ``<rmc>``, the
+      ``field_file``, ``lift_file``, ``volume_file``) declares an RMC
+      model. In a continuous-energy model with ``<rmc>``, the
       ``<random_ray>`` element is read instead of rejected, and the solver
       type stays Monte Carlo.
     - ``openmc_run_random_ray()`` fills the provider from the field file in a
@@ -318,7 +318,7 @@ Added
     current region sources (reset the iteration tallies, transport every
     ray, add discovered regions, normalize, form the new flux iterate).
     ``simulate()`` calls it between the source update and the eigenvalue
-    update. Multilevel RMC will call it after setting the sources itself.
+    update. RMC will call it after setting the sources itself.
 
 Verified
     The random ray regression tests produce bitwise identical results

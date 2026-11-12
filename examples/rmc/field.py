@@ -1,4 +1,4 @@
-"""Python side of the frozen field for multilevel RMC.
+"""Python side of the frozen field for residual Monte Carlo (RMC).
 
 Reads the field file written by random ray, recomputes its emission sources
 independently, builds the within-group lifts, and provides a slow reference

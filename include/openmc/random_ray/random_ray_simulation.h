@@ -29,8 +29,8 @@ public:
   //! iteration tallies, transport every ray, add newly discovered source
   //! regions, normalize, and form the new scalar flux iterate. Does not
   //! update the sources, compute k, or tally, so that a caller can set the
-  //! sources itself (as multilevel RMC will). Returns the number of source
-  //! regions hit in this iteration.
+  //! sources itself (as residual Monte Carlo will). Returns the number of
+  //! source regions hit in this iteration.
   int64_t sweep();
   void output_simulation_results();
   void instability_check(

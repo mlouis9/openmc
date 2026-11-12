@@ -1,6 +1,6 @@
 //! \file random_ray_capi.cpp
 //! \brief C API that runs OpenMC's random ray solver inside a
-//! continuous-energy multilevel RMC process.
+//! continuous-energy RMC process.
 
 #include "openmc/capi.h"
 #include "openmc/error.h"

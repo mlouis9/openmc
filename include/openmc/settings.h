@@ -146,7 +146,7 @@ extern vector<std::string>
 extern RunMode run_mode;       //!< Run mode (eigenvalue, fixed src, etc.)
 extern SolverType solver_type; //!< Solver Type (Monte Carlo or Random Ray)
 
-// Multilevel RMC inputs (the <rmc> element). When enabled in a
+// Residual Monte Carlo (RMC) inputs (the <rmc> element). When enabled in a
 // continuous-energy model, the <random_ray> element is read so that random
 // ray can run inside the continuous-energy process; the solver type stays
 // Monte Carlo.

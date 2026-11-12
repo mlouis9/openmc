@@ -36,7 +36,7 @@ def test_source_region_volumes_type():
 
 
 def test_rmc_inputs_roundtrip(run_in_tmpdir):
-    """The multilevel RMC input files survive export and import."""
+    """The RMC input files survive export and import."""
     s = openmc.Settings()
     s.rmc = {'field_file': 'field.h5', 'lift_file': 'lifts.h5',
              'volume_file': 'volumes.h5'}

@@ -1,5 +1,5 @@
 //! \file field.h
-//! \brief The frozen multigroup field of multilevel RMC.
+//! \brief The frozen multigroup field of residual Monte Carlo (RMC).
 //!
 //! Theory: docs/source/methods/rmc.rst, section "The Frozen Field" (label
 //! methods_rmc_field).

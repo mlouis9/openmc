@@ -272,7 +272,7 @@ void get_run_parameters(pugi::xml_node node_base)
   }
 
   // Random ray variables, read for the random ray solver and for random ray
-  // inside a continuous-energy multilevel RMC process
+  // inside a continuous-energy RMC process
   if (solver_type == SolverType::RANDOM_RAY ||
       (rmc_enabled && check_for_node(node_base, "random_ray"))) {
     xml_node random_ray_node = node_base.child("random_ray");
@@ -574,7 +574,7 @@ void read_settings_xml(pugi::xml_node root)
     }
   }
 
-  // Multilevel RMC inputs
+  // Residual Monte Carlo (RMC) inputs
   if (check_for_node(root, "rmc")) {
     xml_node rmc_node = root.child("rmc");
     rmc_enabled = true;
@@ -586,7 +586,7 @@ void read_settings_xml(pugi::xml_node root)
       rmc_volume_file = get_node_value(rmc_node, "volume_file");
   }
 
-  // Check solver type. In a continuous-energy multilevel RMC model, a
+  // Check solver type. In a continuous-energy RMC model, a
   // <random_ray> element configures the multigroup sweep that runs inside
   // the continuous-energy process, and the solver remains Monte Carlo.
   if (check_for_node(root, "random_ray") && !(run_CE && rmc_enabled)) {

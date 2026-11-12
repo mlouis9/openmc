@@ -1,6 +1,7 @@
-//! A compiled source that samples the frozen field of multilevel RMC,
-//! a_s Q_s + a_f Q_f, with single-sample weights (docs/source/methods/rmc.rst,
-//! methods_rmc_field_source). Used as the fixed source of reference runs.
+//! A compiled source that samples the frozen field of residual Monte Carlo
+//! (RMC), a_s Q_s + a_f Q_f, with single-sample weights
+//! (docs/source/methods/rmc.rst, methods_rmc_field_source). Used as the fixed
+//! source of reference runs.
 //!
 //! Parameters, comma-separated key=value: field, lifts, volumes (file paths);
 //! a_s, a_f (amplitudes); lo0..lo2, hi0..hi2 (sampling box [cm]);

@@ -11,9 +11,9 @@ namespace openmc {
 //! Random ray needs multigroup cross sections only as a few flat tables. This
 //! class holds them, so that the solver does not read data::mg directly and
 //! can run in a process that loaded continuous-energy data instead (as
-//! multilevel RMC does). It is filled either from the MGXS library through
-//! fill_from_mgxs(), which is what an ordinary random ray run does, or by
-//! other code that writes the members directly (see rmc::load_mg_tables()).
+//! residual Monte Carlo does). It is filled either from the MGXS library
+//! through fill_from_mgxs(), which is what an ordinary random ray run does, or
+//! by other code that writes the members directly (see rmc::load_mg_tables()).
 //!
 //! Groups follow the MGXS library convention: group 0 has the highest
 //! energy. Tables are indexed by material (the index into model::materials),

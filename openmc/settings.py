@@ -239,7 +239,7 @@ class Settings:
             default is 'False'.
         :rmc_field_file:
             Path of an HDF5 file to which the converged source-region
-            emission sources are written for multilevel residual Monte Carlo
+            emission sources are written for residual Monte Carlo
             (str or os.PathLike, experimental). Requires an eigenvalue run
             on a single MPI rank, without adjoint mode.
         :sample_method:
@@ -272,7 +272,7 @@ class Settings:
 
         .. versionadded:: 0.15.0
     rmc : dict
-        Inputs of multilevel residual Monte Carlo (experimental), read by
+        Inputs of residual Monte Carlo (experimental), read by
         the continuous-energy process. Acceptable keys are:
 
         :field_file:
@@ -288,7 +288,7 @@ class Settings:
         When this dictionary is not empty, a :attr:`random_ray` block in a
         continuous-energy model is read rather than rejected, so that random
         ray can run inside the continuous-energy process as the multigroup
-        sweep of multilevel RMC. The solver of the model remains Monte Carlo.
+        sweep of RMC. The solver of the model remains Monte Carlo.
 
     resonance_scattering : dict
         Settings for resonance elastic scattering. Accepted keys are 'enable'

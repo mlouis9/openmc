@@ -1,4 +1,4 @@
-"""Multigroup side of multilevel RMC: MGXS generation, the random-ray solve
+"""Multigroup side of residual Monte Carlo (RMC): MGXS generation, the random-ray solve
 that writes the frozen field, and the continuous-energy tallies that define
 the within-group lifts (docs/source/methods/rmc.rst, methods_rmc_field)."""
 import copy

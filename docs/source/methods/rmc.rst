@@ -1,8 +1,8 @@
 .. _methods_rmc:
 
-==========================================
-Multilevel Residual Monte Carlo Correction
-==========================================
+===============================
+Residual Monte Carlo Correction
+===============================
 
 .. note::
 
@@ -16,7 +16,7 @@ Multilevel Residual Monte Carlo Correction
 Overview
 --------
 
-Multilevel residual Monte Carlo (RMC) correction solves the
+Residual Monte Carlo (RMC) correction solves the
 continuous-energy (CE) :math:`k`-eigenvalue problem starting from a converged
 multigroup random ray solution (see :ref:`methods_random_ray`). The random
 ray emission source is frozen and lifted to continuous energy; this is the
@@ -31,9 +31,8 @@ The residual is estimated on two levels that share random inputs. On a small
 number of backward paths, CE production is evaluated together with the
 multigroup production of the same field on the same paths, so that only their
 difference contributes noise. On a larger number of paths, the multigroup
-production alone is evaluated, which is inexpensive. This is a two-level
-(multilevel) Monte Carlo estimator with the multigroup model as the coarse
-level.
+production alone is evaluated, which is inexpensive. Structurally this is a two-level Monte Carlo estimator, with the multigroup
+model as the coarse level.
 
 Write the CE transport operators as
 

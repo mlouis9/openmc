@@ -1,4 +1,4 @@
-"""Bindings to the multilevel residual Monte Carlo (RMC) C API.
+"""Bindings to the residual Monte Carlo (RMC) C API.
 
 Experimental and opt-in: import as ``import openmc.lib.rmc``. Requires a
 continuous-energy model initialized with :func:`openmc.lib.init`.

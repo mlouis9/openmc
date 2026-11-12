@@ -1,6 +1,6 @@
 """Random ray inside the continuous-energy (CE) process (gate G2.5).
 
-Multilevel RMC runs OpenMC's random ray solver in the CE process, as the
+Residual Monte Carlo (RMC) runs OpenMC's random ray solver in the CE process, as the
 multigroup sweep, with the multigroup tables of the field file instead of an
 MGXS library (data::random_ray_mg, filled by rmc::load_mg_tables()). These
 tests run the graphite pincell's random ray solve twice, once in a

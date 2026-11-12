@@ -298,7 +298,7 @@ void validate_random_ray_inputs()
                 "than one MPI rank.");
   }
 
-  // Validate the multilevel RMC field export
+  // Validate the RMC field export
   ///////////////////////////////////////////////////////////////////
   if (!FlatSourceDomain::rmc_field_file_.empty()) {
     if (settings::run_mode != RunMode::EIGENVALUE) {
@@ -524,7 +524,7 @@ void RandomRaySimulation::simulate()
     }
   }
 
-  // Write the frozen field for multilevel RMC, while the final flux and
+  // Write the frozen field for RMC, while the final flux and
   // k-effective of this solve are in place
   if (!FlatSourceDomain::rmc_field_file_.empty()) {
     domain_->export_rmc_field(FlatSourceDomain::rmc_field_file_);
@@ -1144,7 +1144,7 @@ void openmc_run_random_ray()
 
   // The solver reads its multigroup data from data::random_ray_mg. In a
   // multigroup run it comes from the MGXS library. In a continuous-energy
-  // multilevel RMC process, which has no MGXS library, it comes from the
+  // RMC process, which has no MGXS library, it comes from the
   // tables of the frozen field (the ones the multigroup run used).
   if (settings::run_CE) {
     rmc::load_mg_tables(settings::rmc_field_file, data::random_ray_mg);
