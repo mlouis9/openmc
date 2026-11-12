@@ -2472,12 +2472,21 @@ void FlatSourceDomain::export_rmc_field(const std::string& path) const
   }
 
   hid_t file = file_open(path, 'w');
-  write_attribute(file, "version", 2);
+  write_attribute(file, "version", 3);
   write_attribute(file, "k_mg", simulation::keff);
   write_attribute(file, "n_groups", G);
   write_attribute(file, "n_regions", R);
   write_attribute(file, "group_order", "ascending energy");
   write_dataset(file, "group_edges", data::random_ray_mg.rev_energy_bins);
+  // The ray source box, which contains every source region. Regions without a
+  // source-region mesh (or outside their mesh) have their volumes sampled in
+  // it.
+  auto* is = dynamic_cast<IndependentSource*>(RandomRay::ray_source_.get());
+  auto* sb = dynamic_cast<SpatialBox*>(is->space());
+  Position ll = sb->lower_left();
+  Position ur = sb->upper_right();
+  write_dataset(file, "domain_lower_left", vector<double> {ll.x, ll.y, ll.z});
+  write_dataset(file, "domain_upper_right", vector<double> {ur.x, ur.y, ur.z});
   hid_t grp = create_group(file, "regions");
   write_dataset(grp, "cell_id", cell_id);
   write_dataset(grp, "instance", instance);

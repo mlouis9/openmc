@@ -94,12 +94,20 @@ same model: ``nu-scatter`` and ``nu-fission`` with an outgoing-energy filter,
 per material. Groups with no tallied content use a :math:`1/E` shape.
 
 **Location.** A point belongs to the region keyed by its lowest-level cell
-ID, cell instance, and source-region mesh bin, as in random ray. Points in
-regions the random ray solve never discovered, and energies outside the fine
-grid, have zero field. Energy bin :math:`i` is :math:`[e_i, e_{i+1})`.
+ID, cell instance, and source-region mesh bin, as in random ray. Random ray
+applies at most one mesh to each cell instance, and different instances may
+use different meshes or none, so a point is located in two steps: its cell
+instance determines the mesh (if any), and the point's bin in that mesh
+completes the key (bin 0 without a mesh). Points in regions the random ray
+solve never discovered, and energies outside the fine grid, have zero field.
+Energy bin :math:`i` is :math:`[e_i, e_{i+1})`.
 
 **Normalization.** Region volumes :math:`V_R` are estimated once, by locating
-points sampled uniformly in each mesh voxel, and the field is scaled so that
+points sampled uniformly in a known volume that contains the region: every
+voxel of the region's mesh, or the ray source box for a region without a mesh
+(or outside its mesh). A point is counted only toward regions whose sampling
+domain it was drawn in, so each estimate is a binomial fraction of one known
+volume. The field is scaled so that
 
 .. math::
     :label: rmc-field-norm

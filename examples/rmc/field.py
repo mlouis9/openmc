@@ -38,6 +38,7 @@ class FieldFile:
     sigma_s: np.ndarray        # [M, G_in, G_out]
     nu_sigma_f: np.ndarray     # [M, G]
     chi: np.ndarray            # [M, G]
+    box: tuple                 # (lower_left, upper_right) of the ray source box
 
     @classmethod
     def load(cls, path):
@@ -54,7 +55,8 @@ class FieldFile:
                 r['Q_f'][()].reshape(R, G),
                 m['material_id'][()], m['sigma_t'][()].reshape(M, G),
                 m['sigma_s'][()].reshape(M, G, G), m['nu_sigma_f'][()].reshape(M, G),
-                m['chi'][()].reshape(M, G))
+                m['chi'][()].reshape(M, G),
+                (f['domain_lower_left'][()], f['domain_upper_right'][()]))
 
     @property
     def n_regions(self):
@@ -163,38 +165,72 @@ def _normalize_per_group(h, dE, group_of_fine, fine_edges):
 # Reference field
 # --------------------------------------------------------------------------
 
+def as_meshes(meshes):
+    """A list of meshes from one mesh or an iterable of meshes."""
+    if isinstance(meshes, openmc.MeshBase):
+        return [meshes]
+    return list(meshes)
+
+
+def regular_mesh_bin(mesh, xyz):
+    """Regular-mesh bin, x fastest, or -1 outside the mesh."""
+    ll = np.asarray(mesh.lower_left, dtype=float)
+    dim = np.asarray(mesh.dimension, dtype=int)
+    w = (np.asarray(mesh.upper_right, dtype=float) - ll) / dim
+    ijk = np.floor((np.asarray(xyz, dtype=float) - ll) / w).astype(int)
+    if np.any(ijk < 0) or np.any(ijk >= dim):
+        return -1
+    return int(ijk[0] + dim[0] * (ijk[1] + dim[1] * ijk[2]))
+
+
 class ReferenceField:
     """Slow, independent implementation of the frozen field.
 
-    Must run inside a CE process started with openmc.lib.init(). Region
-    location uses openmc.lib.find_cell and the source-region mesh bin;
-    evaluation returns Q_t per unit volume, energy [eV], and solid angle.
+    Must run inside a CE process started with openmc.lib.init(). A point is
+    located as random ray does it: find the cell instance with
+    openmc.lib.find_cell, look up which source-region mesh (if any) the field
+    file assigns to that instance, and take the bin in that mesh. Evaluation
+    returns Q_t per unit volume, energy [eV], and solid angle.
+
+    meshes holds the source-region meshes (one mesh or an iterable); the field
+    file names the one each region uses by ID.
     """
 
-    def __init__(self, field, lift_path, mesh, scale=1.0):
-        self.F, self.mesh, self.scale = field, mesh, scale
+    def __init__(self, field, lift_path, meshes, scale=1.0):
+        self.F, self.scale = field, scale
+        self.meshes = {m.id: m for m in as_meshes(meshes)}
         self.key_to_region = {k: i for i, k in enumerate(field.keys())}
+        # Mesh ID of each cell instance (-1 for none); one per instance
+        self.mesh_of_base = {}
+        for c, i, mid in zip(field.cell_id.tolist(), field.instance.tolist(),
+                             field.mesh_id.tolist()):
+            if self.mesh_of_base.setdefault((c, i), mid) != mid:
+                raise ValueError(f'cell {c} instance {i} has two meshes')
+        missing = {m for m in self.mesh_of_base.values() if m >= 0} - set(self.meshes)
+        if missing:
+            raise ValueError(f'meshes {sorted(missing)} not given')
         with h5py.File(lift_path, 'r') as f:
             self.fine = f['fine_edges'][()]
             mids = f['material_ids'][()]
             n_fine = len(self.fine) - 1
             self.lift = {t: {int(m): f[f'h_{t}'][()].reshape(len(mids), n_fine)[i]
                              for i, m in enumerate(mids)} for t in ('s', 'f')}
-        self._ll = np.asarray(mesh.lower_left, dtype=float)
-        self._ur = np.asarray(mesh.upper_right, dtype=float)
-        self._dim = np.asarray(mesh.dimension, dtype=int)
 
-    def mesh_bin(self, xyz):
-        """Regular-mesh bin, x fastest, or -1 outside the mesh."""
-        w = (self._ur - self._ll) / self._dim
-        ijk = np.floor((np.asarray(xyz, dtype=float) - self._ll) / w).astype(int)
-        if np.any(ijk < 0) or np.any(ijk >= self._dim):
+    def region_mesh_id(self, region):
+        """ID of the mesh whose voxels contain the region, or -1 (no mesh, or
+        outside it), as FrozenField::region_mesh()."""
+        F = self.F
+        if F.mesh_bin[region] < 0:
             return -1
-        return int(ijk[0] + self._dim[0] * (ijk[1] + self._dim[1] * ijk[2]))
+        return int(F.mesh_id[region])
 
     def locate(self, xyz):
         cell, inst = openmc.lib.find_cell(xyz)
-        return self.key_to_region.get((cell.id, inst, self.mesh_bin(xyz)), -1)
+        mid = self.mesh_of_base.get((cell.id, inst))
+        if mid is None:
+            return -1
+        b = regular_mesh_bin(self.meshes[mid], xyz) if mid >= 0 else 0
+        return self.key_to_region.get((cell.id, inst, b), -1)
 
     def evaluate(self, region, tag, E):
         """Edge convention: bin i is [e_i, e_{i+1}); outside the grid gives 0."""
@@ -222,18 +258,39 @@ def voxel_iter(mesh):
                 yield i, j, k, ll + w * np.array([i, j, k]), w
 
 
-def region_volumes(ref, n_per_voxel, seed):
-    """Region volumes [cm^3] from points uniform in each voxel."""
+def region_volumes(ref, n_per_voxel, seed, n_box=0):
+    """Region volumes [cm^3] by locating uniform points.
+
+    A region is counted only by its own sampling domain: n_per_voxel points
+    in every voxel of its mesh, or n_box points in the ray source box for
+    regions without a mesh (or outside it). Returns (volumes, hit counts).
+    """
     rng = np.random.default_rng(seed)
-    counts = np.zeros(ref.F.n_regions)
-    V_vox = None
-    for *_, lo, w in voxel_iter(ref.mesh):
-        V_vox = float(np.prod(w))
-        for x in lo + w * rng.random((n_per_voxel, 3)):
-            R = ref.locate(x)
-            if R >= 0:
-                counts[R] += 1
-    return V_vox * counts / n_per_voxel, counts
+    R = ref.F.n_regions
+    owner = np.array([ref.region_mesh_id(r) for r in range(R)])
+    counts = np.zeros(R)
+    V_dom = np.zeros(R)
+    n_dom = np.zeros(R)
+
+    def sample(lo, w, n, mesh_id):
+        for x in lo + w * rng.random((n, 3)):
+            r = ref.locate(x)
+            if r >= 0 and owner[r] == mesh_id:
+                counts[r] += 1
+
+    for mid in sorted({m for m in owner if m >= 0}):
+        for *_, lo, w in voxel_iter(ref.meshes[mid]):
+            sample(lo, w, n_per_voxel, mid)
+        V_dom[owner == mid] = float(np.prod(w))
+        n_dom[owner == mid] = n_per_voxel
+    if np.any(owner < 0):
+        if n_box <= 0:
+            raise ValueError('regions without a mesh need n_box > 0')
+        lo, hi = (np.asarray(v, dtype=float) for v in ref.F.box)
+        sample(lo, hi - lo, n_box, -1)
+        V_dom[owner < 0] = float(np.prod(hi - lo))
+        n_dom[owner < 0] = n_box
+    return V_dom * counts / n_dom, counts
 
 
 def field_scale(field, V):
@@ -241,11 +298,13 @@ def field_scale(field, V):
     return (1.0 / field.k_mg) / float(np.sum(V[:, None] * field.Q_f))
 
 
-def write_volumes(path, VA, VB, counts_A, counts_B, scale, n_per_voxel, seeds):
+def write_volumes(path, VA, VB, counts_A, counts_B, scale, n_per_voxel, seeds,
+                  n_box=0):
     with h5py.File(path, 'w') as f:
-        f.attrs['version'] = 1
+        f.attrs['version'] = 2
         f.attrs['scale'] = scale
         f.attrs['n_per_voxel'] = n_per_voxel
+        f.attrs['n_box'] = n_box
         f.attrs['seeds'] = np.asarray(seeds)
         f['V_A'], f['V_B'] = VA, VB
         f['counts_A'], f['counts_B'] = counts_A, counts_B

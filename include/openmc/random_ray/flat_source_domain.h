@@ -101,7 +101,8 @@ public:
   //! Write the frozen field for RMC to an HDF5 file: per source
   //! region its key, material, density multiplier, volume estimate,
   //! active-averaged scalar flux, and MG emission by tag; per material the
-  //! MGXS that define them. Arrays are flat, groups in ascending energy.
+  //! MGXS that define them; the ray source box. Arrays are flat, groups in
+  //! ascending energy.
   //! Theory: docs/source/methods/rmc.rst, methods_rmc_field.
   void export_rmc_field(const std::string& path) const;
   void apply_meshes();

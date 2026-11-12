@@ -64,7 +64,7 @@ def test_field_source_mass(pincell, field_files):
         expected[b] += scale * V[R] * (a_s * F.Q_s[R] * lift_mass['s'][r]
                                        + a_f * F.Q_f[R] * lift_mass['f'][r])
 
-    vox = np.array([ref.mesh_bin(xi) for xi in x])
+    vox = np.array([fld.regular_mesh_bin(mesh, xi) for xi in x])
     grp = np.searchsorted(F.edges, E, side='right') - 1
     n = len(w)
     est = np.zeros((n_vox, G))

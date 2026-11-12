@@ -10,6 +10,11 @@ infinite_medium
     and angle.
 graphite_pincell
     A UO2 pin in graphite. Adds spatial structure.
+graphite_pincell_split_meshes
+    The graphite pincell with the moderator split by a cylinder into an
+    inner ring and an outer region, and a different source-region treatment
+    in each cell: a fine mesh on the fuel, none on the ring, and a coarse mesh
+    on the outer moderator. Exercises fields with several meshes.
 
 Graphite is used without S(alpha,beta) data, and matched_physics() makes
 OpenMC treat every target nucleus as stationary. These are consistent CE
@@ -25,13 +30,14 @@ import openmc
 
 # Explicit IDs, in separate ranges per object type.
 MAT_FUEL, MAT_MOD = 1, 2
-CELL_FUEL, CELL_MOD = 11, 12
-SURF_PIN = 31
+CELL_FUEL, CELL_MOD, CELL_RING = 11, 12, 13
+SURF_PIN, SURF_RING = 31, 32
 UNIV_ROOT = 1
-MESH_SR = 21
+MESH_SR, MESH_FUEL, MESH_OUTER = 21, 22, 23
 
 PITCH = 1.26     # cm
 R_FUEL = 0.4096  # cm
+R_RING = 0.5     # cm, outer radius of the moderator ring (split-mesh problem)
 HEIGHT = 2.0     # cm, reflective in z
 
 
@@ -75,9 +81,9 @@ def box_region(half_x, half_y, half_z):
     return +planes[0] & -planes[1] & +planes[2] & -planes[3] & +planes[4] & -planes[5]
 
 
-def source_region_mesh(n_per_side):
+def source_region_mesh(n_per_side, mesh_id=MESH_SR):
     """Regular mesh over the box, n_per_side x n_per_side x 1 voxels."""
-    mesh = openmc.RegularMesh(mesh_id=MESH_SR)
+    mesh = openmc.RegularMesh(mesh_id=mesh_id)
     mesh.lower_left = (-PITCH / 2, -PITCH / 2, -HEIGHT / 2)
     mesh.upper_right = (+PITCH / 2, +PITCH / 2, +HEIGHT / 2)
     mesh.dimension = (n_per_side, n_per_side, 1)
@@ -111,6 +117,37 @@ def graphite_pincell(n_per_side=12, particles=10_000, batches=110, inactive=10):
     model = openmc.Model(geometry=geom, materials=openmc.Materials([fuel, mod]),
                          settings=_settings(particles, batches, inactive, True))
     return model, source_region_mesh(n_per_side)
+
+
+def graphite_pincell_split_meshes(n_fuel=4, n_outer=3, particles=10_000,
+                                  batches=110, inactive=10):
+    """The graphite pincell with three cells and two source-region meshes.
+
+    Cells: fuel (r < R_FUEL), a graphite ring (R_FUEL < r < R_RING), and the
+    outer graphite. The fuel gets an n_fuel x n_fuel mesh over the pin's
+    bounding square, the outer graphite an n_outer x n_outer mesh over the
+    whole box, and the ring no mesh, so it is a single source region.
+
+    Returns the CE model and the (mesh, domains) pairs for random ray.
+    """
+    fuel, mod = materials()
+    box = box_region(PITCH / 2, PITCH / 2, HEIGHT / 2)
+    pin = openmc.ZCylinder(surface_id=SURF_PIN, r=R_FUEL)
+    ring = openmc.ZCylinder(surface_id=SURF_RING, r=R_RING)
+    c_fuel = openmc.Cell(cell_id=CELL_FUEL, fill=fuel, region=-pin & box)
+    c_ring = openmc.Cell(cell_id=CELL_RING, fill=mod, region=+pin & -ring & box)
+    c_mod = openmc.Cell(cell_id=CELL_MOD, fill=mod, region=+ring & box)
+    geom = openmc.Geometry(openmc.Universe(universe_id=UNIV_ROOT,
+                                           cells=[c_fuel, c_ring, c_mod]))
+    model = openmc.Model(geometry=geom, materials=openmc.Materials([fuel, mod]),
+                         settings=_settings(particles, batches, inactive, True))
+
+    m_fuel = openmc.RegularMesh(mesh_id=MESH_FUEL)
+    m_fuel.lower_left = (-R_FUEL, -R_FUEL, -HEIGHT / 2)
+    m_fuel.upper_right = (R_FUEL, R_FUEL, HEIGHT / 2)
+    m_fuel.dimension = (n_fuel, n_fuel, 1)
+    m_outer = source_region_mesh(n_outer, MESH_OUTER)
+    return model, [(m_fuel, [c_fuel]), (m_outer, [c_mod])]
 
 
 def infinite_medium(particles=10_000, batches=110, inactive=10):

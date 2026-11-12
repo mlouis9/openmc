@@ -12,6 +12,7 @@
 #include <unordered_map>
 
 #include "openmc/particle_data.h"
+#include "openmc/position.h"
 #include "openmc/vector.h"
 
 namespace openmc {
@@ -68,8 +69,20 @@ public:
 
   int64_t n_regions() const { return static_cast<int64_t>(lift_row_.size()); }
   int n_groups() const { return n_groups_; }
-  //! Index into model::meshes of the source-region mesh, or -1.
-  int32_t mesh_index() const { return mesh_index_; }
+
+  //! Indices into model::meshes of every source-region mesh the field uses,
+  //! in order of first appearance. Different cell instances may use
+  //! different meshes, as in random ray; each instance uses at most one.
+  const vector<int32_t>& mesh_indices() const { return mesh_indices_; }
+
+  //! The mesh whose voxels contain region r: an index into model::meshes, or
+  //! -1 for a region of a cell instance without a mesh, or outside its mesh
+  //! (mesh bin -1). Such regions lie only in the ray source box.
+  int32_t region_mesh(int64_t r) const { return region_mesh_[r]; }
+
+  //! Ray source box of the random ray solve, which contains every region
+  Position box_lower_left() const { return box_lower_left_; }
+  Position box_upper_right() const { return box_upper_right_; }
 
 private:
   //----------------------------------------------------------------------------
@@ -90,11 +103,30 @@ private:
     size_t operator()(const Key& k) const;
   };
 
+  //! A base region: a cell instance, before any mesh subdivision.
+  struct Base {
+    int32_t cell;
+    int32_t instance;
+    bool operator==(const Base& o) const
+    {
+      return cell == o.cell && instance == o.instance;
+    }
+  };
+  struct BaseHash {
+    size_t operator()(const Base& b) const;
+  };
+
   //----------------------------------------------------------------------------
   // Data. Flat arrays with documented index order.
 
   std::unordered_map<Key, int64_t, KeyHash> key_to_region_;
-  int32_t mesh_index_ {-1}; //!< index into model::meshes, or -1
+  //! Mesh of each base region in the field: index into model::meshes, or -1
+  //! for none. Base regions random ray never reached have no entry.
+  std::unordered_map<Base, int32_t, BaseHash> mesh_of_base_;
+  vector<int32_t> mesh_indices_; //!< distinct entries of mesh_of_base_ >= 0
+  vector<int32_t> region_mesh_;  //!< [R], see region_mesh()
+  Position box_lower_left_;
+  Position box_upper_right_;
 
   int n_groups_ {0};
   vector<double> group_edges_; //!< [G+1] ascending energy [eV]

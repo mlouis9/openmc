@@ -20,7 +20,7 @@ for _name, _args in [
     ('openmc_rmc_field_locate', [c_int64, _f64p, _i64p]),
     ('openmc_rmc_field_evaluate', [c_int64, _i64p, _f64p, c_int, _f64p]),
     ('openmc_rmc_field_mass', [c_int, POINTER(c_double)]),
-    ('openmc_rmc_field_region_volumes', [c_int64, c_uint64, _f64p]),
+    ('openmc_rmc_field_region_volumes', [c_int64, c_int64, c_uint64, _f64p, _i64p]),
     ('openmc_rmc_run_random_ray', []),
 ]:
     _fn = getattr(_dll, _name)
@@ -73,11 +73,19 @@ def field_mass(tag):
     return m.value
 
 
-def field_region_volumes(n_per_voxel, seed):
-    """Region volumes [cm^3] from points uniform in each voxel."""
-    out = np.empty(field_n_regions(), dtype=np.float64)
-    _dll.openmc_rmc_field_region_volumes(int(n_per_voxel), int(seed), out)
-    return out
+def field_region_volumes(n_per_voxel, seed, n_box=0):
+    """Region volumes [cm^3] by locating uniform points.
+
+    Regions on a source-region mesh use n_per_voxel points in every voxel of
+    their mesh; regions without one (or outside it) use n_box points in the
+    ray source box. Returns (volumes, hit counts).
+    """
+    n = field_n_regions()
+    V = np.empty(n, dtype=np.float64)
+    counts = np.empty(n, dtype=np.int64)
+    _dll.openmc_rmc_field_region_volumes(int(n_per_voxel), int(n_box), int(seed),
+                                         V, counts)
+    return V, counts
 
 
 def run_random_ray():

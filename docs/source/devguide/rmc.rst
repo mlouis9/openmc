@@ -139,7 +139,8 @@ Exercises
     ``examples/rmc/field_source`` built against an installed OpenMC).
 
 Known limitations
-    One temperature per material; one source-region mesh; one MPI rank.
+    One temperature per material; one MPI rank. (One source-region mesh per
+    field was lifted in Stage 2; see :ref:`devguide_rmc_multiple_meshes`.)
 
 -----------------------------------------
 Stage 2: Random ray in the CE process
@@ -328,3 +329,53 @@ Not yet done
     A C API that sets region sources from an RMC field and calls ``sweep()``
     once. It needs the mapping from field regions to the domain's regions,
     which belongs with the segment records and the generation driver.
+
+.. _devguide_rmc_multiple_meshes:
+
+Several source-region meshes in the frozen field
+------------------------------------------------
+
+**Commit:** "rmc: frozen fields with several source-region meshes".
+
+Why
+    Random ray applies at most one mesh to each cell instance, but different
+    instances may use different meshes or none (for example, a fine mesh on
+    the fuel and a coarse one on the moderator). The Stage 1 field refused
+    any field with more than one mesh.
+
+Added
+    - **Field export version 3** adds the ray source box
+      (``domain_lower_left``, ``domain_upper_right``), which contains every
+      source region. ``FrozenField`` refuses older files with a message to
+      rerun the random ray solve.
+    - ``FrozenField`` keeps the mesh of each cell instance
+      (``mesh_of_base_``, built from the per-region ``mesh_id`` and checked
+      for consistency) instead of one mesh index. ``locate`` mirrors random
+      ray's lookup: cell instance, then its mesh, then the bin. New
+      accessors: ``mesh_indices()``, ``region_mesh(r)``, and the box.
+    - ``openmc_rmc_field_region_volumes`` takes ``n_box`` and returns hit
+      counts. Regions on a mesh are sampled voxel by voxel in their own mesh;
+      regions without a mesh, or outside it, in the ray source box. A point
+      is counted only toward regions of the domain it was drawn in.
+      ``openmc.lib.rmc.field_region_volumes(n_per_voxel, seed, n_box=0)``
+      now returns ``(volumes, counts)``.
+    - The Python reference (``ReferenceField``, ``region_volumes``), the
+      pipeline (``ce_session``, ``build_volumes``), and ``mg.run_random_ray``
+      accept one mesh or a list of ``(mesh, domains)`` pairs
+      (``mg.source_region_meshes()``, ``mg.meshes_of()``). The volume file
+      (version 2) records ``n_box``.
+    - ``problems.graphite_pincell_split_meshes()``: the graphite pincell with
+      the moderator split into an unmeshed ring and an outer region, a fine
+      mesh on the fuel and a coarse mesh on the outer graphite.
+
+Verified by ``tests/rmc/test_multiple_meshes.py``
+    - The export assigns each cell's regions to its own mesh (the ring is a
+      single region with no mesh, bin 0) and records the box.
+    - C++ ``locate`` agrees exactly with the Python reference at 20,000
+      points, and every region larger than the sampling resolution is found.
+    - C++ and Python volumes agree with the closed-form volumes region by
+      region (disk-rectangle intersections for the fuel and outer regions,
+      an annulus for the ring), within binomial statistics; sampling without
+      box points is refused when a region needs them.
+    - The single-mesh tests of ``test_frozen_field.py`` and
+      ``test_field_source.py`` pass unchanged in substance.

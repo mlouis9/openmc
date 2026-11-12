@@ -35,11 +35,13 @@ int openmc_rmc_field_evaluate(
 //! Field mass <1, Q_t>; tag 0 = s, 1 = f.
 int openmc_rmc_field_mass(int tag, double* mass);
 
-//! Region volumes [cm^3] from n_per_voxel uniform points in every voxel of
-//! the field's source-region mesh. volume has openmc_rmc_field_n_regions()
-//! entries.
-int openmc_rmc_field_region_volumes(
-  int64_t n_per_voxel, uint64_t seed, double* volume);
+//! Region volumes [cm^3] by locating uniform points. Regions on a
+//! source-region mesh are sampled with n_per_voxel points in every voxel of
+//! their mesh; regions without a mesh (or outside it) with n_box points in the
+//! ray source box (n_box may be 0 if there are none). volume and count (hits)
+//! have openmc_rmc_field_n_regions() entries.
+int openmc_rmc_field_region_volumes(int64_t n_per_voxel, int64_t n_box,
+  uint64_t seed, double* volume, int64_t* count);
 
 //! Run OpenMC's random ray solver (a full power iteration with the
 //! <random_ray> settings) inside this continuous-energy process, with the

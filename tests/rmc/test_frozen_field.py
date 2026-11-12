@@ -211,7 +211,7 @@ def test_cpp_volumes_match_reference(pincell, field_files, cpp_field):
     binomial statistics, and its total is the mesh volume."""
     _, mesh = pincell
     n_cpp = 20_000
-    V = cpp_field.field_region_volumes(n_cpp, seed=7)
+    V, counts = cpp_field.field_region_volumes(n_cpp, seed=7)
     with h5py.File(field_files['volumes'], 'r') as f:
         VA, n_py = f['V_A'][()], int(f.attrs['n_per_voxel'])
     V_vox = np.prod((np.asarray(mesh.upper_right) - mesh.lower_left) / mesh.dimension)
@@ -220,4 +220,5 @@ def test_cpp_volumes_match_reference(pincell, field_files, cpp_field):
     assert np.all(np.abs(V - VA) <= 5 * sd + 1e-15)
     assert np.sum(V) == pytest.approx(np.prod(np.asarray(mesh.upper_right) - mesh.lower_left))
     # Same seed, same answer
-    np.testing.assert_array_equal(V, cpp_field.field_region_volumes(n_cpp, seed=7))
+    np.testing.assert_array_equal(V, cpp_field.field_region_volumes(n_cpp, seed=7)[0])
+    np.testing.assert_array_equal(counts, np.rint(V / V_vox * n_cpp))

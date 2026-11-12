@@ -39,6 +39,14 @@ size_t FrozenField::KeyHash::operator()(const Key& k) const
   return seed;
 }
 
+size_t FrozenField::BaseHash::operator()(const Base& b) const
+{
+  size_t seed = 0;
+  hash_combine(seed, b.cell);
+  hash_combine(seed, b.instance);
+  return seed;
+}
+
 FrozenField::FrozenField(const std::string& field_file,
   const std::string& lift_file, const std::string& volume_file)
 {
@@ -48,6 +56,15 @@ FrozenField::FrozenField(const std::string& field_file,
   read_attribute(ff, "n_groups", n_groups_);
   read_attribute(ff, "n_regions", R);
   group_edges_ = read_vec<double>(ff, "group_edges");
+  if (!object_exists(ff, "domain_lower_left")) {
+    fatal_error(fmt::format("RMC field: {} has no ray source box; rerun the "
+                            "multigroup random ray solve (field version 3).",
+      field_file));
+  }
+  auto box_ll = read_vec<double>(ff, "domain_lower_left");
+  auto box_ur = read_vec<double>(ff, "domain_upper_right");
+  box_lower_left_ = {box_ll[0], box_ll[1], box_ll[2]};
+  box_upper_right_ = {box_ur[0], box_ur[1], box_ur[2]};
   hid_t rg = open_group(ff, "regions");
   auto cell_id = read_vec<int32_t>(rg, "cell_id");
   auto instance = read_vec<int32_t>(rg, "instance");
@@ -103,16 +120,35 @@ FrozenField::FrozenField(const std::string& field_file,
 
   // ---- Assemble -------------------------------------------------------------
   lift_row_.assign(R, -1);
+  region_mesh_.assign(R, -1);
   emission_.assign(2 * R * G, 0.0);
-  int32_t the_mesh_id = -1;
   for (int64_t r = 0; r < R; ++r) {
     key_to_region_[{cell_id[r], instance[r], mesh_bin[r]}] = r;
 
+    // Mesh of the region's cell instance. Every region of one instance must
+    // name the same mesh, since random ray applies at most one per instance.
+    int32_t mesh_idx = -1;
     if (mesh_id[r] >= 0) {
-      if (the_mesh_id >= 0 && mesh_id[r] != the_mesh_id)
-        fatal_error("RMC field: more than one source-region mesh.");
-      the_mesh_id = mesh_id[r];
+      auto it = model::mesh_map.find(mesh_id[r]);
+      if (it == model::mesh_map.end()) {
+        fatal_error(
+          fmt::format("RMC field: source-region mesh {} is not in this model.",
+            mesh_id[r]));
+      }
+      mesh_idx = it->second;
     }
+    auto [it_base, inserted] =
+      mesh_of_base_.emplace(Base {cell_id[r], instance[r]}, mesh_idx);
+    if (!inserted && it_base->second != mesh_idx) {
+      fatal_error(fmt::format("RMC field: cell {} instance {} has regions on "
+                              "different source-region meshes.",
+        cell_id[r], instance[r]));
+    }
+    if (mesh_idx >= 0 && std::find(mesh_indices_.begin(), mesh_indices_.end(),
+                           mesh_idx) == mesh_indices_.end()) {
+      mesh_indices_.push_back(mesh_idx);
+    }
+    region_mesh_[r] = (mesh_bin[r] >= 0) ? mesh_idx : -1;
 
     if (material_id[r] >= 0) {
       auto it = row_of_id.find(material_id[r]);
@@ -136,25 +172,19 @@ FrozenField::FrozenField(const std::string& field_file,
     mass_[0] = mass_[1] = std::nan("");
   if (key_to_region_.size() != static_cast<size_t>(R))
     fatal_error("RMC field: duplicate region keys.");
-
-  if (the_mesh_id >= 0) {
-    auto it = model::mesh_map.find(the_mesh_id);
-    if (it == model::mesh_map.end()) {
-      fatal_error(fmt::format(
-        "RMC field: source-region mesh {} is not in this model.", the_mesh_id));
-    }
-    mesh_index_ = it->second;
-  }
 }
 
 int64_t FrozenField::locate(const GeometryState& p) const
 {
-  Key k;
-  k.cell = model::cells[p.lowest_coord().cell()]->id_;
-  k.instance = p.cell_instance();
-  k.mesh_bin =
-    (mesh_index_ >= 0) ? model::meshes[mesh_index_]->get_bin(p.r()) : 0;
-  auto it = key_to_region_.find(k);
+  // The same two steps as random ray's lookup_source_region_key(): the cell
+  // instance decides which mesh (if any) subdivides it, and that mesh gives
+  // the bin.
+  Base base {model::cells[p.lowest_coord().cell()]->id_, p.cell_instance()};
+  auto b = mesh_of_base_.find(base);
+  if (b == mesh_of_base_.end())
+    return -1; // a cell instance random ray never reached
+  int64_t bin = (b->second >= 0) ? model::meshes[b->second]->get_bin(p.r()) : 0;
+  auto it = key_to_region_.find({base.cell, base.instance, bin});
   return (it == key_to_region_.end()) ? -1 : it->second;
 }
 
