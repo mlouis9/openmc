@@ -84,7 +84,9 @@ Stage 1: The frozen field
 -----------------------------------------
 
 **Commits:** "rmc: frozen field export, C++ field, C API, bindings, plugin,
-tests (stubs for exercises)" and "rmc: emission notation Q_s, Q_f".
+tests (stubs for exercises)", "rmc: emission notation Q_s, Q_f", and "rmc:
+reference implementations of the Stage 1 exercises". (In the main
+repository, Stage 1 may be a single commit containing all three.)
 
 Added
     - **Field export** (``FlatSourceDomain::export_rmc_field``, setting
@@ -122,15 +124,19 @@ Verified by ``tests/rmc/test_frozen_field.py``
     - The Python locator agrees with OpenMC's cell lookup; Python volumes
       are consistent between seeds.
     - C++ masses, locate, evaluate, and volumes agree with the Python
-      reference (the last three are the exercises below).
+      reference (locate, evaluate, and volumes were the exercises below).
 
 Verified by ``tests/rmc/test_field_source.py``
     - The field source plugin reproduces the field's mass.
 
-Exercises left as stubs
+Exercises
     ``FrozenField::locate``, ``FrozenField::evaluate``,
-    ``openmc_rmc_field_region_volumes``, and ``FieldSampler::sample``. The
-    four tests that exercise them fail until they are written.
+    ``openmc_rmc_field_region_volumes``, and ``FieldSampler::sample`` were
+    first committed as stubs, as learning exercises. ``locate`` and
+    ``evaluate`` were written independently, then all four were replaced by
+    the reference implementations, with which every Stage 1 test passes
+    (``test_field_source.py`` needs the plugin in
+    ``examples/rmc/field_source`` built against an installed OpenMC).
 
 Known limitations
     One temperature per material; one source-region mesh; one MPI rank.
