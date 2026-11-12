@@ -5,6 +5,7 @@
 #include "openmc/openmp_interface.h"
 #include "openmc/position.h"
 #include "openmc/random_ray/parallel_map.h"
+#include "openmc/random_ray/segment_records.h"
 #include "openmc/random_ray/source_region.h"
 #include "openmc/source.h"
 #include <string>
@@ -105,12 +106,26 @@ public:
   //! ascending energy.
   //! Theory: docs/source/methods/rmc.rst, methods_rmc_field.
   void export_rmc_field(const std::string& path) const;
+  //! Key of every source region, by index: the cell ID and instance of its
+  //! base region, the ID of the mesh applied to that instance (-1 if none),
+  //! and the mesh bin (0 without a mesh).
+  void source_region_keys(vector<int32_t>& cell_id, vector<int32_t>& instance,
+    vector<int32_t>& mesh_id, vector<int64_t>& mesh_bin) const;
   void apply_meshes();
   //! Read the prescribed source-region volumes from
   //! source_region_volume_file_ when the prescribed volume estimator is in
   //! use. Requires apply_meshes() to have run, so that mesh bins can be
   //! checked against the mesh applied to each cell instance.
   void load_prescribed_volumes();
+  //! Record the active segments crossing the given source regions in the
+  //! next sweeps (see SegmentRecords). An empty list turns recording off;
+  //! all_regions flags every region that exists now.
+  void set_segment_recording(const vector<int64_t>& regions, bool all_regions);
+  //! Clear the per-thread segment buffers (called at the start of a sweep)
+  void clear_segment_records();
+  //! The records of the last sweep, merged over threads and sorted by ray ID
+  //! and position along the ray
+  SegmentRecords gather_segment_records() const;
   void apply_mesh_to_cell_instances(int32_t i_cell, int32_t mesh_idx,
     int target_material_id, const vector<int32_t>& instances,
     bool is_target_void);
@@ -123,6 +138,9 @@ public:
   {
     return source_regions_.n_source_regions();
   }
+  int n_groups() const { return negroups_; }
+  //! Volume of the ray source box [cm^3]; region volumes are fractions of it
+  double simulation_volume() const { return simulation_volume_; }
   int64_t n_source_elements() const
   {
     return source_regions_.n_source_regions() * negroups_;
@@ -250,6 +268,12 @@ public:
   std::unordered_map<SourceRegionKey, double, SourceRegionKey::HashFunctor>
     prescribed_volume_map_;
   vector<double> prescribed_volume_;
+
+  // Segment recording: a flag per source region (empty when recording is
+  // off; regions discovered later are not flagged), and one record buffer
+  // per thread
+  vector<char> record_segments_;
+  vector<SegmentRecords> segment_records_;
 
   // Map that relates a base source region index to a mesh index. This map
   // is used to check which subdivision mesh is present in a source region.

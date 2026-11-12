@@ -503,6 +503,33 @@ void RandomRay::attenuate_flux_inner(
       attenuate_flux_flat_source_void(srh, distance, is_active, r);
     } else {
       attenuate_flux_flat_source(srh, distance, is_active, r);
+      // Residual Monte Carlo: record the active segment if its region is
+      // flagged. Only regions already in the permanent map can be flagged.
+      if (is_active && !domain_->record_segments_.empty()) {
+        auto it = domain_->source_region_map_.find(sr_key);
+        if (it != domain_->source_region_map_.end() &&
+            it->second <
+              static_cast<int64_t>(domain_->record_segments_.size()) &&
+            domain_->record_segments_[it->second]) {
+          auto& rec = domain_->segment_records_[thread_num()];
+          rec.region.push_back(it->second);
+          rec.ray.push_back(id());
+          rec.seq.push_back(n_recorded_++);
+          rec.u.insert(rec.u.end(), {u().x, u().y, u().z});
+          rec.length.push_back(distance);
+          int material = srh.material();
+          int temp = srh.temperature_idx();
+          for (int g = 0; g < negroups_; g++) {
+            // The same single-precision Sigma_t the attenuation used
+            float sigma_t =
+              domain_
+                ->sigma_t_[(material * ntemperature_ + temp) * negroups_ + g] *
+              srh.density_mult();
+            rec.psi_bar.push_back(
+              srh.source(g) + delta_psi_[g] / (sigma_t * distance));
+          }
+        }
+      }
     }
     break;
   case RandomRaySourceShape::LINEAR:

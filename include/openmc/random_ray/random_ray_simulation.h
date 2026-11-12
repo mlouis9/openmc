@@ -32,6 +32,11 @@ public:
   //! sources itself (as residual Monte Carlo will). Returns the number of
   //! source regions hit in this iteration.
   int64_t sweep();
+  //! One batch of the random ray power iteration, as simulate() runs it:
+  //! OpenMC's batch bookkeeping, the source update, sweep(), the eigenvalue,
+  //! tallies in active batches, and the flux swap. After it, the domain's
+  //! old scalar flux holds this batch's iterate.
+  void power_iteration();
   void output_simulation_results();
   void instability_check(
     int64_t n_hits, double k_eff, double& avg_miss_rate) const;
@@ -78,6 +83,13 @@ private:
 
 void validate_random_ray_inputs();
 void openmc_finalize_random_ray();
+//! Set FlatSourceDomain::resolved_volume_estimator_ from the configured
+//! estimator and the kind of solve (used by openmc_run_random_ray()).
+void resolve_random_ray_volume_estimator();
+//! Initialize OpenMC for a random ray solve: openmc_simulation_init(), the
+//! multigroup tables (from the MGXS library, or in a continuous-energy
+//! process from the RMC field file), and input validation.
+void initialize_random_ray_solve();
 
 } // namespace openmc
 

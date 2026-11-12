@@ -50,6 +50,32 @@ int openmc_rmc_field_region_volumes(int64_t n_per_voxel, int64_t n_box,
 //! <random_ray> element, and no simulation in progress. Defined in
 //! src/rmc/random_ray_capi.cpp.
 int openmc_rmc_run_random_ray();
+
+//! Random ray one batch at a time in a CE process
+//! (src/rmc/random_ray_capi.cpp). The same requirements as
+//! openmc_rmc_run_random_ray(), forward eigenvalue only. Random ray stays the
+//! solver type until openmc_rmc_sweep_finalize().
+int openmc_rmc_sweep_init();
+//! Run n batches of the power iteration, exactly as the whole solve does.
+int openmc_rmc_sweep_iterate(int n);
+//! Record active segments in the given source regions (by index) in later
+//! batches; n = 0 stops recording, n < 0 records every existing region.
+int openmc_rmc_sweep_set_recording(int64_t n, const int64_t* regions);
+//! Number of segments recorded in the last batch.
+int openmc_rmc_sweep_n_records(int64_t* n);
+//! The last batch's records, ordered by ray and position along it:
+//! region [n], u [n][3], length [n] (cm), psi_bar [n][G] (4 pi psi, groups
+//! in descending energy as random ray stores them).
+int openmc_rmc_sweep_records(
+  int64_t* region, double* u, double* length, double* psi_bar);
+//! Number of source regions and groups.
+int openmc_rmc_sweep_n_regions(int64_t* n, int* n_groups);
+//! Per region: key, the volume [cm^3] the solver used, and the latest scalar
+//! flux iterate [R][G] (descending energy); and the latest k.
+int openmc_rmc_sweep_regions(int32_t* cell_id, int32_t* instance,
+  int32_t* mesh_id, int64_t* mesh_bin, double* volume, double* phi, double* k);
+//! End the solve: finalize the simulation and restore the solver type.
+int openmc_rmc_sweep_finalize();
 }
 
 #endif // OPENMC_RMC_CAPI_H

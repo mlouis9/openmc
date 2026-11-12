@@ -455,53 +455,7 @@ void RandomRaySimulation::simulate()
 
   // Random ray power iteration loop
   while (simulation::current_batch < settings::n_batches) {
-    // Initialize the current batch
-    initialize_batch();
-    initialize_generation();
-
-    // Reset total starting particle weight used for normalizing tallies
-    simulation::total_weight = 1.0;
-
-    // Update source term (scattering + fission)
-    domain_->update_all_neutron_sources();
-
-    // Transport sweep and new scalar flux iterate
-    int64_t n_hits = sweep();
-
-    if (settings::run_mode == RunMode::EIGENVALUE) {
-      // Compute random ray k-eff
-      domain_->compute_k_eff();
-
-      // Store random ray k-eff into OpenMC's native k-eff variable
-      global_tally_tracklength = domain_->k_eff_;
-    }
-
-    // Execute all tallying tasks, if this is an active batch
-    if (simulation::current_batch > settings::n_inactive) {
-
-      // Add this iteration's scalar flux estimate to final accumulated
-      // estimate
-      domain_->accumulate_iteration_flux();
-
-      // Use above mapping to contribute FSR flux data to appropriate
-      // tallies
-      domain_->random_ray_tally();
-    }
-
-    // For the adaptive estimator, accumulate this batch's flux into the
-    // running sum and update (demote-only) which regions use the naive
-    // volume estimator (no-op for the other estimators).
-    domain_->demotion_step();
-
-    // Set phi_old = phi_new
-    domain_->flux_swap();
-
-    // Check for any obvious insabilities/nans/infs
-    instability_check(n_hits, domain_->k_eff_, avg_miss_rate_);
-
-    // Finalize the current batch
-    finalize_generation();
-    finalize_batch();
+    power_iteration();
   } // End random ray power iteration loop
 
   domain_->count_external_source_regions();
@@ -537,8 +491,62 @@ void RandomRaySimulation::simulate()
   output_simulation_results();
 }
 
+void RandomRaySimulation::power_iteration()
+{
+  // Initialize the current batch
+  initialize_batch();
+  initialize_generation();
+
+  // Reset total starting particle weight used for normalizing tallies
+  simulation::total_weight = 1.0;
+
+  // Update source term (scattering + fission)
+  domain_->update_all_neutron_sources();
+
+  // Transport sweep and new scalar flux iterate
+  int64_t n_hits = sweep();
+
+  if (settings::run_mode == RunMode::EIGENVALUE) {
+    // Compute random ray k-eff
+    domain_->compute_k_eff();
+
+    // Store random ray k-eff into OpenMC's native k-eff variable
+    global_tally_tracklength = domain_->k_eff_;
+  }
+
+  // Execute all tallying tasks, if this is an active batch
+  if (simulation::current_batch > settings::n_inactive) {
+
+    // Add this iteration's scalar flux estimate to final accumulated
+    // estimate
+    domain_->accumulate_iteration_flux();
+
+    // Use above mapping to contribute FSR flux data to appropriate
+    // tallies
+    domain_->random_ray_tally();
+  }
+
+  // For the adaptive estimator, accumulate this batch's flux into the
+  // running sum and update (demote-only) which regions use the naive
+  // volume estimator (no-op for the other estimators).
+  domain_->demotion_step();
+
+  // Set phi_old = phi_new
+  domain_->flux_swap();
+
+  // Check for any obvious insabilities/nans/infs
+  instability_check(n_hits, domain_->k_eff_, avg_miss_rate_);
+
+  // Finalize the current batch
+  finalize_generation();
+  finalize_batch();
+}
+
 int64_t RandomRaySimulation::sweep()
 {
+  // Segment records hold only the latest sweep
+  domain_->clear_segment_records();
+
   // Reset scalar fluxes, iteration volume tallies, and region hit flags
   // to zero
   domain_->batch_reset();
@@ -1091,16 +1099,8 @@ void RandomRaySimulation::transport_sweep_decomp(RayBank& RB)
 }
 #endif // OPENMC_MPI
 
-} // namespace openmc
-
-//==============================================================================
-// C API functions
-//==============================================================================
-
-void openmc_run_random_ray()
+void resolve_random_ray_volume_estimator()
 {
-  using namespace openmc;
-
   // Resolve the volume estimator for this solve, leaving the configured
   // setting untouched. "Auto" (the default) maps to a concrete estimator
   // based on the type of simulation being performed. Solves whose results
@@ -1120,6 +1120,39 @@ void openmc_run_random_ray()
     FlatSourceDomain::resolved_volume_estimator_ =
       FlatSourceDomain::volume_estimator_;
   }
+}
+
+void initialize_random_ray_solve()
+{
+  // Initialize OpenMC general data structures
+  openmc_simulation_init();
+
+  // The solver reads its multigroup data from data::random_ray_mg. In a
+  // multigroup run it comes from the MGXS library. In a continuous-energy
+  // RMC process, which has no MGXS library, it comes from the
+  // tables of the frozen field (the ones the multigroup run used).
+  if (settings::run_CE) {
+    rmc::load_mg_tables(settings::rmc_field_file, data::random_ray_mg);
+  } else {
+    data::random_ray_mg.fill_from_mgxs();
+  }
+
+  // Validate that inputs meet requirements for random ray mode
+  if (mpi::master)
+    validate_random_ray_inputs();
+}
+
+} // namespace openmc
+
+//==============================================================================
+// C API functions
+//==============================================================================
+
+void openmc_run_random_ray()
+{
+  using namespace openmc;
+
+  resolve_random_ray_volume_estimator();
 
   // Determine which solves to run. If adjoint results are requested and no
   // user-defined adjoint source is present, an initial forward solve is needed
@@ -1139,22 +1172,7 @@ void openmc_run_random_ray()
     FlatSourceDomain::solve_ = RandomRaySolve::FORWARD;
   }
 
-  // Initialize OpenMC general data structures
-  openmc_simulation_init();
-
-  // The solver reads its multigroup data from data::random_ray_mg. In a
-  // multigroup run it comes from the MGXS library. In a continuous-energy
-  // RMC process, which has no MGXS library, it comes from the
-  // tables of the frozen field (the ones the multigroup run used).
-  if (settings::run_CE) {
-    rmc::load_mg_tables(settings::rmc_field_file, data::random_ray_mg);
-  } else {
-    data::random_ray_mg.fill_from_mgxs();
-  }
-
-  // Validate that inputs meet requirements for random ray mode
-  if (mpi::master)
-    validate_random_ray_inputs();
+  initialize_random_ray_solve();
 
   // Initialize Random Ray Simulation Object
   RandomRaySimulation sim;

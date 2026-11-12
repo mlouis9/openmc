@@ -2350,20 +2350,16 @@ void FlatSourceDomain::serialize_final_fluxes(vector<double>& flux)
   }
 }
 
-void FlatSourceDomain::export_rmc_field(const std::string& path) const
+void FlatSourceDomain::source_region_keys(vector<int32_t>& cell_id,
+  vector<int32_t>& instance, vector<int32_t>& mesh_id,
+  vector<int64_t>& mesh_bin) const
 {
   const int64_t R = n_source_regions();
-  const int G = negroups_;
-
-  if (ntemperature_ > 1) {
-    fatal_error("RMC field export supports one MGXS temperature per material.");
-  }
   if (static_cast<int64_t>(source_region_map_.size()) != R) {
-    fatal_error(fmt::format("RMC field export: key map has {} entries for {} "
+    fatal_error(fmt::format("Source region keys: key map has {} entries for {} "
                             "source regions.",
       source_region_map_.size(), R));
   }
-
   // Region index -> key
   vector<SourceRegionKey> keys(R);
   for (const auto& kv : source_region_map_)
@@ -2386,30 +2382,47 @@ void FlatSourceDomain::export_rmc_field(const std::string& path) const
   std::sort(ranges.begin(), ranges.end(),
     [](const CellRange& a, const CellRange& b) { return a.first < b.first; });
 
-  vector<int32_t> cell_id(R), instance(R), material_id(R), mesh_id(R, -1);
-  vector<int64_t> mesh_bin(R);
-  vector<double> volume(R), density_mult(R);
-  vector<double> phi(R * G), Q_s(R * G, 0.0), Q_f(R * G, 0.0);
-  const double inv_k = 1.0 / simulation::keff;
-
+  cell_id.assign(R, 0);
+  instance.assign(R, 0);
+  mesh_id.assign(R, -1);
+  mesh_bin.assign(R, 0);
   for (int64_t sr = 0; sr < R; ++sr) {
     // Key -> cell, instance, mesh
     int64_t base = keys[sr].base_source_region_id;
     auto it = std::upper_bound(ranges.begin(), ranges.end(), base,
       [](int64_t b, const CellRange& r) { return b < r.first; });
     if (it == ranges.begin())
-      fatal_error("RMC field export: base region below first cell offset.");
+      fatal_error("Source region keys: base region below first cell offset.");
     --it;
     int32_t inst = static_cast<int32_t>(base - it->first);
     if (inst >= it->n)
-      fatal_error("RMC field export: instance out of range.");
+      fatal_error("Source region keys: instance out of range.");
     cell_id[sr] = model::cells[it->i_cell]->id_;
     instance[sr] = inst;
     mesh_bin[sr] = keys[sr].mesh_bin;
     int mesh_idx = lookup_mesh_idx(base);
     if (mesh_idx != C_NONE)
       mesh_id[sr] = model::meshes[mesh_idx]->id_;
+  }
+}
 
+void FlatSourceDomain::export_rmc_field(const std::string& path) const
+{
+  const int64_t R = n_source_regions();
+  const int G = negroups_;
+
+  if (ntemperature_ > 1) {
+    fatal_error("RMC field export supports one MGXS temperature per material.");
+  }
+
+  vector<int32_t> cell_id, instance, mesh_id, material_id(R);
+  vector<int64_t> mesh_bin;
+  vector<double> volume(R), density_mult(R);
+  vector<double> phi(R * G), Q_s(R * G, 0.0), Q_f(R * G, 0.0);
+  const double inv_k = 1.0 / simulation::keff;
+
+  source_region_keys(cell_id, instance, mesh_id, mesh_bin);
+  for (int64_t sr = 0; sr < R; ++sr) {
     // Volume [cm^3] and flux, groups reversed to ascending energy
     volume[sr] = source_regions_.volume(sr) * simulation_volume_;
     density_mult[sr] = source_regions_.density_mult(sr);
@@ -2563,6 +2576,69 @@ void FlatSourceDomain::apply_mesh_to_cell_and_children(int32_t i_cell,
       }
     }
   }
+}
+
+void FlatSourceDomain::set_segment_recording(
+  const vector<int64_t>& regions, bool all_regions)
+{
+  record_segments_.clear();
+  if (all_regions) {
+    record_segments_.assign(n_source_regions(), 1);
+  } else if (!regions.empty()) {
+    record_segments_.assign(n_source_regions(), 0);
+    for (int64_t r : regions) {
+      if (r < 0 || r >= n_source_regions())
+        fatal_error(fmt::format("Cannot record segments of source region {}; "
+                                "there are {} regions.",
+          r, n_source_regions()));
+      record_segments_[r] = 1;
+    }
+  }
+  segment_records_.resize(num_threads());
+  for (auto& rec : segment_records_)
+    rec.n_groups = negroups_;
+}
+
+void FlatSourceDomain::clear_segment_records()
+{
+  for (auto& rec : segment_records_)
+    rec.clear();
+}
+
+SegmentRecords FlatSourceDomain::gather_segment_records() const
+{
+  // Order of (thread, index) pairs by (ray ID, sequence number), which does
+  // not depend on how rays were scheduled on threads
+  struct Ref {
+    int64_t ray, seq;
+    int thread;
+    int64_t i;
+  };
+  vector<Ref> refs;
+  for (int t = 0; t < static_cast<int>(segment_records_.size()); ++t) {
+    const auto& rec = segment_records_[t];
+    for (int64_t i = 0; i < rec.size(); ++i)
+      refs.push_back({rec.ray[i], rec.seq[i], t, i});
+  }
+  std::sort(refs.begin(), refs.end(), [](const Ref& a, const Ref& b) {
+    return a.ray < b.ray || (a.ray == b.ray && a.seq < b.seq);
+  });
+
+  SegmentRecords out;
+  out.n_groups = negroups_;
+  const int G = negroups_;
+  for (const auto& ref : refs) {
+    const auto& rec = segment_records_[ref.thread];
+    out.region.push_back(rec.region[ref.i]);
+    out.ray.push_back(rec.ray[ref.i]);
+    out.seq.push_back(rec.seq[ref.i]);
+    out.u.insert(
+      out.u.end(), rec.u.begin() + 3 * ref.i, rec.u.begin() + 3 * ref.i + 3);
+    out.length.push_back(rec.length[ref.i]);
+    out.psi_bar.insert(out.psi_bar.end(), rec.psi_bar.begin() + G * ref.i,
+      rec.psi_bar.begin() + G * (ref.i + 1));
+  }
+  return out;
 }
 
 void FlatSourceDomain::load_prescribed_volumes()

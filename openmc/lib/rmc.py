@@ -12,6 +12,7 @@ from .error import _error_handler
 
 _f64p = np.ctypeslib.ndpointer(np.float64, flags='C_CONTIGUOUS')
 _i64p = np.ctypeslib.ndpointer(np.int64, flags='C_CONTIGUOUS')
+_i32p = np.ctypeslib.ndpointer(np.int32, flags='C_CONTIGUOUS')
 
 for _name, _args in [
     ('openmc_rmc_field_load', [c_char_p, c_char_p, c_char_p]),
@@ -22,6 +23,15 @@ for _name, _args in [
     ('openmc_rmc_field_mass', [c_int, POINTER(c_double)]),
     ('openmc_rmc_field_region_volumes', [c_int64, c_int64, c_uint64, _f64p, _i64p]),
     ('openmc_rmc_run_random_ray', []),
+    ('openmc_rmc_sweep_init', []),
+    ('openmc_rmc_sweep_iterate', [c_int]),
+    ('openmc_rmc_sweep_set_recording', [c_int64, _i64p]),
+    ('openmc_rmc_sweep_n_records', [POINTER(c_int64)]),
+    ('openmc_rmc_sweep_records', [_i64p, _f64p, _f64p, _f64p]),
+    ('openmc_rmc_sweep_n_regions', [POINTER(c_int64), POINTER(c_int)]),
+    ('openmc_rmc_sweep_regions', [_i32p, _i32p, _i32p, _i64p, _f64p, _f64p,
+                                  POINTER(c_double)]),
+    ('openmc_rmc_sweep_finalize', []),
 ]:
     _fn = getattr(_dll, _name)
     _fn.argtypes, _fn.restype, _fn.errcheck = _args, c_int, _error_handler
@@ -98,3 +108,76 @@ def run_random_ray():
     ``random_ray['rmc_field_file']`` is set, a new field file.
     """
     _dll.openmc_rmc_run_random_ray()
+
+
+# ---------------------------------------------------------------------------
+# Random ray one batch at a time
+# ---------------------------------------------------------------------------
+
+def sweep_init():
+    """Start a random ray solve in this CE process, to be driven batch by
+    batch with sweep_iterate(). Random ray is the solver type until
+    sweep_finalize()."""
+    _dll.openmc_rmc_sweep_init()
+
+
+def sweep_iterate(n=1):
+    """Run n batches of the random ray power iteration."""
+    _dll.openmc_rmc_sweep_iterate(int(n))
+
+
+def sweep_set_recording(regions=None, all_regions=False):
+    """Record the active segments crossing the given source regions (indices)
+    in later batches. all_regions records every region that exists now;
+    neither stops recording."""
+    if all_regions:
+        _dll.openmc_rmc_sweep_set_recording(-1, np.zeros(1, dtype=np.int64))
+        return
+    r = np.ascontiguousarray(regions if regions is not None else [], dtype=np.int64)
+    _dll.openmc_rmc_sweep_set_recording(len(r), r if len(r) else np.zeros(1, dtype=np.int64))
+
+
+def sweep_records():
+    """Segments recorded in the last batch, ordered by ray and position.
+
+    Returns a dict of arrays: region [n], u [n, 3], length [n] (cm), and
+    psi_bar [n, G], the chord-averaged 4 pi psi with groups in descending
+    energy (random ray's order).
+    """
+    n = c_int64()
+    _dll.openmc_rmc_sweep_n_records(n)
+    n = n.value
+    G = sweep_regions()['phi'].shape[1]
+    region = np.empty(max(n, 1), dtype=np.int64)
+    u = np.empty(max(3 * n, 1))
+    length = np.empty(max(n, 1))
+    psi = np.empty(max(n * G, 1))
+    _dll.openmc_rmc_sweep_records(region, u, length, psi)
+    return {'region': region[:n], 'u': u[:3 * n].reshape(n, 3),
+            'length': length[:n], 'psi_bar': psi[:n * G].reshape(n, G)}
+
+
+def sweep_regions():
+    """Source regions of the solve: keys (cell_id, instance, mesh_id,
+    mesh_bin), the volume [cm^3] the solver used, the latest scalar flux
+    iterate phi [R, G] (descending energy), and the latest k."""
+    n, G = c_int64(), c_int()
+    _dll.openmc_rmc_sweep_n_regions(n, G)
+    n, G = n.value, G.value
+    out = {k: np.empty(max(n, 1), dtype=np.int32)
+           for k in ('cell_id', 'instance', 'mesh_id')}
+    out['mesh_bin'] = np.empty(max(n, 1), dtype=np.int64)
+    out['volume'] = np.empty(max(n, 1))
+    phi = np.empty(max(n * G, 1))
+    k = c_double()
+    _dll.openmc_rmc_sweep_regions(out['cell_id'], out['instance'], out['mesh_id'],
+                                  out['mesh_bin'], out['volume'], phi, k)
+    out = {key: v[:n] for key, v in out.items()}
+    out['phi'] = phi[:n * G].reshape(n, G)
+    out['k'] = k.value
+    return out
+
+
+def sweep_finalize():
+    """End the batch-by-batch solve and restore the solver type."""
+    _dll.openmc_rmc_sweep_finalize()

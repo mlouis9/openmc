@@ -326,9 +326,8 @@ Verified
     before and after the split.
 
 Not yet done
-    A C API that sets region sources from an RMC field and calls ``sweep()``
-    once. It needs the mapping from field regions to the domain's regions,
-    which belongs with the segment records and the generation driver.
+    Setting region sources from an RMC field before ``sweep()``; see
+    :ref:`devguide_rmc_segment_records` for the batch-by-batch entry point.
 
 .. _devguide_rmc_multiple_meshes:
 
@@ -379,3 +378,55 @@ Verified by ``tests/rmc/test_multiple_meshes.py``
       box points is refused when a region needs them.
     - The single-mesh tests of ``test_frozen_field.py`` and
       ``test_field_source.py`` pass unchanged in substance.
+
+.. _devguide_rmc_segment_records:
+
+Random ray batch by batch, and segment records
+----------------------------------------------
+
+**Commit:** "rmc: random ray batch by batch, and segment records".
+
+Why
+    The residual estimator uses the sweep's segments crossing a destination's
+    region as a quadrature of incident directions, with weights
+    :math:`\omega_j = 4\pi\ell_j/(\rho V_R)` (:ref:`methods_rmc_volumes`),
+    so the CE process must run random ray one batch at a time and read those
+    segments.
+
+Added
+    - ``RandomRaySimulation::power_iteration()``: one batch of the power
+      iteration, the loop body of ``simulate()``.
+    - ``resolve_random_ray_volume_estimator()`` and
+      ``initialize_random_ray_solve()``, split out of
+      ``openmc_run_random_ray()`` so the batch-by-batch path initializes the
+      same way.
+    - ``FlatSourceDomain::source_region_keys()``, split out of the field
+      export, and accessors ``n_groups()`` and ``simulation_volume()``.
+    - **Segment records** (``random_ray/segment_records.h``): per thread,
+      for flagged regions, each active segment's region, ray ID, position
+      along the ray, direction, length, and chord-averaged angular flux
+      :math:`\bar\psi_g = q_g + \Delta\psi_g/(\Sigma_{t,g}\ell)`, in
+      random ray's units (:math:`4\pi\psi`). The hook is in
+      ``RandomRay::attenuate_flux_inner()`` for flat, non-void regions. It
+      costs one branch when recording is off. ``gather_segment_records()``
+      merges the threads in (ray, position) order.
+    - C API ``openmc_rmc_sweep_{init, iterate, set_recording, n_records,
+      records, n_regions, regions, finalize}`` and the bindings
+      ``openmc.lib.rmc.sweep_*``.
+
+Verified by ``tests/rmc/test_segment_records.py`` (gate G2.6)
+    - Driven one batch at a time in the CE process, random ray reproduces
+      the multigroup run's :math:`k` in every batch, bitwise, on one thread.
+    - With the naive volume estimator, every region's flux iterate equals
+      the length-weighted mean of its records' :math:`\bar\psi` to
+      :math:`10^{-6}` (single-precision attenuation). This ties the records
+      to the solver's own update.
+    - The recorded lengths sum to rays times the active distance, to
+      :math:`10^{-6}` (random ray trims ``TINY_BIT`` at mesh crossings).
+    - Only flagged regions are recorded; an empty list stops recording.
+    - The random ray regression tests are bitwise unchanged.
+
+Not yet done
+    Setting region sources from an RMC field (needed once the field changes
+    between generations), and the direction bundle built from the records
+    (Stage 4).

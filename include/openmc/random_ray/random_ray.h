@@ -163,6 +163,7 @@ private:
   bool is_active_ {false};
   bool is_alive_ {true};
   bool is_local_ {true};
+  int64_t n_recorded_ {0}; // segments of this ray recorded so far
 }; // class RandomRay
 
 } // namespace openmc
