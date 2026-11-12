@@ -212,6 +212,62 @@ lengths and what each segment lies in: material, temperature, density
 multiplier, and field region. One trace serves every energy :math:`E'` at
 which the integral is wanted.
 
+.. _methods_rmc_production:
+
+-----------------------------------
+Production at a Common Output State
+-----------------------------------
+
+The residual compares continuous-energy production with the field at the
+same outgoing state :math:`(E, \mathbf{\Omega})`. Each production channel is
+evaluated as the density of what OpenMC's sampler for that channel does, so
+that the evaluator and the forward transport are the same physics.
+
+**Fission.** One fission neutron of reaction :math:`x` at incident energy
+:math:`E'` is prompt with probability :math:`1 - \nu_d/\nu_t`, or from delayed
+group :math:`d` with probability :math:`\nu_d^{(d)}/\nu_t`, and its energy is
+drawn from that product's law, repeated until it is below the maximum
+transport energy :math:`E_{max}`:
+
+.. math::
+    :label: rmc-fission-chi
+
+    \chi_x(E \mid E') = \Big(1 - \frac{\nu_d}{\nu_t}\Big)
+    \frac{f_p(E \mid E')}{F_p(E_{max} \mid E')}
+    + \sum_d \frac{\nu_d^{(d)}}{\nu_t}
+    \frac{f_d(E \mid E')}{F_d(E_{max} \mid E')}, \qquad E < E_{max}.
+
+For a tabulated law (ACE law 4), the sampler chooses the incident table
+:math:`\ell` or :math:`\ell+1` with the interpolation weight :math:`r`,
+samples it, and maps the result linearly from the table's outgoing range onto
+the interpolated range :math:`[E_1, E_K]`. Its density is therefore
+
+.. math::
+    :label: rmc-tabular-density
+
+    f(E \mid E') = (1-r)\, f_\ell\big(E_\ell(E)\big)\, \frac{dE_\ell}{dE}
+    + r\, f_{\ell+1}\big(E_{\ell+1}(E)\big)\, \frac{dE_{\ell+1}}{dE},
+
+with :math:`E_\ell(E)` the inverse of that map. In OpenMC's fission data
+every table spans the same outgoing range, so the map is the identity; the
+general form matters for laws whose ranges differ.
+
+**Elastic scattering off a stationary target.** For an elastic collision rate
+:math:`s(E')` per unit incident energy, scattering at laboratory cosine
+:math:`\mu_0` sends :math:`E'` to :math:`E = \gamma_A(\mu_0) E'`, so the joint
+density of the outgoing :math:`(E, \mu_0)` is
+
+.. math::
+    :label: rmc-elastic-image
+
+    s\big(E/\gamma_A(\mu_0)\big)\,
+    \frac{p_{lab}\big(\mu_0 \mid E/\gamma_A(\mu_0)\big)}{\gamma_A(\mu_0)},
+
+with :math:`p_{lab}` from eq. :eq:`rmc-p-lab`. The azimuth adds a factor
+:math:`1/(2\pi)`. The kernel applies where OpenMC uses a stationary target:
+:math:`A > 1`, no resonance scattering, and :math:`E'` at or above
+``free_gas_threshold`` times :math:`kT`.
+
 .. _methods_rmc_kinematics:
 
 -------------------------------------

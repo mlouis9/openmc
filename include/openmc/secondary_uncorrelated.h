@@ -43,6 +43,9 @@ public:
 
   // Accessors
   AngleDistribution& angle() { return angle_; }
+  const AngleDistribution& angle() const { return angle_; }
+  //! Energy distribution, or nullptr if the outgoing energy is the incident
+  const EnergyDistribution* energy() const { return energy_.get(); }
 
 private:
   AngleDistribution angle_;               //!< Angle distribution

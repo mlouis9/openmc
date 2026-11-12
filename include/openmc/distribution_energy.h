@@ -22,6 +22,14 @@ namespace openmc {
 class EnergyDistribution {
 public:
   virtual double sample(double E, uint64_t* seed) const = 0;
+
+  //! Probability density of the outgoing energy that sample() produces
+  //! \param[in] E Incident energy in [eV]
+  //! \param[in] E_out Outgoing energy in [eV]
+  //! \return Density in [1/eV]. The default stops with an error, so that a
+  //!   law without an implementation is never silently treated as zero.
+  virtual double evaluate(double E, double E_out) const;
+
   virtual ~EnergyDistribution() = default;
 };
 
@@ -81,7 +89,32 @@ public:
   //! \return Sampled energy in [eV]
   double sample(double E, uint64_t* seed) const override;
 
+  //! Density of the outgoing energy that sample() produces, including the
+  //! stochastic choice between neighboring incident tables and the rescaling
+  //! of the sampled energy to interpolated endpoints. Continuous parts only;
+  //! tables with discrete lines are refused.
+  double evaluate(double E, double E_out) const override;
+
+  //! Cumulative distribution of the outgoing energy, consistent with
+  //! evaluate(): the probability that sample() returns less than E_out.
+  double cdf(double E, double E_out) const;
+
 private:
+  //! Interpolation weights of the incident tables sample() may choose, and
+  //! the linear maps from the interpolated outgoing range onto each table.
+  struct Mix {
+    int n;       //!< number of tables (1 or 2)
+    int l[2];    //!< table indices
+    double w[2]; //!< probabilities of choosing them
+    double a[2]; //!< E_table = a + b * E_out
+    double b[2]; //!< dE_table / dE_out
+  };
+  Mix mix(double E) const;
+
+  //! Density and CDF of a single table at its own outgoing energy
+  double table_pdf(int l, double E_out) const;
+  double table_cdf(int l, double E_out) const;
+
   //! Outgoing energy for a single incoming energy
   struct CTTable {
     Interpolation interpolation;  //!< Interpolation law

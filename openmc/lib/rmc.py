@@ -32,6 +32,13 @@ for _name, _args in [
     ('openmc_rmc_sweep_regions', [_i32p, _i32p, _i32p, _i64p, _f64p, _f64p,
                                   POINTER(c_double)]),
     ('openmc_rmc_sweep_finalize', []),
+    ('openmc_rmc_fission_density', [c_int, c_double, c_int64, _f64p, _f64p, _f64p]),
+    ('openmc_rmc_sample_fission_energy', [c_int, c_double, c_int64, c_uint64, _f64p]),
+    ('openmc_rmc_elastic_image', [c_int, c_double, c_int64, _f64p, _f64p, _f64p, _f64p]),
+    ('openmc_rmc_sample_elastic', [c_int, c_double, c_int64, _f64p, c_uint64, _f64p,
+                                   _f64p]),
+    ('openmc_rmc_tabular_law', [c_char_p, c_double, c_int64, _f64p, _f64p, _f64p,
+                                c_int64, c_uint64, _f64p]),
     ('openmc_rmc_trace', [_f64p, _f64p, c_int, POINTER(c_int), _f64p, _i32p, _i64p,
                           POINTER(c_int)]),
 ]:
@@ -203,3 +210,63 @@ def trace(r, u, max_segments=10_000):
     k = n.value
     return {'length': length[:k], 'material': material[:k], 'region': region[:k],
             'ends_in_vacuum': bool(vac.value)}
+
+
+# ---------------------------------------------------------------------------
+# Production evaluators, and OpenMC's samplers for comparison
+# ---------------------------------------------------------------------------
+
+def _nuclide_index(nuclide):
+    import openmc.lib
+    return openmc.lib.nuclides[nuclide]._index if isinstance(nuclide, str) else int(nuclide)
+
+
+def fission_density(nuclide, E_in, E_out):
+    """Outgoing-energy density [1/eV] and CDF of one fission neutron of the
+    nuclide's first fission reaction at incident energy E_in [eV]."""
+    E_out = np.ascontiguousarray(E_out, dtype=float)
+    f, F = np.empty_like(E_out), np.empty_like(E_out)
+    _dll.openmc_rmc_fission_density(_nuclide_index(nuclide), float(E_in), E_out.size,
+                                    E_out, f, F)
+    return f, F
+
+
+def sample_fission_energy(nuclide, E_in, n, seed=1):
+    """n fission neutron energies from OpenMC's sample_fission_neutron()."""
+    out = np.empty(int(n))
+    _dll.openmc_rmc_sample_fission_energy(_nuclide_index(nuclide), float(E_in), int(n),
+                                          int(seed), out)
+    return out
+
+
+def elastic_image(nuclide, kT, E, mu0):
+    """Stationary-target elastic: incident energy and density p_lab/gamma for
+    each outgoing (E, mu0)."""
+    E = np.ascontiguousarray(E, dtype=float)
+    mu0 = np.ascontiguousarray(mu0, dtype=float)
+    E_in, f = np.empty_like(E), np.empty_like(E)
+    _dll.openmc_rmc_elastic_image(_nuclide_index(nuclide), float(kT), E.size, E, mu0,
+                                  E_in, f)
+    return E_in, f
+
+
+def sample_elastic(nuclide, kT, E_in, seed=1):
+    """Outgoing (E, mu0) from OpenMC's elastic_scatter() for each incident
+    energy in E_in."""
+    E_in = np.ascontiguousarray(E_in, dtype=float)
+    E, mu = np.empty_like(E_in), np.empty_like(E_in)
+    _dll.openmc_rmc_sample_elastic(_nuclide_index(nuclide), float(kT), E_in.size, E_in,
+                                   int(seed), E, mu)
+    return E, mu
+
+
+
+def tabular_law(path, E_in, E_out, n_samples=0, seed=1):
+    """Density, CDF, and samples of a ContinuousTabular law stored in group
+    'law' of an HDF5 file (a test seam for the law's evaluate() and cdf())."""
+    E_out = np.ascontiguousarray(E_out, dtype=float)
+    f, F = np.empty_like(E_out), np.empty_like(E_out)
+    x = np.empty(max(int(n_samples), 1))
+    _dll.openmc_rmc_tabular_law(str(path).encode(), float(E_in), E_out.size, E_out,
+                                f, F, int(n_samples), int(seed), x)
+    return f, F, x[:int(n_samples)]

@@ -82,6 +82,27 @@ int openmc_rmc_sweep_finalize();
 //! n receives the number used. material is an index into model::materials.
 int openmc_rmc_trace(const double* r, const double* u, int max_segments, int* n,
   double* length, int32_t* material, int64_t* region, int* ends_in_vacuum);
+
+//! Production evaluators and OpenMC's samplers on a scratch particle
+//! (src/rmc/production_capi.cpp). i_nuclide indexes data::nuclides.
+//! Fission (first fission reaction): outgoing-energy density and CDF.
+int openmc_rmc_fission_density(int i_nuclide, double E_in, int64_t n,
+  const double* E_out, double* density, double* cdf);
+//! n outgoing energies from sample_fission_neutron().
+int openmc_rmc_sample_fission_energy(
+  int i_nuclide, double E_in, int64_t n, uint64_t seed, double* E_out);
+//! Stationary-target elastic: incident energy and density for each
+//! outgoing (E, mu0) (rmc::elastic_stationary).
+int openmc_rmc_elastic_image(int i_nuclide, double kT, int64_t n,
+  const double* E, const double* mu0, double* E_in, double* density);
+//! Outgoing (E, mu0) from elastic_scatter() for each incident energy.
+int openmc_rmc_sample_elastic(int i_nuclide, double kT, int64_t n,
+  const double* E_in, uint64_t seed, double* E_out, double* mu0);
+//! A ContinuousTabular law from group "law" of an HDF5 file (for tests):
+//! density and CDF at n outgoing energies, and n_samples samples.
+int openmc_rmc_tabular_law(const char* path, double E_in, int64_t n,
+  const double* E_out, double* density, double* cdf, int64_t n_samples,
+  uint64_t seed, double* samples);
 }
 
 #endif // OPENMC_RMC_CAPI_H

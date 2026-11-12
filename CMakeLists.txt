@@ -392,6 +392,8 @@ list(APPEND libopenmc_SOURCES
   src/rmc/field.cpp
   src/rmc/kinematics.cpp
   src/rmc/mg_tables.cpp
+  src/rmc/production.cpp
+  src/rmc/production_capi.cpp
   src/rmc/random_ray_capi.cpp
   src/rmc/tracer.cpp
   src/rmc/tracer_capi.cpp

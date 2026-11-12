@@ -7,6 +7,7 @@
 #include "openmc/tensor.h"
 
 #include "openmc/endf.h"
+#include "openmc/error.h"
 #include "openmc/hdf5_interface.h"
 #include "openmc/math_functions.h"
 #include "openmc/random_dist.h"
@@ -267,6 +268,127 @@ double ContinuousTabular::sample(double E, uint64_t* seed) const
       return E_out;
     }
   }
+}
+
+ContinuousTabular::Mix ContinuousTabular::mix(double E) const
+{
+  // The same table choice as sample()
+  bool histogram_interp =
+    (n_region_ == 1) && (interpolation_[0] == Interpolation::histogram);
+  int i;
+  double r;
+  get_energy_index(energy_, E, i, r);
+
+  Mix m;
+  if (histogram_interp || energy_.size() < 2) {
+    m.n = 1;
+    m.l[0] = i;
+    m.w[0] = 1.0;
+    m.a[0] = 0.0;
+    m.b[0] = 1.0;
+    return m;
+  }
+
+  // sample() picks table i + 1 with probability r, then maps the sampled
+  // energy linearly from that table's continuous range [E_l_1, E_l_K] onto
+  // the interpolated range [E_1, E_K]. A table with a single outgoing energy
+  // is not rescaled.
+  m.n = 2;
+  m.l[0] = i;
+  m.l[1] = i + 1;
+  m.w[0] = 1.0 - r;
+  m.w[1] = r;
+  const auto& di = distribution_[i];
+  const auto& dj = distribution_[i + 1];
+  const double E_i_1 = di.e_out[di.n_discrete];
+  const double E_i_K = di.e_out[di.e_out.size() - 1];
+  const double E_j_1 = dj.e_out[dj.n_discrete];
+  const double E_j_K = dj.e_out[dj.e_out.size() - 1];
+  const double E_1 = E_i_1 + r * (E_j_1 - E_i_1);
+  const double E_K = E_i_K + r * (E_j_K - E_i_K);
+  const double ends[2][2] = {{E_i_1, E_i_K}, {E_j_1, E_j_K}};
+  for (int t = 0; t < 2; ++t) {
+    if (distribution_[m.l[t]].e_out.size() > 1) {
+      // Inverse of E_out = E_1 + (E_tab - E_t1) (E_K - E_1) / (E_tK - E_t1)
+      m.b[t] = (ends[t][1] - ends[t][0]) / (E_K - E_1);
+      m.a[t] = ends[t][0] - m.b[t] * E_1;
+    } else {
+      m.a[t] = 0.0;
+      m.b[t] = 1.0;
+    }
+  }
+  return m;
+}
+
+double ContinuousTabular::table_pdf(int l, double x) const
+{
+  const auto& d = distribution_[l];
+  if (d.n_discrete > 0) {
+    fatal_error("ContinuousTabular::evaluate does not support discrete lines.");
+  }
+  const int n = d.e_out.size();
+  if (n < 2 || x < d.e_out[0] || x >= d.e_out[n - 1])
+    return 0.0;
+  // Bin k with e_out[k] <= x < e_out[k + 1]. sample() inverts the tabulated
+  // CDF within the bin, so the density is p_k (histogram) or the linear
+  // interpolation of p (lin-lin). The tabulated CDF agrees with the integral
+  // of p to round-off in OpenMC's data, so the bins are taken as tabulated.
+  int k =
+    std::upper_bound(d.e_out.begin(), d.e_out.end(), x) - d.e_out.begin() - 1;
+  double p_k = d.p[k];
+  if (d.interpolation == Interpolation::histogram)
+    return p_k;
+  double E_k = d.e_out[k];
+  double E_k1 = d.e_out[k + 1];
+  return p_k + (d.p[k + 1] - p_k) * (x - E_k) / (E_k1 - E_k);
+}
+
+double ContinuousTabular::table_cdf(int l, double x) const
+{
+  const auto& d = distribution_[l];
+  if (d.n_discrete > 0) {
+    fatal_error("ContinuousTabular::cdf does not support discrete lines.");
+  }
+  const int n = d.e_out.size();
+  if (n < 2 || x <= d.e_out[0])
+    return 0.0;
+  if (x >= d.e_out[n - 1])
+    return d.c[n - 1];
+  int k =
+    std::upper_bound(d.e_out.begin(), d.e_out.end(), x) - d.e_out.begin() - 1;
+  double dx = x - d.e_out[k];
+  double p_k = d.p[k];
+  if (d.interpolation == Interpolation::histogram)
+    return d.c[k] + p_k * dx;
+  double frac = (d.p[k + 1] - p_k) / (d.e_out[k + 1] - d.e_out[k]);
+  return d.c[k] + p_k * dx + 0.5 * frac * dx * dx;
+}
+
+double ContinuousTabular::evaluate(double E, double E_out) const
+{
+  Mix m = mix(E);
+  double f = 0.0;
+  for (int t = 0; t < m.n; ++t) {
+    if (m.w[t] > 0.0)
+      f += m.w[t] * table_pdf(m.l[t], m.a[t] + m.b[t] * E_out) * m.b[t];
+  }
+  return f;
+}
+
+double ContinuousTabular::cdf(double E, double E_out) const
+{
+  Mix m = mix(E);
+  double F = 0.0;
+  for (int t = 0; t < m.n; ++t) {
+    if (m.w[t] > 0.0)
+      F += m.w[t] * table_cdf(m.l[t], m.a[t] + m.b[t] * E_out);
+  }
+  return F;
+}
+
+double EnergyDistribution::evaluate(double E, double E_out) const
+{
+  fatal_error("evaluate() is not implemented for this energy distribution.");
 }
 
 //==============================================================================

@@ -504,3 +504,63 @@ Findings while making them
 
 The tracer figure was made with a reference implementation of
 ``CharacteristicTracer::trace``. With the stub, the figure is empty.
+
+-----------------------------------------
+Stage 3: Production at a common output
+-----------------------------------------
+
+.. _devguide_rmc_production:
+
+Fission and elastic production densities
+----------------------------------------
+
+**Commit:** "rmc: fission and stationary-target elastic production
+densities".
+
+Added
+    - ``EnergyDistribution::evaluate(E, E_out)``, virtual, with a default
+      that stops with an error so that an unsupported law is never silently
+      zero. Implemented for ``ContinuousTabular`` (ACE law 4), the only law
+      of the fission neutrons in the test data, together with
+      ``ContinuousTabular::cdf``. Both follow the sampler: the random choice
+      between neighboring incident tables, the linear rescaling of the
+      outgoing energy, and its Jacobian (eq. ``rmc-tabular-density``).
+      Tables with discrete lines are refused.
+    - ``UncorrelatedAngleEnergy::energy()`` and a const ``angle()``.
+    - ``rmc/production.{h,cpp}``: ``fission_energy_density`` and
+      ``fission_energy_cdf`` (prompt and delayed groups as
+      ``sample_fission_neutron`` chooses them, applicability mixtures, and
+      the resampling below ``data::energy_max``; eq. ``rmc-fission-chi``),
+      and ``elastic_stationary`` (eq. ``rmc-elastic-image``), which is zero
+      where OpenMC would sample a moving target or has no data.
+    - C API (``src/rmc/production_capi.cpp``) and bindings for the evaluators
+      and for OpenMC's own samplers on a scratch particle
+      (``sample_fission_neutron``, ``elastic_scatter``), plus a test seam
+      that loads a ``ContinuousTabular`` law from an HDF5 file.
+    - ``docs/source/methods/rmc.rst``: production at a common output state.
+
+Verified by ``tests/rmc/test_production.py``
+    - **G3.2.** U-235 and U-238 fission spectra at incident energies on and
+      between the tabulated grid: 400,000 samples from
+      ``sample_fission_neutron`` against CDF differences on 152 bins
+      (:math:`\chi^2` within 5 sigma of its degrees of freedom); the density
+      integrates to its CDF to :math:`10^{-5}`.
+    - **Rescaling.** OpenMC's fission tables all span the same outgoing range,
+      so for them the rescaling is the identity, and a test on fission data
+      alone cannot see it. A synthetic law with two tables of different
+      ranges is checked the same way at and between its grid points.
+      **Mutation check (done by hand):** with the rescaling and the Jacobian
+      removed, the test fails at both incident energies between the grid
+      points and passes at both grid points, as the guide predicts.
+    - **G3.3.** Stationary-target elastic for C at 10-100 keV and 2-8 MeV,
+      O-16 at 3-9 MeV (strongly anisotropic), and U-238 at 1-2 keV: 400,000
+      outgoing :math:`(E,\mu_0)` from ``elastic_scatter`` for a :math:`1/E`
+      incident spectrum, against Gauss-Legendre integrals of the evaluator on
+      20 x 20 bins, including the kinematic edge.
+
+Not yet done in Stage 3
+    The channel registry (G3.1), the sampler route for inelastic and
+    :math:`(n,xn)` channels, the multigroup same-path control (G3.6, G3.7),
+    and the first-collision gate G3.5. The registry and the full evaluators
+    need cross sections at arbitrary energies (``XsProbe``) and
+    :math:`\psi` along a backward path (Stage 2, Sections 5.3-5.4).
