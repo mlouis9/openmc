@@ -54,6 +54,85 @@ Notation follows the rest of this manual: :math:`E', \mathbf{\Omega}'` are
 incident energy and direction at a production event, and
 :math:`E, \mathbf{\Omega}` the outgoing ones.
 
+.. _methods_rmc_field:
+
+----------------
+The Frozen Field
+----------------
+
+The field is the multigroup emission source of a converged random ray
+eigenvalue solution, frozen and lifted to continuous energy. For source region
+:math:`R` with material :math:`m`, group :math:`g`, and tag
+:math:`t \in \{s, f\}` (scattering-born or fission-born),
+
+.. math::
+    :label: rmc-field
+
+    Q^{MG}_t(\mathbf{r}, E, \mathbf{\Omega}) = \frac{1}{4\pi}\,
+    Q_{t,R(\mathbf{r}),g(E)}\, h_{t,m,g}(E),
+    \qquad \int_g h_{t,m,g}(E)\, dE = 1.
+
+The group emission densities :math:`Q_{t,R,g}` (per unit volume, integrated over
+angle) are built from the active-averaged scalar flux
+:math:`\bar\phi` with the cross sections random ray iterated with, including
+the region's density multiplier :math:`d_R`:
+
+.. math::
+    :label: rmc-field-emission
+
+    Q_{s,R,g} = d_R \sum_{g'} \nu\Sigma_{s,m}(g' \rightarrow g)\, \bar\phi_{R,g'},
+    \qquad
+    Q_{f,R,g} = d_R\, \frac{\chi_{m,g}}{k^{MG}} \sum_{g'} \nu\Sigma_{f,m,g'}\, \bar\phi_{R,g'}.
+
+In OpenMC's multigroup format the scattering matrix is already a production
+matrix (it includes multiplicity), which is what the scattering source of
+random ray uses.
+
+**Lifts.** :math:`h_{t,m,g}` is piecewise constant on a fine energy grid that
+contains every interior group edge, normalized within each group over the part
+of the group the grid covers. It is tallied in a continuous-energy run of the
+same model: ``nu-scatter`` and ``nu-fission`` with an outgoing-energy filter,
+per material. Groups with no tallied content use a :math:`1/E` shape.
+
+**Location.** A point belongs to the region keyed by its lowest-level cell
+ID, cell instance, and source-region mesh bin, as in random ray. Points in
+regions the random ray solve never discovered, and energies outside the fine
+grid, have zero field. Energy bin :math:`i` is :math:`[e_i, e_{i+1})`.
+
+**Normalization.** Region volumes :math:`V_R` are estimated once, by locating
+points sampled uniformly in each mesh voxel, and the field is scaled so that
+
+.. math::
+    :label: rmc-field-norm
+
+    \langle 1, Q^{MG}_f \rangle = \sum_R V_R \sum_g Q_{f,R,g} = \frac{1}{k^{MG}},
+
+which is unit multigroup fission production. A second, independent volume
+estimate measures the frozen error this introduces.
+
+The field is a definition: the same lifts, location rule, and volumes are used
+wherever it is sampled, evaluated, or integrated. Errors of the random ray
+solution change the field, not the correctness of anything built on it.
+
+.. _methods_rmc_field_source:
+
+Sampling the field
+------------------
+
+Reference Monte Carlo runs use the field :math:`a_s Q^{MG}_s + a_f Q^{MG}_f` as a fixed
+source. Positions are sampled uniformly in a box of volume :math:`V`,
+directions isotropically, and energies from a known density :math:`p(E)`, and
+each site carries the single-sample weight
+
+.. math::
+    :label: rmc-field-source-weight
+
+    w = \frac{4\pi\, V\, \big(a_s Q^{MG}_s + a_f Q^{MG}_f\big)(\mathbf{r}, E, \mathbf{\Omega})}{p(E)}.
+
+Each site is then an unbiased estimate of the whole source, so OpenMC's
+per-particle tally normalization gives absolute responses without knowledge
+of region volumes.
+
 .. _methods_rmc_kinematics:
 
 -------------------------------------

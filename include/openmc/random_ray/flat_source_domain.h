@@ -98,6 +98,12 @@ public:
   void flatten_xs();
   void transpose_scattering_matrix();
   void serialize_final_fluxes(vector<double>& flux);
+  //! Write the frozen field for multilevel RMC to an HDF5 file: per source
+  //! region its key, material, density multiplier, volume estimate,
+  //! active-averaged scalar flux, and MG emission by tag; per material the
+  //! MGXS that define them. Arrays are flat, groups in ascending energy.
+  //! Theory: docs/source/methods/rmc.rst, methods_rmc_field.
+  void export_rmc_field(const std::string& path) const;
   void apply_meshes();
   void apply_mesh_to_cell_instances(int32_t i_cell, int32_t mesh_idx,
     int target_material_id, const vector<int32_t>& instances,

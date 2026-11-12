@@ -4,7 +4,9 @@
 #include "openmc/constants.h"
 #include "openmc/eigenvalue.h"
 #include "openmc/geometry.h"
+#include "openmc/hdf5_interface.h"
 #include "openmc/material.h"
+#include "openmc/mesh.h"
 #include "openmc/message_passing.h"
 #include "openmc/mgxs_interface.h"
 #include "openmc/output.h"
@@ -2371,6 +2373,153 @@ void FlatSourceDomain::serialize_final_fluxes(vector<double>& flux)
   for (int64_t se = 0; se < n_source_elements(); se++) {
     flux[se] = source_regions_.scalar_flux_final(se);
   }
+}
+
+void FlatSourceDomain::export_rmc_field(const std::string& path) const
+{
+  const int64_t R = n_source_regions();
+  const int G = negroups_;
+
+  if (ntemperature_ > 1) {
+    fatal_error("RMC field export supports one MGXS temperature per material.");
+  }
+  if (static_cast<int64_t>(source_region_map_.size()) != R) {
+    fatal_error(fmt::format("RMC field export: key map has {} entries for {} "
+                            "source regions.",
+      source_region_map_.size(), R));
+  }
+
+  // Region index -> key
+  vector<SourceRegionKey> keys(R);
+  for (const auto& kv : source_region_map_)
+    keys[kv.second] = kv.first;
+
+  // Base source region id -> (cell index, instance). Offsets are -1 for
+  // cells that are not material-filled.
+  struct CellRange {
+    int64_t first;
+    int32_t n;
+    int32_t i_cell;
+  };
+  vector<CellRange> ranges;
+  for (int32_t i = 0; i < static_cast<int32_t>(model::cells.size()); ++i) {
+    if (source_region_offsets_[i] >= 0) {
+      ranges.push_back({source_region_offsets_[i],
+        static_cast<int32_t>(model::cells[i]->n_instances()), i});
+    }
+  }
+  std::sort(ranges.begin(), ranges.end(),
+    [](const CellRange& a, const CellRange& b) { return a.first < b.first; });
+
+  vector<int32_t> cell_id(R), instance(R), material_id(R), mesh_id(R, -1);
+  vector<int64_t> mesh_bin(R);
+  vector<double> volume(R), density_mult(R);
+  vector<double> phi(R * G), Q_s(R * G, 0.0), Q_f(R * G, 0.0);
+  const double inv_k = 1.0 / simulation::keff;
+
+  for (int64_t sr = 0; sr < R; ++sr) {
+    // Key -> cell, instance, mesh
+    int64_t base = keys[sr].base_source_region_id;
+    auto it = std::upper_bound(ranges.begin(), ranges.end(), base,
+      [](int64_t b, const CellRange& r) { return b < r.first; });
+    if (it == ranges.begin())
+      fatal_error("RMC field export: base region below first cell offset.");
+    --it;
+    int32_t inst = static_cast<int32_t>(base - it->first);
+    if (inst >= it->n)
+      fatal_error("RMC field export: instance out of range.");
+    cell_id[sr] = model::cells[it->i_cell]->id_;
+    instance[sr] = inst;
+    mesh_bin[sr] = keys[sr].mesh_bin;
+    int mesh_idx = lookup_mesh_idx(base);
+    if (mesh_idx != C_NONE)
+      mesh_id[sr] = model::meshes[mesh_idx]->id_;
+
+    // Volume [cm^3] and flux, groups reversed to ascending energy
+    volume[sr] = source_regions_.volume(sr) * simulation_volume_;
+    density_mult[sr] = source_regions_.density_mult(sr);
+    for (int g = 0; g < G; ++g)
+      phi[sr * G + (G - 1 - g)] = source_regions_.scalar_flux_final(sr, g);
+
+    int m = source_regions_.material(sr);
+    if (m == MATERIAL_VOID) {
+      material_id[sr] = -1;
+      continue;
+    }
+    material_id[sr] = model::materials[m]->id();
+
+    // Emission by tag, with the same indexing as update_single_neutron_source()
+    int t = source_regions_.temperature_idx(sr);
+    double dm = source_regions_.density_mult(sr);
+    int64_t mo = (static_cast<int64_t>(m) * ntemperature_ + t) * G;
+    int64_t so = mo * G;
+    double fission = 0.0;
+    for (int g_in = 0; g_in < G; ++g_in)
+      fission += nu_sigma_f_[mo + g_in] * dm *
+                 source_regions_.scalar_flux_final(sr, g_in);
+    for (int g_out = 0; g_out < G; ++g_out) {
+      double scatter = 0.0;
+      for (int g_in = 0; g_in < G; ++g_in)
+        scatter += sigma_s_[so + g_out * G + g_in] * dm *
+                   source_regions_.scalar_flux_final(sr, g_in);
+      int ga = G - 1 - g_out; // ascending-energy index
+      Q_s[sr * G + ga] = scatter;
+      Q_f[sr * G + ga] = chi_[mo + g_out] * fission * inv_k;
+    }
+  }
+
+  // Material MGXS as random ray uses them (after flatten_xs() and any
+  // transpose), groups ascending: sigma_s is [m][g_in][g_out]. These define
+  // u and the multigroup control of the residual estimator.
+  const int M = n_materials_;
+  vector<int32_t> mat_ids(M);
+  vector<double> m_sigma_t(M * G), m_nu_sigma_f(M * G), m_chi(M * G);
+  vector<double> m_sigma_s(static_cast<int64_t>(M) * G * G);
+  for (int m = 0; m < M; ++m) {
+    mat_ids[m] = model::materials[m]->id();
+    int64_t mo = static_cast<int64_t>(m) * G; // single temperature
+    int64_t so = mo * G;
+    for (int g = 0; g < G; ++g) {
+      int ga = G - 1 - g;
+      m_sigma_t[mo + ga] = sigma_t_[mo + g];
+      m_nu_sigma_f[mo + ga] = nu_sigma_f_[mo + g];
+      m_chi[mo + ga] = chi_[mo + g];
+    }
+    for (int g_out = 0; g_out < G; ++g_out)
+      for (int g_in = 0; g_in < G; ++g_in)
+        m_sigma_s[so + (G - 1 - g_in) * G + (G - 1 - g_out)] =
+          sigma_s_[so + g_out * G + g_in];
+  }
+
+  hid_t file = file_open(path, 'w');
+  write_attribute(file, "version", 1);
+  write_attribute(file, "k_mg", simulation::keff);
+  write_attribute(file, "n_groups", G);
+  write_attribute(file, "n_regions", R);
+  write_attribute(file, "group_order", "ascending energy");
+  write_dataset(file, "group_edges", data::mg.rev_energy_bins_);
+  hid_t grp = create_group(file, "regions");
+  write_dataset(grp, "cell_id", cell_id);
+  write_dataset(grp, "instance", instance);
+  write_dataset(grp, "mesh_id", mesh_id);
+  write_dataset(grp, "mesh_bin", mesh_bin);
+  write_dataset(grp, "material_id", material_id);
+  write_dataset(grp, "volume_rr", volume);
+  write_dataset(grp, "density_mult", density_mult);
+  write_dataset(grp, "phi", phi); // [R*G], region-major
+  write_dataset(grp, "Q_s", Q_s);
+  write_dataset(grp, "Q_f", Q_f);
+  close_group(grp);
+  hid_t mgrp = create_group(file, "materials");
+  write_dataset(mgrp, "material_id", mat_ids);
+  write_dataset(mgrp, "sigma_t", m_sigma_t);       // [M*G]
+  write_dataset(mgrp, "sigma_s", m_sigma_s);       // [M*G*G], [m][g_in][g_out]
+  write_dataset(mgrp, "nu_sigma_f", m_nu_sigma_f); // [M*G]
+  write_dataset(mgrp, "chi", m_chi);               // [M*G]
+  close_group(mgrp);
+  file_close(file);
+
+  write_message(fmt::format("Wrote RMC field ({} regions) to {}", R, path), 5);
 }
 
 void FlatSourceDomain::apply_mesh_to_cell_instances(int32_t i_cell,

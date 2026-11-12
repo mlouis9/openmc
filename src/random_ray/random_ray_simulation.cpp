@@ -569,6 +569,12 @@ void RandomRaySimulation::simulate()
     }
   }
 
+  // Write the frozen field for multilevel RMC, while the final flux and
+  // k-effective of this solve are in place
+  if (!FlatSourceDomain::rmc_field_file_.empty()) {
+    domain_->export_rmc_field(FlatSourceDomain::rmc_field_file_);
+  }
+
   // Finalize OpenMC
   openmc_simulation_finalize();
 
