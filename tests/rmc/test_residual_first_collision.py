@@ -57,8 +57,9 @@ def _material_of(r):
 
 @pytest.fixture(scope='module')
 def ref(pincell, field_files):
-    if not gates.LIB.exists():
-        pytest.skip(f'field source plugin not built ({gates.LIB})')
+    problem = gates.plugin_problem()
+    if problem:
+        pytest.fail(problem) if gates.LIB.exists() else pytest.skip(problem)
     model, mesh = pincell
     with h5py.File(field_files['field']) as f:
         k = float(f.attrs['k_mg'])

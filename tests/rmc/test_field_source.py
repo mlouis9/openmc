@@ -30,6 +30,10 @@ def source_parameters(field_files, mesh, a_s=1.0, a_f=1.0, E_lo=1e-5, E_hi=2e7):
 @pytest.mark.slow
 @pytest.mark.skipif(not LIB.exists(), reason=f'field source plugin not built ({LIB})')
 def test_field_source_mass(pincell, field_files):
+    import residual_gates
+    problem = residual_gates.plugin_problem()
+    if problem:
+        pytest.fail(problem)
     model, mesh = pincell
     a_s, a_f = 0.7, 1.3
     m = model.__class__(geometry=model.geometry, materials=model.materials,

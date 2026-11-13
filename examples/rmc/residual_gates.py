@@ -30,6 +30,19 @@ LIB = Path(os.environ.get(
     Path(__file__).resolve().parent / 'field_source' / 'build' / 'librmc_field_source.so'))
 
 
+def plugin_problem():
+    """Why the compiled field source cannot be used, or None. The plugin
+    holds an rmc::FrozenField, so it must be rebuilt whenever field.h
+    changes; an old build corrupts memory and aborts at exit."""
+    if not LIB.exists():
+        return f'field source plugin not built ({LIB})'
+    header = Path(__file__).resolve().parents[2] / 'include' / 'openmc' / 'rmc' / 'field.h'
+    if header.exists() and header.stat().st_mtime > LIB.stat().st_mtime:
+        return (f'field source plugin {LIB} is older than include/openmc/rmc/field.h; '
+                'reinstall OpenMC and rebuild examples/rmc/field_source')
+    return None
+
+
 def source_parameters(files, box, a=(1.0, 1.0), E_range=(1e-5, 2e7)):
     """Parameters of the compiled field source; box is (lower_left,
     upper_right) of the field's ray source box."""

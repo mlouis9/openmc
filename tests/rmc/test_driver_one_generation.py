@@ -52,8 +52,9 @@ def _test_bank(rng, m=1500):
 
 @pytest.fixture(scope='module')
 def gen(pincell, field_files):
-    if not gates.LIB.exists():
-        pytest.skip(f'field source plugin not built ({gates.LIB})')
+    problem = gates.plugin_problem()
+    if problem:
+        pytest.fail(problem) if gates.LIB.exists() else pytest.skip(problem)
     model, mesh = pincell
     files = field_files
     bank = _test_bank(np.random.default_rng(21))
