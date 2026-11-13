@@ -15,8 +15,12 @@ namespace rmc {
 double XsProbe::total(
   int32_t material, double E, double sqrtkT, double density_mult)
 {
-  if (material == MATERIAL_VOID)
+  material_ = material;
+  density_mult_ = density_mult;
+  if (material == MATERIAL_VOID) {
+    E_ = E;
     return 0.0;
+  }
   // OpenMC's log grid covers [energy_min, energy_max); transport never
   // reaches energy_max, but an energy proposed by RMC can. Clamp into the
   // grid, so data at the edges extends flat.
@@ -24,6 +28,7 @@ double XsProbe::total(
   E = std::clamp(E, data::energy_min[n],
     data::energy_max[n] * (1.0 - 1e-10)); // below the top log-grid bin edge,
                                           // allowing for round-off
+  E_ = E;
   p_.E() = E;
   p_.sqrtkT() = sqrtkT;
   p_.density_mult() = density_mult;

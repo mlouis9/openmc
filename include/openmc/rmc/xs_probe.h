@@ -6,6 +6,7 @@
 
 #include <cstdint>
 
+#include "openmc/constants.h"
 #include "openmc/particle.h"
 
 namespace openmc {
@@ -47,9 +48,19 @@ public:
   //! The scratch particle after the last total() call: its macro_xs() and
   //! neutron_xs(i_nuclide) hold every cross section at that state.
   const Particle& particle() const { return p_; }
+  //! The same particle, for OpenMC's collision routines (sampler route)
+  Particle& scratch() { return p_; }
+
+  //! State of the last total() call
+  int32_t material() const { return material_; }
+  double E() const { return E_; }
+  double density_mult() const { return density_mult_; }
 
 private:
   Particle p_;
+  int32_t material_ {MATERIAL_VOID};
+  double E_ {0.0};
+  double density_mult_ {1.0};
 };
 
 } // namespace rmc

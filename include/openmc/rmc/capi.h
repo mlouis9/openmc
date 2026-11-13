@@ -132,6 +132,19 @@ int openmc_rmc_residual_sample(int tag, int64_t n, uint64_t seed,
 int openmc_rmc_residual_weights(int64_t n, const int* tag, const double* C_s,
   const double* C_f, const double* U, const double* density, int64_t N,
   double a_s, double a_f, double b_s, double b_f, double k, double* w);
+
+//! Channel registry (src/rmc/channels_capi.cpp)
+//! Production nu_bar Sigma [1/cm] at each energy, summed by channel kind
+//! (by_kind [n][4]: elastic, thermal elastic, inelastic, fission) and by tag
+//! and route (by_route [n][4]: s evaluator, s sampler, f evaluator, f sampler).
+int openmc_rmc_channel_production(int32_t material_id, int64_t n,
+  const double* E, double sqrtkT, double density_mult, double* by_kind,
+  double* by_route);
+//! n draws of the tag-s sampler route at incident (E_in, u_in): the sampler
+//! production, the outgoing state, and the chosen channel kind.
+int openmc_rmc_sample_sampler_route(int32_t material_id, double E_in,
+  const double* u_in, double sqrtkT, double density_mult, int64_t n,
+  uint64_t seed, double* production, double* E, double* u, int* kind);
 }
 
 #endif // OPENMC_RMC_CAPI_H

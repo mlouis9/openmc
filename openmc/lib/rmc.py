@@ -51,6 +51,10 @@ for _name, _args in [
     ('openmc_rmc_residual_weights', [c_int64, _i32p, _f64p, _f64p, _f64p, _f64p,
                                      c_int64, c_double, c_double, c_double, c_double,
                                      c_double, _f64p]),
+    ('openmc_rmc_channel_production', [c_int32, c_int64, _f64p, c_double, c_double,
+                                      _f64p, _f64p]),
+    ('openmc_rmc_sample_sampler_route', [c_int32, c_double, _f64p, c_double, c_double,
+                                         c_int64, c_uint64, _f64p, _f64p, _f64p, _i32p]),
     ('openmc_rmc_trace', [_f64p, _f64p, c_int, POINTER(c_int), _f64p, _i32p, _i64p,
                           POINTER(c_int)]),
 ]:
@@ -365,3 +369,45 @@ def residual_weights(rec, N, a=(1.0, 1.0), b=(1.0, 1.0), k=1.0):
         rec['U'], rec['density'], int(N), float(a[0]), float(a[1]), float(b[0]),
         float(b[1]), float(k), w)
     return w
+
+
+# ---------------------------------------------------------------------------
+# Channel registry and sampler route
+# ---------------------------------------------------------------------------
+
+CHANNEL_KINDS = ('elastic', 'thermal_elastic', 'inelastic', 'fission')
+
+
+def channel_production(material_id, E, kT=294.0 * 8.617333262e-5, density_mult=1.0):
+    """Production nu_bar Sigma [1/cm] of a material's channels.
+
+    Returns (by_kind, by_route): dicts of arrays over E, keyed by channel
+    kind, and by (tag, route) with tags 's', 'f' and routes 'evaluator',
+    'sampler'.
+    """
+    E = np.ascontiguousarray(E, dtype=float)
+    k = np.empty(4 * E.size)
+    r = np.empty(4 * E.size)
+    _dll.openmc_rmc_channel_production(int(material_id), E.size, E, float(np.sqrt(kT)),
+                                       float(density_mult), k, r)
+    k = k.reshape(-1, 4)
+    r = r.reshape(-1, 4)
+    by_kind = {name: k[:, i] for i, name in enumerate(CHANNEL_KINDS)}
+    by_route = {(t, route): r[:, 2 * it + ir] for it, t in enumerate('sf')
+                for ir, route in enumerate(('evaluator', 'sampler'))}
+    return by_kind, by_route
+
+
+def sample_sampler_route(material_id, E_in, u_in, n, seed=1,
+                         kT=294.0 * 8.617333262e-5, density_mult=1.0):
+    """n draws of the scattering sampler route at (E_in, u_in). Returns a dict:
+    production [n], E [n], u [n, 3], kind [n] (index into CHANNEL_KINDS)."""
+    u_in = np.ascontiguousarray(u_in, dtype=float)
+    out = dict(production=np.empty(n), E=np.empty(n), u=np.empty(3 * n),
+               kind=np.empty(n, dtype=np.int32))
+    _dll.openmc_rmc_sample_sampler_route(int(material_id), float(E_in), u_in,
+                                         float(np.sqrt(kT)), float(density_mult),
+                                         int(n), int(seed), out['production'],
+                                         out['E'], out['u'], out['kind'])
+    out['u'] = out['u'].reshape(n, 3)
+    return out
