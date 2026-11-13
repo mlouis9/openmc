@@ -14,8 +14,9 @@ On the graphite pincell, with a = b = (1, 1) and k = k_MG:
 - G4.4 (low term alone): with a = 0, they equal minus the field;
 - G4.1 / G4.2 (the whole residual, every estimator): frozen uncontrolled,
   frozen with the same-path control, frozen with the sweep control, tandem,
-  partial, and a run with region-based destinations and mixture proposals
-  all equal the reference minus the field candidate F = b [(1 - lambda) Q +
+  partial, a run with region-based destinations and mixture proposals, and
+  the sampler route options (K energies with common random numbers, the
+  flux-difference control, every channel on the sampler route) all equal the reference minus the field candidate F = b [(1 - lambda) Q +
   lambda Q-hat] (Q-hat from the sweep, integrated the same way).
 
 Pass: chi^2 over the bins within 5 sigma of its degrees of freedom, and no
@@ -48,6 +49,19 @@ VARIANTS = {
     'mixture_proposals': (dict(directions='isotropic', n_directions=4, control=True,
                                n_control_directions=2, control_energy='same_energy',
                                voxel='volume', beta=0.5, incident='flux'), 1.0, 0.0),
+    # Sampler route options (methods_rmc_sampler_control)
+    'sampler_K4_common_numbers': (dict(directions='isotropic', n_directions=4,
+                                       n_energies=4, common_numbers=True), 0.0, 0.0),
+    'sampler_flux_difference': (dict(directions='isotropic', n_directions=4,
+                                     n_energies=2, sampler_control='region',
+                                     region_samples=4), 0.0, 0.0),
+    'all_sampler': (dict(directions='isotropic', n_directions=4, all_sampler=True,
+                         n_energies=2), 0.0, 0.0),
+    'all_sampler_flux_difference': (dict(directions='isotropic', n_directions=4,
+                                         all_sampler=True, n_energies=2,
+                                         common_numbers=True, sampler_control='region',
+                                         region_samples=4, control=True,
+                                         n_control_directions=4), 1.0, 0.0),
 }
 
 

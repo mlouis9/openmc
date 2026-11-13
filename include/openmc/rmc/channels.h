@@ -32,8 +32,8 @@ enum class ChannelKind {
 
 //! One channel of one nuclide in one material
 struct Channel {
-  int i_mat;          //!< index of the nuclide within the material
-  int i_nuclide;      //!< index into data::nuclides
+  int i_mat;           //!< index of the nuclide within the material
+  int i_nuclide;       //!< index into data::nuclides
   int i_reaction {-1}; //!< index into Nuclide::reactions_ (inelastic only)
   ChannelKind kind;
   Tag tag;
@@ -50,14 +50,19 @@ struct Channel {
 //! - thermal elastic and inelastic: sampler;
 //! - fission: evaluator.
 //!
+//! With all_sampler, every channel is on the sampler route.
+//!
 //! Production values need an XsProbe whose last total() call was at the
 //! incident state, in the same material.
 //==============================================================================
 
 class ChannelRegistry {
 public:
-  //! Builds the channels of every material in model::materials
-  ChannelRegistry();
+  //! Builds the channels of every material in model::materials.
+  //! \param all_sampler  Put every channel on the sampler route, so that no
+  //!                     channel needs a density evaluator (the residual is
+  //!                     then estimated with OpenMC's samplers alone)
+  explicit ChannelRegistry(bool all_sampler = false);
 
   const vector<Channel>& channels(int32_t material) const
   {
@@ -65,11 +70,17 @@ public:
   }
 
   //! Route of a channel at incident energy E_in, with the probe at that state
-  static Route route(const Channel& c, double E_in, const XsProbe& probe);
+  Route route(const Channel& c, double E_in, const XsProbe& probe) const;
+
+  //! The route OpenMC's physics allows: evaluator where a density exists
+  static Route natural_route(
+    const Channel& c, double E_in, const XsProbe& probe);
+
+  bool all_sampler() const { return all_sampler_; }
 
   //! Production nu_bar * Sigma_x [1/cm] of one channel at the probe's state
-  static double production(const Channel& c, double density_mult,
-    XsProbe& probe);
+  static double production(
+    const Channel& c, double density_mult, XsProbe& probe);
 
   //! Sum of production over the channels of a tag on a route, at the probe's
   //! state (material and incident energy of the last total() call)
@@ -81,6 +92,7 @@ public:
 
 private:
   vector<vector<Channel>> channels_; //!< [material]
+  bool all_sampler_ {false};
 };
 
 //==============================================================================
@@ -100,7 +112,8 @@ struct SamplerOutcome {
 };
 
 //! \param reg    Channel registry
-//! \param t      Tag (only tag s has sampler-route channels)
+//! \param t      Tag (tag f has sampler-route channels only when the
+//!               registry puts every channel there)
 //! \param u_in   Incident direction of travel
 //! \param probe  At the incident state (total() called at E_in)
 //! \param seed   Random number stream

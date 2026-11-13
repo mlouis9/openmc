@@ -147,6 +147,13 @@ typedef struct {
   double beta_in;
   double Ein_min;
   double Ein_max;
+  // Sampler route (rmc::SamplerOptions)
+  int all_sampler;     //!< 0/1: every channel on the sampler route
+  int n_energies;      //!< K incident energies per direction
+  int common_numbers;  //!< 0/1: the K draws share a random number stream
+  int sampler_control; //!< 0 none, 1 region (flux-difference)
+  int region_samples;  //!< M_II forward samples of the region term
+  int net;             //!< 0/1: one outgoing state carries the net (biased)
 } openmc_rmc_residual_config;
 
 //! Draw the records of n samples of tag (0 = s, 1 = f) with the loaded
@@ -154,13 +161,17 @@ typedef struct {
 //! and sampler-route records.
 int openmc_rmc_residual_sample(const openmc_rmc_residual_config* cfg, int tag,
   int64_t n, uint64_t seed, int keep_directions, int64_t* n_records);
-//! Copy the kept records: r, u [n][3]; E, density, tag, sampler [n]; terms
-//! [7][n] (C_s, C_f, M_s, M_f, R_s, R_f, U).
+//! Copy the kept records: r, u [n][3]; E, density, tag, sampler, kind (0
+//! density branch, 1 sampler route on a path, 2 region term), channel
+//! (rmc::ChannelKind, -1 for density records) [n]; terms [8][n] (C_s, C_f,
+//! M_s, M_f, R_s, R_f, U, Z).
 int openmc_rmc_residual_records(double* r, double* u, double* E,
-  double* density, int* tag, int* sampler, double* terms);
+  double* density, int* tag, int* sampler, int* kind, int* channel,
+  double* terms);
 //! Per-direction CE and MG estimates of the last call (keep_directions)
 int openmc_rmc_residual_directions(int64_t* n, double* ce, double* mg);
-//! Weights for scalars [a_s, a_f, b_s, b_f, k, c, lambda], N samples per tag
+//! Weights for scalars [a_s, a_f, b_s, b_f, k, c, lambda], N samples per tag;
+//! terms [8][n] as openmc_rmc_residual_records
 int openmc_rmc_residual_weights(int64_t n, const int* tag, const int* sampler,
   const double* terms, const double* density, int64_t N, const double* scalars,
   double* w);

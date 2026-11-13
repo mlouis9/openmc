@@ -110,7 +110,8 @@ public:
   double emission(int64_t region, Tag t, int g) const
   {
     return emission_[(static_cast<int64_t>(t) * n_regions() + region) *
-                       n_groups_ + g];
+                       n_groups_ +
+                     g];
   }
 
   //! Within-group shapes [1/eV], each normalized to 1 over every group:
@@ -131,6 +132,15 @@ public:
     Shape k, int64_t region, int g, uint64_t* seed, double& density) const;
   //! Density of sample_shape() at E in group g
   double shape_draw_density(Shape k, int64_t region, int g, double E) const;
+
+  //! Group-integrated MG scalar flux phi_{R,g} of the random ray solution
+  //! (ascending g), in the field's normalization (the same scale as the
+  //! emission); 0 if the field file has none
+  double flux(int64_t region, int g) const
+  {
+    return flux_.empty() ? 0.0 : flux_[region * n_groups_ + g];
+  }
+  bool has_flux() const { return !flux_.empty(); }
 
   //! Region volume [cm^3] from the volume file; NaN without one
   double volume(int64_t region) const
@@ -208,12 +218,13 @@ private:
   vector<double> fine_edges_; //!< [F+1] ascending energy [eV]
   vector<double> lift_;       //!< [2][M][F]: lift_[(t*M + row)*F + i] [1/eV]
   vector<int32_t> lift_row_;  //!< [R] row of the region's material, or -1
-  vector<double> lift_phi_;  //!< [M][F] flux shape h_phi, if the lift file
-                             //!< has one
-  vector<int> group_fine_;   //!< [G+1] fine-bin index of each group edge
+  vector<double> lift_phi_;   //!< [M][F] flux shape h_phi, if the lift file
+                              //!< has one
+  vector<int> group_fine_;    //!< [G+1] fine-bin index of each group edge
 
   std::string field_file_;
   vector<double> volume_;           //!< [R] from the volume file, or empty
+  vector<double> flux_;             //!< [R][G] scaled scalar flux, or empty
   vector<int32_t> region_material_; //!< [R] index into model::materials
   vector<int32_t> region_cell_;     //!< [R] cell ID
   vector<int32_t> region_instance_; //!< [R]

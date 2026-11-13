@@ -19,7 +19,7 @@ namespace rmc {
 // ChannelRegistry
 //==============================================================================
 
-ChannelRegistry::ChannelRegistry()
+ChannelRegistry::ChannelRegistry(bool all_sampler) : all_sampler_(all_sampler)
 {
   channels_.resize(model::materials.size());
   for (int m = 0; m < static_cast<int>(model::materials.size()); ++m) {
@@ -56,6 +56,12 @@ double ChannelRegistry::elastic_kT(int i_nuclide, const XsProbe& probe)
 }
 
 Route ChannelRegistry::route(
+  const Channel& c, double E_in, const XsProbe& probe) const
+{
+  return all_sampler_ ? Route::sampler : natural_route(c, E_in, probe);
+}
+
+Route ChannelRegistry::natural_route(
   const Channel& c, double E_in, const XsProbe& probe)
 {
   switch (c.kind) {
@@ -134,7 +140,7 @@ SamplerOutcome sample_sampler_route(const ChannelRegistry& reg, Tag t,
   const auto& ch = reg.channels(probe.material());
   double total = 0.0;
   for (const Channel& c : ch)
-    if (c.tag == t && ChannelRegistry::route(c, E_in, probe) == Route::sampler)
+    if (c.tag == t && reg.route(c, E_in, probe) == Route::sampler)
       total += ChannelRegistry::production(c, probe.density_mult(), probe);
   out.production = total;
   if (total <= 0.0)
@@ -143,7 +149,7 @@ SamplerOutcome sample_sampler_route(const ChannelRegistry& reg, Tag t,
   const Channel* chosen = nullptr;
   double cum = 0.0;
   for (const Channel& c : ch) {
-    if (c.tag != t || ChannelRegistry::route(c, E_in, probe) != Route::sampler)
+    if (c.tag != t || reg.route(c, E_in, probe) != Route::sampler)
       continue;
     double x = ChannelRegistry::production(c, probe.density_mult(), probe);
     if (x <= 0.0)
@@ -172,13 +178,22 @@ SamplerOutcome sample_sampler_route(const ChannelRegistry& reg, Tag t,
       ChannelRegistry::elastic_kT(chosen->i_nuclide, probe), p);
     break;
   case ChannelKind::thermal_elastic:
-    sab_scatter(chosen->i_nuclide, p.neutron_xs(chosen->i_nuclide).index_sab, p);
+    sab_scatter(
+      chosen->i_nuclide, p.neutron_xs(chosen->i_nuclide).index_sab, p);
     break;
   case ChannelKind::inelastic:
     inelastic_scatter(nuc, *nuc.reactions_[chosen->i_reaction], p);
     break;
-  case ChannelKind::fission:
-    fatal_error("RMC sampler route: fission is on the evaluator route.");
+  case ChannelKind::fission: {
+    // As sample_fission() and sample_fission_neutron(); the yield is in the
+    // production, so one neutron is returned
+    const Reaction& rx = sample_fission(chosen->i_nuclide, p);
+    SourceSite site;
+    sample_fission_neutron(chosen->i_nuclide, rx, &site, p);
+    p.E() = site.E;
+    p.u() = site.u;
+    break;
+  }
   }
   *seed = p.seeds(stream);
   p.local_secondary_bank().clear();

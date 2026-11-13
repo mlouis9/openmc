@@ -357,14 +357,19 @@ class ResidualConfig(Structure):
                 ('n_voxel_weights', c_int64), ('weights_per_volume', c_int),
                 ('beta', c_double), ('E_min', c_double), ('E_max', c_double),
                 ('incident_mode', c_int), ('beta_in', c_double),
-                ('Ein_min', c_double), ('Ein_max', c_double)]
+                ('Ein_min', c_double), ('Ein_max', c_double),
+                ('all_sampler', c_int), ('n_energies', c_int),
+                ('common_numbers', c_int), ('sampler_control', c_int),
+                ('region_samples', c_int), ('net', c_int)]
 
 
 DIRECTIONS = {'isotropic': 0, 'sweep': 1}
 CONTROL_ENERGY = {'exact': 0, 'same_energy': 1}
 VOXELS = {'box': 0, 'volume': 1, 'fissionable': 2, 'tabulated': 3}
 INCIDENT = {'log_uniform': 0, 'flux': 1}
-TERMS = ('C_s', 'C_f', 'M_s', 'M_f', 'R_s', 'R_f', 'U')
+TERMS = ('C_s', 'C_f', 'M_s', 'M_f', 'R_s', 'R_f', 'U', 'Z')
+SAMPLER_CONTROL = {'none': 0, 'region': 1}
+RECORD_KINDS = ('density', 'sampler', 'region')
 
 
 def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
@@ -373,13 +378,24 @@ def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
                     length=0.0, max_segments=10_000_000, voxel='box',
                     voxel_weights=None, weights_per_volume=False, beta=1.0,
                     E_range=(1e-5, 2e7), incident='log_uniform', beta_in=0.1,
-                    Ein_range=(1e-5, 2e7), keep_directions=False):
+                    Ein_range=(1e-5, 2e7), keep_directions=False,
+                    all_sampler=False, n_energies=1, common_numbers=False,
+                    sampler_control='none', region_samples=1, net=False):
     """Residual records of n samples of tag 's' or 'f' with the loaded field.
 
     The options are those of rmc::ResidualOptions (include/openmc/rmc/
     residual.h). Returns a dict of arrays: r, u [m, 3]; E, density, tag,
-    sampler, and the terms C_s, C_f, M_s, M_f, R_s, R_f, U [m], where m
-    counts the n density-branch records and the sampler-route particles.
+    sampler, kind (index into RECORD_KINDS), channel (index into
+    CHANNEL_KINDS, -1 for density records), and the terms C_s, C_f, M_s,
+    M_f, R_s, R_f, U, Z [m], where m counts the n density-branch records and
+    the sampler-route and region-term particles.
+
+    Sampler route options (rmc::SamplerOptions): all_sampler puts every
+    channel on the sampler route; n_energies is K, the incident energies per
+    direction; common_numbers makes the K draws share a stream;
+    sampler_control 'region' is the flux-difference control with
+    region_samples forward samples of its region term; net (biased, for
+    study) gives one outgoing state the net of the K.
     With keep_directions, also 'ce' and 'mg': the per-direction CE and MG
     estimates (G3.7).
     """
@@ -394,20 +410,25 @@ def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
         w.ctypes.data_as(POINTER(c_double)) if w is not None else None,
         0 if w is None else w.size, int(bool(weights_per_volume)), float(beta),
         float(E_range[0]), float(E_range[1]), INCIDENT[incident], float(beta_in),
-        float(Ein_range[0]), float(Ein_range[1]))
+        float(Ein_range[0]), float(Ein_range[1]), int(bool(all_sampler)),
+        int(n_energies), int(bool(common_numbers)),
+        SAMPLER_CONTROL[sampler_control], int(region_samples), int(bool(net)))
     m = c_int64()
     _dll.openmc_rmc_residual_sample(byref(cfg), TAGS[tag], int(n), int(seed),
                                     int(bool(keep_directions)), byref(m))
     m = m.value
     out = dict(r=np.empty(3 * m), u=np.empty(3 * m), E=np.empty(m),
                density=np.empty(m), tag=np.empty(m, dtype=np.int32),
-               sampler=np.empty(m, dtype=np.int32))
-    terms = np.empty(7 * max(m, 1))
+               sampler=np.empty(m, dtype=np.int32),
+               kind=np.empty(m, dtype=np.int32), channel=np.empty(m, dtype=np.int32))
+    terms = np.empty(len(TERMS) * max(m, 1))
     p = lambda a: a.ctypes.data_as(POINTER(c_double))
     _dll.openmc_rmc_residual_records(p(out['r']), p(out['u']), p(out['E']),
                                      p(out['density']),
                                      out['tag'].ctypes.data_as(POINTER(c_int)),
                                      out['sampler'].ctypes.data_as(POINTER(c_int)),
+                                     out['kind'].ctypes.data_as(POINTER(c_int)),
+                                     out['channel'].ctypes.data_as(POINTER(c_int)),
                                      p(terms))
     out['r'] = out['r'].reshape(m, 3)
     out['u'] = out['u'].reshape(m, 3)
@@ -426,7 +447,8 @@ def residual_weights(rec, N, a=(1.0, 1.0), b=(1.0, 1.0), k=1.0, c=0.0, lam=0.0):
     """Weights of residual records for amplitudes a, b, eigenvalue k, control
     coefficient c, and mixing lambda (rmc::weight_records)."""
     n = len(rec['E'])
-    terms = np.ascontiguousarray(np.concatenate([rec[t] for t in TERMS]))
+    terms = np.ascontiguousarray(np.concatenate(
+        [rec[t] if t in rec else np.zeros(len(rec['E'])) for t in TERMS]))
     if n == 0:
         return np.empty(0)
     w = np.empty(n)

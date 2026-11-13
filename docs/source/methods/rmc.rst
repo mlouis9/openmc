@@ -339,7 +339,10 @@ Each channel's production at a common output is estimated on one of two
 
 The routes partition the production exactly: at every energy, evaluator plus
 sampler production equals the tag's total, and their sum over tags equals
-the material's neutron production.
+the material's neutron production. With ``all_sampler``
+(:ref:`methods_rmc_sampler_control`) every channel, fission included, is on
+the sampler route; fission is then sampled with ``sample_fission`` and
+``sample_fission_neutron``.
 
 .. _methods_rmc_mg_control:
 
@@ -530,8 +533,9 @@ its tag, is
     \lambda\,\frac{\sum_y a_y\,R_y}{k^{[t=f]}}\Big]\Big\},
 
 and a sampler-route particle (density :math:`\varrho`, the destination's)
-has :math:`w = \sum_y a_y C_y / (k^{[t=f]} N \varrho)` with :math:`C_y` from
-eq. :eq:`rmc-sampler-weight`. The records do not depend on :math:`a, b, k,
+has :math:`w = (\sum_y a_y C_y + Z) / (k^{[t=f]} N \varrho)` with :math:`C_y`
+from eq. :eq:`rmc-sampler-weight` and :math:`Z` the control of
+:ref:`methods_rmc_sampler_control` (zero without it). The records do not depend on :math:`a, b, k,
 c, \lambda`, so one set serves every value of them, and the members of the
 family can be compared on the same samples.
 
@@ -586,6 +590,106 @@ the record terms reduce to energy integrals:
 for :math:`u \in \{s, f\}`, and the sampler-route particles of a sample sum
 on average to :math:`4\pi V\int\Sigma^{samp}_{\mathcal{P}}\,Q^{MG}_s/\Sigma_t\,dE'`,
 provided the proposal ranges cover the integrands.
+
+.. _methods_rmc_sampler_control:
+
+Controlling the sampler route without densities
+-----------------------------------------------
+
+On the sampler route the outgoing state is drawn, not chosen, so no density
+is evaluated at the destination's state. Two consequences follow. The MG
+control of the density branch (eq. :eq:`rmc-residual-family`) acts at the
+destination's outgoing state and cannot reach the sampler-route particles;
+and the low term :math:`U` at the destination does not cancel them record by
+record, as it cancels the evaluator's production. The options below control
+the sampler route with OpenMC's samplers alone. Every one is unbiased for any
+amplitudes, eigenvalue, and field, except the net assignment, which is kept
+as a measurement.
+
+**Incident energies.** On each direction, :math:`K` incident energies
+:math:`E'_k` are drawn from :math:`g` and each gives one outgoing state, a
+particle with :math:`C_y = \omega_j\,\Sigma^{samp}_{\mathcal{P}}(E'_k)\,
+\psi_y(E'_k)/(K\,g(E'_k))`. The backward path is shared, so the
+:math:`K` energies cost one trace. With *common random numbers* the
+:math:`K` samplers start from the same stream, so their outgoing states move
+together with :math:`E'_k` and land near each other when the kinematics
+change slowly with the incident energy.
+
+**Flux-difference control.** With the region's lifted MG flux
+:math:`\phi_{R,g}\,h^{\phi}(E')` (isotropic), split the angular flux on the
+path as :math:`\psi = \Delta\psi + \phi_{R,g}h^{\phi}/4\pi`:
+
+.. math::
+    :label: rmc-flux-difference
+
+    \int d\mathbf{\Omega}'\!\int dE'\, \Sigma^{samp}_{\mathcal{P}}\,\psi
+    = \underbrace{\int d\mathbf{\Omega}'\!\int dE'\,
+      \Sigma^{samp}_{\mathcal{P}}\,\Delta\psi}_{\text{I: on the path}}
+    + \underbrace{\int d\mathbf{\Omega}'\!\int dE'\,
+      \Sigma^{samp}_{\mathcal{P}}\,
+      \frac{\phi_{R,g}\,h^{\phi}(E')}{4\pi}}_{\text{II: in the region}},
+
+with :math:`\Sigma^{samp}_{\mathcal{P}}` the production kernel of the
+sampler-route channels (its outgoing state drawn by OpenMC). Term I is
+estimated on the backward path with the particles above, each carrying in
+addition
+
+.. math::
+    :label: rmc-flux-difference-I
+
+    Z = -\,\omega_j\,\frac{\Sigma^{samp}_{\mathcal{P}}(E'_k)\,
+    \phi_{R,g}\,h^{\phi}(E'_k)}{4\pi\,K\,g(E'_k)}.
+
+Term II needs no path and no density: for each destination, :math:`M_{II}`
+forward samples draw :math:`E''` from :math:`p(E'') = \phi_{R,g}\,
+h^{\phi}(E'')/\sum_{g'}\phi_{R,g'}` (a group, then the within-group shape),
+a uniform :math:`\mathbf{\Omega}''`, and an outgoing state from OpenMC's
+samplers, each a particle with
+
+.. math::
+    :label: rmc-flux-difference-II
+
+    Z = \frac{\Sigma^{samp}_{\mathcal{P}}(E'')\,\phi_{R,g}\,
+    h^{\phi}(E'')}{p(E'')\,M_{II}}
+
+(the :math:`1/4\pi` cancels the direction density). Both terms use the same
+:math:`\phi_R` whatever the amplitudes, so the split is exact for any
+:math:`\phi_R`, and :math:`Z` does not depend on :math:`a` or :math:`b`. The
+weight of a sampler-route or region-term particle is
+
+.. math::
+    :label: rmc-sampler-weight-z
+
+    w = \frac{\sum_y a_y C_y + Z}{k^{[t=f]}\,N\,\varrho}.
+
+The control mean is region-level rather than path-level. A path control
+(the MG angular flux on the same path) would need term II on the same
+directions and incident energies, that is, either a density at the
+destination's state or a trace per direction, which is what the control is
+meant to avoid. Term I is small where :math:`\psi` is close to the isotropic
+lifted region flux; it is not small where the flux is anisotropic, varies
+across the region, or departs from the lift in energy. Term II is
+production-scale and is divided only by :math:`M_{II}`, at the cost of one
+collision sample per forward sample and no trace.
+
+**Every channel on the sampler route.** With ``all_sampler`` the registry
+routes elastic scattering and fission to the sampler route as well, so the
+estimator uses no density anywhere: fission is sampled with
+``sample_fission`` and ``sample_fission_neutron``, elastic scattering with
+``elastic_scatter`` at its target temperature. The density branch then
+carries only the low term (and the MG control, if requested).
+
+**Net assignment (biased, for measurement).** The :math:`K` particles of a
+direction are replaced by one, chosen with probability proportional to its
+:math:`|C + Z|` at :math:`a = (1, 1)`, carrying the net of the :math:`K`.
+The expectation of a bin then moves by the weight assigned to states the
+:math:`K` particles did not occupy, so it is biased; it measures what local
+cancellation among the :math:`K` could give, and is not used otherwise.
+
+**Records.** Each record has a *kind*: 0 the density branch, 1 a
+sampler-route particle on a path (term I), 2 a region-term particle (term
+II); and the *channel* of a sampled particle (elastic, thermal elastic,
+inelastic, fission; :math:`-1` on the density branch).
 
 .. _methods_rmc_first_collision:
 

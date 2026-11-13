@@ -48,17 +48,16 @@ extern "C" int openmc_rmc_channel_production(int32_t material_id, int64_t n,
     for (const auto& c : reg.channels(m)) {
       double x = rmc::ChannelRegistry::production(c, density_mult, probe);
       k[static_cast<int>(c.kind)] += x;
-      int route = static_cast<int>(rmc::ChannelRegistry::route(c, E[i], probe));
+      int route = static_cast<int>(reg.route(c, E[i], probe));
       r[2 * static_cast<int>(c.tag) + route] += x;
     }
   }
   return 0;
 }
 
-extern "C" int openmc_rmc_sample_sampler_route(int32_t material_id,
-  double E_in, const double* u_in, double sqrtkT, double density_mult,
-  int64_t n, uint64_t seed, double* production, double* E, double* u,
-  int* kind)
+extern "C" int openmc_rmc_sample_sampler_route(int32_t material_id, double E_in,
+  const double* u_in, double sqrtkT, double density_mult, int64_t n,
+  uint64_t seed, double* production, double* E, double* u, int* kind)
 {
   int32_t m;
   if (int err = find_material(material_id, m))

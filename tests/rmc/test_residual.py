@@ -18,7 +18,12 @@ integrals, which the test evaluates by quadrature on a fine grid:
   4 pi V int Sigma_samp q_s / Sigma_t dE', with either incident proposal;
 - the same-path control: M on the J directions and its restored mean R on
   L MG-only directions have equal expectations;
-- weights: the C++ weight formula against NumPy, and linear in a and b.
+- weights: the C++ weight formula against NumPy, and linear in a and b;
+- every channel on the sampler route (all_sampler), with K incident
+  energies: the sampled particles' mean is the whole production of the tag,
+  4 pi V int Sigma_P,t q_s / Sigma_t dE', for scattering and fission;
+- the flux-difference control: the term-I and region-term parts of Z have
+  opposite means, and the sampled production is unchanged.
 
 The backward flux uses the roulette tail, which is unbiased, so the means
 are exact apart from the quadrature.
@@ -53,7 +58,8 @@ def inf(infinite_files):
         _, by_route = rmc.channel_production(problems.MAT_FUEL, g)
         V = problems.PITCH**2 * problems.HEIGHT
         yield dict(rmc=rmc, g=g, q_s=q_s, q_f=q_f, t=sigma_t, el=sigma_el,
-                   nf=nu_sigma_f, samp=by_route[('s', 'sampler')], V=V)
+                   nf=nu_sigma_f, samp=by_route[('s', 'sampler')],
+                   prod_s=by_route[('s', 'evaluator')] + by_route[('s', 'sampler')], V=V)
         rmc.field_free()
 
 
@@ -197,3 +203,49 @@ def test_weights(inf):
     w = rmc.residual_weights(rec, N, (0.7, 1.3), (0.9, 1.1), 1.25, 0.5)
     w2 = rmc.residual_weights(rec, N, (1.4, 2.6), (1.8, 2.2), 1.25, 0.5)
     np.testing.assert_allclose(w2, 2 * w, rtol=1e-13)
+
+
+def _per_sample(rec, N, value, mask):
+    sample_of = np.cumsum(np.r_[0, (rec['sampler'][:-1] == 0)])
+    out = np.zeros(N)
+    np.add.at(out, sample_of[mask], value[mask])
+    return out
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('tag', ['s', 'f'])
+@pytest.mark.parametrize('common_numbers', [False, True])
+def test_all_sampler_high_term(inf, tag, common_numbers):
+    rmc = inf['rmc']
+    N = 20_000
+    rec = rmc.residual_sample(tag, N, seed=17, n_directions=4, E_range=E_RANGE,
+                              all_sampler=True, n_energies=3,
+                              common_numbers=common_numbers)
+    smp = rec['sampler'] == 1
+    assert np.all(rec['kind'][smp] == 1) and np.all(rec['channel'][smp] >= 0)
+    # No density-branch production
+    assert np.all(rec['C_s'][~smp] == 0.0)
+    per = _per_sample(rec, N, rec['C_s'] / rec['density'], smp)
+    prod = inf['prod_s'] if tag == 's' else inf['nf']
+    exact = 4 * math.pi * inf['V'] * np.trapezoid(prod * inf['q_s'] / inf['t'], inf['g'])
+    _check(per, exact, rel=5e-3)
+
+
+@pytest.mark.slow
+def test_flux_difference_control(inf):
+    rmc = inf['rmc']
+    N = 20_000
+    rec = rmc.residual_sample('s', N, seed=19, n_directions=4, E_range=E_RANGE,
+                              all_sampler=True, n_energies=2,
+                              sampler_control='region', region_samples=4)
+    k1, k2 = rec['kind'] == 1, rec['kind'] == 2
+    assert k2.any()
+    assert np.all(rec['C_s'][k2] == 0.0) and np.all(rec['C_f'][k2] == 0.0)
+    z1 = _per_sample(rec, N, rec['Z'] / rec['density'], k1)
+    z2 = _per_sample(rec, N, rec['Z'] / rec['density'], k2)
+    assert z1.mean() < 0 < z2.mean()
+    _check(z1 + z2, 0.0)
+    per = _per_sample(rec, N, rec['C_s'] / rec['density'], k1)
+    exact = 4 * math.pi * inf['V'] * np.trapezoid(
+        inf['prod_s'] * inf['q_s'] / inf['t'], inf['g'])
+    _check(per, exact, rel=5e-3)

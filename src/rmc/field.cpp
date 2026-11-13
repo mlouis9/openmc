@@ -75,6 +75,9 @@ FrozenField::FrozenField(const std::string& field_file,
   auto material_id = read_vec<int32_t>(rg, "material_id");
   auto Q_s = read_vec<double>(rg, "Q_s");
   auto Q_f = read_vec<double>(rg, "Q_f");
+  vector<double> phi;
+  if (object_exists(rg, "phi"))
+    phi = read_vec<double>(rg, "phi");
   close_group(rg);
   file_close(ff);
 
@@ -132,8 +135,8 @@ FrozenField::FrozenField(const std::string& field_file,
       group_fine_[g] = 0;
       continue;
     }
-    auto it = std::lower_bound(
-      fine_edges_.begin(), fine_edges_.end(), group_edges_[g]);
+    auto it =
+      std::lower_bound(fine_edges_.begin(), fine_edges_.end(), group_edges_[g]);
     if (it != fine_edges_.end() &&
         std::abs(*it - group_edges_[g]) <= 1e-12 * group_edges_[g])
       group_fine_[g] = static_cast<int>(it - fine_edges_.begin());
@@ -141,6 +144,11 @@ FrozenField::FrozenField(const std::string& field_file,
 
   // ---- Assemble -------------------------------------------------------------
   volume_ = V;
+  if (static_cast<int64_t>(phi.size()) == R * G) {
+    flux_ = phi;
+    for (double& x : flux_)
+      x *= scale;
+  }
   region_material_.assign(R, MATERIAL_VOID);
   region_cell_ = cell_id;
   region_instance_ = instance;
@@ -257,7 +265,6 @@ double FrozenField::evaluate(int64_t region, Tag t, double E) const
   return Q * h / (4.0 * PI);
 }
 
-
 int FrozenField::group(double E) const
 {
   return bin_index(group_edges_, E);
@@ -302,10 +309,10 @@ double FrozenField::sample_shape(
   const double* h = nullptr;
   if (region >= 0 && lift_row_[region] >= 0) {
     const int64_t row = lift_row_[region];
-    h = (k == Shape::phi)
-          ? &lift_phi_[row * n_fine_]
-          : &lift_[(static_cast<int64_t>(k) * n_lift_materials_ + row) *
-                   n_fine_];
+    h =
+      (k == Shape::phi)
+        ? &lift_phi_[row * n_fine_]
+        : &lift_[(static_cast<int64_t>(k) * n_lift_materials_ + row) * n_fine_];
   }
   double m = h ? shape_mass(h, fine_edges_, i0, i1) : 0.0;
   if (!(m > 0.0)) {
@@ -338,10 +345,10 @@ double FrozenField::shape_draw_density(
   const double* h = nullptr;
   if (region >= 0 && lift_row_[region] >= 0) {
     const int64_t row = lift_row_[region];
-    h = (k == Shape::phi)
-          ? &lift_phi_[row * n_fine_]
-          : &lift_[(static_cast<int64_t>(k) * n_lift_materials_ + row) *
-                   n_fine_];
+    h =
+      (k == Shape::phi)
+        ? &lift_phi_[row * n_fine_]
+        : &lift_[(static_cast<int64_t>(k) * n_lift_materials_ + row) * n_fine_];
   }
   double m = h ? shape_mass(h, fine_edges_, i0, i1) : 0.0;
   if (!(m > 0.0))

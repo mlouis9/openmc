@@ -32,7 +32,8 @@ extern "C" int openmc_rmc_xs(int32_t material_id, int64_t n, const double* E,
   }
   // Uses the same grid set-up as openmc_rmc_xs_total
   double dummy;
-  int err = openmc_rmc_xs_total(material_id, 1, E, sqrtkT, density_mult, &dummy);
+  int err =
+    openmc_rmc_xs_total(material_id, 1, E, sqrtkT, density_mult, &dummy);
   if (err)
     return err;
   const Material& mat = *model::materials[it->second];
@@ -49,9 +50,8 @@ extern "C" int openmc_rmc_xs(int32_t material_id, int64_t n, const double* E,
   return 0;
 }
 
-extern "C" int openmc_rmc_residual_sample(
-  const openmc_rmc_residual_config* cfg, int tag, int64_t n, uint64_t seed,
-  int keep_directions, int64_t* n_records)
+extern "C" int openmc_rmc_residual_sample(const openmc_rmc_residual_config* cfg,
+  int tag, int64_t n, uint64_t seed, int keep_directions, int64_t* n_records)
 {
   if (!rmc::loaded_field) {
     set_errmsg("No RMC field is loaded; call openmc_rmc_field_load first.");
@@ -95,6 +95,12 @@ extern "C" int openmc_rmc_residual_sample(
   opt.incident.beta = cfg->beta_in;
   opt.incident.E_min = cfg->Ein_min;
   opt.incident.E_max = cfg->Ein_max;
+  opt.sampler.all_sampler = cfg->all_sampler != 0;
+  opt.sampler.energies = cfg->n_energies;
+  opt.sampler.common_numbers = cfg->common_numbers != 0;
+  opt.sampler.control = static_cast<rmc::SamplerControl>(cfg->sampler_control);
+  opt.sampler.region_samples = cfg->region_samples;
+  opt.sampler.net = cfg->net != 0;
 
   bool need_tables = opt.control ||
                      opt.incident.mode == rmc::IncidentMode::flux ||
@@ -113,7 +119,8 @@ extern "C" int openmc_rmc_residual_sample(
 }
 
 extern "C" int openmc_rmc_residual_records(double* r, double* u, double* E,
-  double* density, int* tag, int* sampler, double* terms)
+  double* density, int* tag, int* sampler, int* kind, int* channel,
+  double* terms)
 {
   const auto& rec = last_records;
   const int64_t n = rec.size();
@@ -123,10 +130,12 @@ extern "C" int openmc_rmc_residual_records(double* r, double* u, double* E,
   std::copy(rec.density.begin(), rec.density.end(), density);
   std::copy(rec.tag.begin(), rec.tag.end(), tag);
   std::copy(rec.sampler.begin(), rec.sampler.end(), sampler);
-  // terms [7][n]: C_s, C_f, M_s, M_f, R_s, R_f, U
-  const vector<double>* cols[7] = {
-    &rec.C_s, &rec.C_f, &rec.M_s, &rec.M_f, &rec.R_s, &rec.R_f, &rec.U};
-  for (int c = 0; c < 7; ++c)
+  std::copy(rec.kind.begin(), rec.kind.end(), kind);
+  std::copy(rec.channel.begin(), rec.channel.end(), channel);
+  // terms [8][n]: C_s, C_f, M_s, M_f, R_s, R_f, U, Z
+  const vector<double>* cols[8] = {
+    &rec.C_s, &rec.C_f, &rec.M_s, &rec.M_f, &rec.R_s, &rec.R_f, &rec.U, &rec.Z};
+  for (int c = 0; c < 8; ++c)
     std::copy(cols[c]->begin(), cols[c]->end(), terms + c * n);
   return 0;
 }
@@ -149,9 +158,9 @@ extern "C" int openmc_rmc_residual_weights(int64_t n, const int* tag,
   rmc::ResidualRecords rec;
   rec.tag.assign(tag, tag + n);
   rec.sampler.assign(sampler, sampler + n);
-  vector<double>* cols[7] = {
-    &rec.C_s, &rec.C_f, &rec.M_s, &rec.M_f, &rec.R_s, &rec.R_f, &rec.U};
-  for (int c = 0; c < 7; ++c)
+  vector<double>* cols[8] = {
+    &rec.C_s, &rec.C_f, &rec.M_s, &rec.M_f, &rec.R_s, &rec.R_f, &rec.U, &rec.Z};
+  for (int c = 0; c < 8; ++c)
     cols[c]->assign(terms + c * n, terms + (c + 1) * n);
   rec.density.assign(density, density + n);
   rec.E.assign(n, 0.0);

@@ -154,7 +154,7 @@ extern unique_ptr<SweepRecords> loaded_sweep;
 //!     w = { sum_y a_y (C_y - c M_y + c R_y) / k^[t=f]
 //!           - b_t [ (1 - lambda) U + lambda sum_y a_y R_y / k^[t=f] ] }
 //!         / (N density)
-//!   sampler branch:  w = sum_y a_y C_y / k^[t=f] / (N density)
+//!   sampler branch:  w = (sum_y a_y C_y + Z) / k^[t=f] / (N density)
 //!
 //! C_y: CE production (the channels of the record's branch); M_y: MG control
 //! on the same directions; R_y: the control's mean, restored (L MG-only
@@ -167,7 +167,13 @@ struct ResidualRecords {
                           //!< sampler records, of (r, E, u) otherwise)
   vector<int> tag;        //!< [n] 0 = s, 1 = f
   vector<int> sampler;    //!< [n] 1 for sampler-route particles
+  vector<int> kind;       //!< [n] 0 density branch, 1 sampler route on a
+                          //!< backward path, 2 region term of the flux-
+                          //!< difference control
+  vector<int> channel;    //!< [n] ChannelKind of a sampled particle, or -1
   vector<double> C_s, C_f, M_s, M_f, R_s, R_f, U;
+  vector<double> Z; //!< [n] amplitude-free part of a sampled
+                    //!< particle's weight (the flux-difference control)
 
   int64_t size() const { return static_cast<int64_t>(E.size()); }
   void clear();
@@ -184,6 +190,28 @@ enum class ControlEnergy {
   same_energy //!< estimated at the CE estimate's sampled E' (shares its noise)
 };
 
+//! Options of the sampler route (channels without a density evaluator, or
+//! every channel with all_sampler). Theory: docs/source/methods/rmc.rst,
+//! methods_rmc_sampler_control.
+enum class SamplerControl {
+  none,  //!< weight from the full CE flux psi
+  region //!< flux-difference split: weight from psi - phi_R h_phi / 4 pi on
+         //!< the backward path, plus a region term sampled forward from
+         //!< phi_R h_phi / 4 pi (no backtrace, no density)
+};
+
+//! Options of the sampler route (theory: docs/source/methods/rmc.rst,
+//! methods_rmc_sampler_control)
+struct SamplerOptions {
+  bool all_sampler {false};    //!< every channel on the sampler route
+  int energies {1};            //!< K incident energies per direction
+  bool common_numbers {false}; //!< the K outgoing states share random numbers
+  SamplerControl control {SamplerControl::none};
+  int region_samples {1}; //!< forward samples of the region term per sample
+  bool net {false};       //!< study only, biased: one outgoing state from
+                          //!< the K, chosen by |weight|, carries their net
+};
+
 struct ResidualOptions {
   DirectionMode directions {DirectionMode::isotropic};
   int n_directions {8}; //!< J; for sweep directions, the number of segments
@@ -197,14 +225,16 @@ struct ResidualOptions {
   VoxelOptions voxel;
   OutgoingOptions outgoing;
   IncidentOptions incident;
+  SamplerOptions sampler;
 };
 
 //==============================================================================
 //! Draws residual samples of one tag. Each sample: a destination from the
 //! voxel proposal, an outgoing state, the field there (U), and over the
 //! directions of the direction source the CE production of the evaluator
-//! channels (C), the MG control (M) and its restored mean (R); and, for tag
-//! s, one sampler-route particle per direction.
+//! channels (C), the MG control (M) and its restored mean (R); and, for the
+//! sampler-route channels of the tag, K particles per direction (term I) and,
+//! with the flux-difference control, M_II region-term particles (term II).
 //==============================================================================
 
 class ResidualSampler {
@@ -233,14 +263,28 @@ private:
     double density_mult;
   };
 
+  //! A sampled particle of one direction: C per source tag and Z, before
+  //! the direction weight
+  struct SampledParticle {
+    OutgoingState state;
+    double C[2] {0.0, 0.0};
+    double Z {0.0};
+    int channel {-1};
+  };
+
   //! Terms of one direction (per source tag y = s, f)
   struct DirectionTerms {
     double C[2] {0.0, 0.0};
     double M[2] {0.0, 0.0};
-    bool has_sampler {false};
-    double S[2] {0.0, 0.0}; //!< sampler-route production times psi / p(E')
-    OutgoingState sampler_state;
+    vector<SampledParticle> sampled;
   };
+
+  //! MG scalar flux of the region at E': phi_{R,g(E')} h_phi(E') [per eV]
+  double region_flux(int64_t region, double E) const;
+
+  //! Forward samples of the region term (flux-difference control)
+  void region_term(
+    Tag t, const Destination& d, uint64_t* seed, vector<SampledParticle>& out);
 
   void direction(Tag t, const Destination& d, Direction omega_in,
     const OutgoingState& s, const double* psi_seg_s, const double* psi_seg_f,
@@ -264,6 +308,9 @@ private:
 
   bool needs_mg_flux(Tag t) const;
 
+  static void push_sampled(ResidualRecords& out, Position r,
+    const SampledParticle& q, double omega, double density, Tag t, int kind);
+
   const FrozenField& field_;
   ResidualOptions opt_;
   const MGTables* tables_;
@@ -282,6 +329,8 @@ private:
   vector<int> image_nuclide_;
   vector<double> seg_s_, seg_f_, w_g_;
   vector<int64_t> picks_;
+  vector<Draw<double>> sampler_E_;
+  vector<SampledParticle> candidates_, region_particles_;
 };
 
 //! Weights of records for amplitudes (a_s, a_f), (b_s, b_f), eigenvalue k,
