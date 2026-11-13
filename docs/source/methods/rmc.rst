@@ -604,6 +604,48 @@ fission secondaries with no collisions, so in a fixed-source run their own
 first collisions would be counted too. The low term is the field (or a
 sweep's emission) integrated exactly over the same bins.
 
+.. _methods_rmc_flights:
+
+---------------------------
+Forward Correction Flights
+---------------------------
+
+The bank of signed sites :math:`(\mathbf{r}_i, \mathbf{\Omega}_i, E_i, w_i)`
+is a source whose next-generation production is estimated by analog flights.
+Each of :math:`N` flights chooses a parent :math:`i` with probability
+:math:`|w_i|/W_{abs}`, :math:`W_{abs} = \sum_i |w_i|`, flies it to its next
+collision with OpenMC's geometry and cross sections (or out through a vacuum
+boundary), and returns at most one child:
+
+- a nuclide :math:`m` is chosen with probability
+  :math:`\Sigma_{t,m}/\Sigma_t`;
+- with probability :math:`\sigma_{s,m}/\sigma_{t,m}` the neutron scatters
+  with OpenMC's ``scatter()``; the child, tag :math:`s`, has weight factor
+  equal to the realized yield (the particle's weight after the call times
+  one plus the integer-yield copies it banked, which share its outgoing
+  state);
+- otherwise, with probability :math:`\sigma_{f,m}/\sigma_{a,m}`, it
+  fissions; the child, tag :math:`f`, comes from
+  ``sample_fission_neutron()`` with weight factor
+  :math:`\nu_m(E_i)/k`, with :math:`\nu_m = \nu\sigma_{f,m}/\sigma_{f,m}`
+  from OpenMC's tabulated nu-fission;
+- otherwise the neutron is captured and leaves no child.
+
+The child's weight is :math:`\operatorname{sgn}(w_i)\, W_{abs}/N` times its
+factor, so the expected children of parent :math:`i` are
+
+.. math::
+    :label: rmc-flight-expectation
+
+    w_i\, \frac{\Sigma^{yield}_s(E_i)}{\Sigma_t(E_i)}\, p_s(\cdot \mid E_i), \qquad
+    w_i\, \frac{\nu\Sigma_f(E_i)}{k\,\Sigma_t(E_i)}\, p_f(\cdot \mid E_i)
+
+at the collision density along the parent's ray: the first-collision
+production of the bank. No OpenMC tally, roulette, or fission bank is
+touched. A track-length tally of the flights,
+:math:`\operatorname{sgn}(w_i) W_{abs}/N` times the path length, estimates
+the bank's uncollided flux.
+
 .. _methods_rmc_kinematics:
 
 -------------------------------------

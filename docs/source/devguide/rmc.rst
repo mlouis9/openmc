@@ -1005,3 +1005,62 @@ Not yet done in Stage 4
       baseline for it.
     - A P\ :sub:`N` MG kernel for the scattering control, if G3.7 confirms that
       the P\ :sub:`0` control is ineffective above the thermal range.
+
+-----------------------------------------
+Stage 5: Forward correction flights
+-----------------------------------------
+
+.. _devguide_rmc_flights:
+
+Signed banks and flights
+------------------------
+
+**Commit:** "rmc: signed banks and forward correction flights (Stage 5)".
+Section 8 of the implementation guide; gates G5.1-G5.4.
+
+Added
+    - ``rmc/bank.h``: ``SignedBank`` (structure of arrays: position,
+      direction, energy, signed weight, tag) and ``SignedSite``.
+    - ``rmc/flight.{h,cpp}``: ``FlightPropagator::propagate``
+      (``methods_rmc_flights``), with an optional signed track-length tally
+      by material and energy, and flight statistics (leaked, captured,
+      scattered, fissions, :math:`W_{abs}`). Each flight has its own random
+      number stream.
+    - ``src/rmc/bank_capi.cpp``: banks held in C++ memory and reached by
+      integer handles (``openmc_rmc_bank_create``, ``_size``, ``_get``,
+      ``_free``) and ``openmc_rmc_propagate``; bindings
+      ``openmc.lib.rmc.Bank`` and ``propagate``.
+    - ``residual_gates.bank_reference``: a signed bank's first-collision
+      production and uncollided flux in OpenMC, with the positive and
+      negative parts as two source files; ``children_histogram``.
+
+Verified by
+    - ``tests/rmc/test_flights_infinite.py``: **G5.1** at six parent energies
+      (thermal, the 6.67 eV resonance, 1 keV, 100 keV, 2 MeV, 14 MeV), the
+      mean child weight per tag equals
+      :math:`\Sigma^{yield}_s/\Sigma_t` and :math:`\nu\Sigma_f/(k\Sigma_t)`
+      from the channel registry, within statistics (40,000 flights each; no
+      leakage). **G5.3**: a bank of :math:`\pm w` pairs gives children whose
+      binned sums are zero within 5 standard errors.
+    - ``tests/rmc/test_flights_pincell.py``: **G5.2**, the children of a
+      2,000-site signed test bank (60 % positive) by material and outgoing
+      energy equal OpenMC's first-collision production of the same bank for
+      both tags; **G5.4**, the flights' signed track-length flux equals
+      OpenMC's uncollided flux (``CollisionFilter([0])``), with the flights'
+      error from 8 independent batches.
+
+Bugs found (in the tests)
+    - A reference run from inside a module whose ``openmc.lib`` session was
+      still open ran in that session: ``Model.run`` uses an initialized
+      ``openmc.lib``. Tests that run OpenMC processes are now in modules
+      without an open session.
+    - With source-file weights :math:`N_{file}|w_i|` (hundreds), each
+      collision of an eigenvalue run banked hundreds of fission sites and the
+      fission bank overflowed, so the reference fission production was
+      nearly zero. The files now carry :math:`|w_i|` and the tallies are
+      scaled by :math:`N_{file}`. The field reference of Stage 4 uses the
+      compiled field source, whose weights (about 90 in the pincell) bank a
+      few sites per fuel collision; its fission production agrees with the
+      residual records (G4.1), so it does not overflow there, but the same
+      limit applies to it.
+
