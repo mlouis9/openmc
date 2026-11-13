@@ -11,6 +11,7 @@ included in docs/source/devguide/rmc_visual.rst, which explains what to look
 for.
 """
 import argparse
+import json
 import math
 import os
 from pathlib import Path
@@ -592,11 +593,53 @@ def fig_first_collision(work, out, n=6000):
     _save(fig, out, 'first_collision.png')
 
 
+def fig_iteration(work, out, generations=20):
+    """The RMC eigenvalue iteration on the infinite medium, uncancelled."""
+    import driver
+    import eigenvalue_run as er
+    model, mesh, files = er._files('infinite', work.root)
+    ref = files['work'] / 'reference_k.json'
+    if ref.exists():
+        k_ref, k_ref_s = json.loads(ref.read_text())
+    else:
+        k_ref, k_ref_s = er.reference_k(model, files['work'] / 'reference')
+        ref.write_text(json.dumps([k_ref, k_ref_s]))
+    with h5py.File(files['field']) as f:
+        k_mg = float(f.attrs['k_mg'])
+    runs = {}
+    with pipeline.ce_session(model, mesh, files['work'] / 'ce_iteration'):
+        rmc.field_load(files['field'], files['lifts'], files['volumes'])
+        for name in ('uncontrolled', 'same_energy'):
+            opts, c = er.ESTIMATORS[name]
+            backend = driver.OpenMCBackend(dict(n_directions=4, tail='roulette',
+                                                cutoff=math.exp(-4), **opts), c=c)
+            cfg = driver.Config(N={'s': 2000, 'f': 2000}, N_delta=200_000, N_B=100_000,
+                                seed=7)
+            _, runs[name] = driver.run(backend, cfg, k_mg, generations)
+        rmc.field_free()
+    fig, (a0, a1) = plt.subplots(1, 2, figsize=(12, 4))
+    for i, (name, rows) in enumerate(runs.items()):
+        n = [r['n'] + 1 for r in rows]
+        a0.plot(n, [r['k_next'] for r in rows], 'o-', ms=3, color=f'C{i}', label=name)
+        a1.plot(n, [r['W_abs'] for r in rows], 'o-', ms=3, color=f'C{i}', label=name)
+    a0.axhspan(k_ref - 2 * k_ref_s, k_ref + 2 * k_ref_s, color='k', alpha=0.15,
+               label=r'CE reference $\pm 2\sigma$')
+    a0.axhline(k_mg, color='C3', ls='--', lw=1, label='$k_{MG}$ (start)')
+    a0.set(xlabel='generation', ylabel='$k$', title='eigenvalue per generation')
+    a1.set(xlabel='generation', ylabel=r'$W_{abs}$ after normalization',
+           title='absolute bank weight (no cancellation)')
+    a0.legend(fontsize=8)
+    a1.legend(fontsize=8)
+    fig.suptitle('RMC iteration on the infinite medium: frozen field, b = 1, '
+                 '2000 residual samples per tag, 200,000 flights, bank of 100,000', y=1.02)
+    _save(fig, out, 'iteration.png')
+
+
 FIGURES = {'lifts': fig_lifts, 'field_maps': fig_field_maps,
            'split_meshes': fig_split_meshes, 'ce_vs_mg': fig_ce_vs_mg,
            'segments': fig_segments, 'tracer': fig_tracer,
            'backward_tails': fig_backward_tails, 'residual': fig_residual,
-           'first_collision': fig_first_collision}
+           'first_collision': fig_first_collision, 'iteration': fig_iteration}
 
 
 def main():

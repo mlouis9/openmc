@@ -646,6 +646,48 @@ touched. A track-length tally of the flights,
 :math:`\operatorname{sgn}(w_i) W_{abs}/N` times the path length, estimates
 the bank's uncollided flux.
 
+.. _methods_rmc_iteration:
+
+----------------
+The Iteration
+----------------
+
+The state of generation :math:`n` is the eigenvalue :math:`k_n`, the field
+amplitudes :math:`a_n = (a_s, a_f)` of the frozen field
+:math:`a_s Q^{MG}_s + a_f Q^{MG}_f`, and the signed bank :math:`\delta Q_n`
+of what the field does not carry. A generation:
+
+1. **Amplitudes.** The field candidate is :math:`F = b\,Q^{MG}`, with
+   :math:`b` chosen from earlier generations only: fixed (default
+   :math:`b = (1,1)`), or per-tag mass matching,
+   :math:`b_t \leftarrow b_t + d\,(a_t + \langle 1, \delta Q_t\rangle /
+   \langle 1, Q^{MG}_t\rangle - b_t)` with damping :math:`d`.
+2. **Candidate.** The residual of the field (records weighted with
+   :math:`a_n, b, k_n`, eq. :eq:`rmc-residual-weight`) plus the children of
+   :math:`\delta Q_n`'s forward flights:
+   :math:`\delta Q^* = \hat R_n + \hat{\mathcal{B}}_n \delta Q_n`.
+3. **Production and eigenvalue.**
+
+   .. math::
+       :label: rmc-iteration-f
+
+       f = k_n\big(b_f \langle 1, Q^{MG}_f\rangle + \langle 1,
+       \delta Q^*_f\rangle\big), \qquad k_{n+1} = k_n f.
+
+   A non-positive :math:`f` stops the run; it is never clipped.
+4. **Normalization.** Tag :math:`s` is scaled by :math:`1/f` and tag
+   :math:`f` by :math:`k_n/(k_{n+1} f)`, in the bank and in the field:
+   :math:`a_{n+1} = (b_s/f,\; b_f k_n/(k_{n+1} f))`.
+5. **Resampling.** The bank is compressed to at most :math:`N_B` sites:
+   :math:`N_B` sites chosen systematically by :math:`|w|`, each with weight
+   :math:`\operatorname{sgn}(w)\,W_{abs}/N_B`, which keeps the bank's
+   expectation.
+
+With a frozen field only the two amplitudes change between generations.
+Without cancellation the bank's absolute weight grows roughly linearly with
+the generation, since every generation adds the residual's absolute weight
+and flights in a multiplying medium carry most of it on.
+
 .. _methods_rmc_kinematics:
 
 -------------------------------------

@@ -277,3 +277,34 @@ What to look for:
 .. literalinclude:: ../../../examples/rmc/visual_checks.py
     :language: python
     :pyobject: fig_first_collision
+
+The iteration
+-------------
+
+.. figure:: rmc_figures/iteration.png
+    :width: 100%
+
+    Twenty generations of the RMC eigenvalue iteration on the infinite
+    medium with a frozen field and :math:`b = 1`, for the uncontrolled and
+    the same-energy residual estimators, against the CE reference and the
+    starting :math:`k_{MG}`. Right: the bank's absolute weight after
+    normalization.
+
+What to look for:
+
+- **k scatters about the reference**, with no trend: the infinite medium's
+  :math:`k_{MG}` is already within 0.1 % of the CE value, so this run shows
+  noise, not convergence.
+- **The noise grows with the generation**, because :math:`W_{abs}` grows
+  linearly: every generation adds the residual's absolute weight, and the
+  flights carry most of the bank on in a medium where neutrons rarely leak.
+  This is the behavior the guide predicts without cancellation (Stage 8).
+- The same-energy estimator starts with less noise in :math:`f` and grows
+  :math:`W_{abs}` a little more slowly. That it grows nearly as fast means
+  most of :math:`W_{abs}` is scattering residual, which neither estimator
+  controls well.
+
+.. literalinclude:: ../../../examples/rmc/visual_checks.py
+    :language: python
+    :pyobject: fig_iteration
+

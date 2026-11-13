@@ -1064,3 +1064,81 @@ Bugs found (in the tests)
       residual records (G4.1), so it does not overflow there, but the same
       limit applies to it.
 
+-----------------------------------------
+Stage 6: The iteration
+-----------------------------------------
+
+.. _devguide_rmc_iteration:
+
+The driver, a deterministic backend, and one generation against OpenMC
+----------------------------------------------------------------------
+
+**Commit:** "rmc: the eigenvalue iteration with a frozen field (Stage 6)".
+Section 9 of the implementation guide; gates G6.1 and G6.2, and a harness
+for G6.3 and G6.4.
+
+Added
+    - ``examples/rmc/driver.py``: ``generation`` and ``run``
+      (``methods_rmc_iteration``) with amplitude rules ``FixedAmplitudes``
+      and ``MassMatching``, ``EstimatorFailure`` for :math:`f \le 0`, and
+      per-generation diagnostics (:math:`k`, :math:`f`, :math:`a`,
+      :math:`b`, :math:`\rho` (the field's share of fission production),
+      :math:`W_{abs}`, tag sums, bank sizes, times). The iteration sees its
+      backend only through a dozen operations.
+    - ``ToyBackend``: the four-region deterministic toy in expected values
+      (``examples/rmc/normalization_toy.py``, a version-controlled copy of
+      the toy of the emission-source study, Scheme C with a frozen shape and
+      per-tag mass matching).
+    - ``OpenMCBackend``: residual records weighted by
+      ``residual_weights``, flights through ``openmc.lib.rmc.propagate``,
+      and unbiased systematic resampling. Banks are numpy arrays between
+      generations and C++ banks during flights.
+    - ``examples/rmc/eigenvalue_run.py``: replicas on the infinite medium or
+      the pincell against a CE Monte Carlo reference (G6.3, G6.4), with three
+      frozen-field estimator presets.
+
+Verified by
+    - ``tests/rmc/test_driver_toy.py`` (**G6.1**): with ``ToyBackend`` the
+      driver reproduces the toy's own iteration to :math:`10^{-12}` (k,
+      :math:`a`, :math:`b`, :math:`\rho`, bank norm) for :math:`b = (1,1)`,
+      two other fixed :math:`b`, and mass matching undamped and with damping
+      0.5, which converges to the CE/MG mass ratios (0.9688, 0.9947); k
+      converges to the CE eigenvalue for any :math:`b`; :math:`f \le 0`
+      raises.
+    - ``tests/rmc/test_driver_one_generation.py`` (**G6.2**): on the
+      pincell, from :math:`a = (0.97, 1.02)`, :math:`b = (1.01, 0.98)`,
+      :math:`k = 0.65` and a 1,500-site signed bank, the driver's
+      unnormalized candidate equals OpenMC's first-collision production of
+      the field minus :math:`b` times the field, plus OpenMC's
+      first-collision production of the bank, per tag and bin; the
+      driver's residual bank equals the records weighted directly; and
+      :math:`f`, :math:`k_{n+1}`, and :math:`a_{n+1}` follow eq.
+      ``rmc-iteration-f`` and the scaling.
+
+First runs (smoke, not the gates)
+    Infinite medium, 2,000 residual samples per tag, 200,000 flights, a bank
+    of 100,000, :math:`b = 1`. The CE reference is
+    :math:`k = 0.6079 \pm 0.0004` and :math:`k_{MG} = 0.6075`, so the true
+    residual is small and the run is dominated by noise. The first
+    generation's :math:`f` (empty bank, so the residual alone) was 1.2 %
+    from one with the same-energy estimator and 14 % with the uncontrolled
+    one. :math:`W_{abs}` grows by about 9 per generation, as expected
+    without cancellation, and nearly as fast with the controlled fission
+    estimator, so most of it is scattering residual, whose control is weak.
+    The generation-to-generation spread of :math:`k` grows with it, from a
+    few percent to about 10 % over 20 generations. The iteration figure in
+    ``rmc_visual`` shows it.
+
+Not yet done in Stage 6
+    - **G6.3 and G6.4**, the replica runs (``eigenvalue_run.py --replicas
+      10``), not run: they take hours with these populations, and without
+      cancellation the noise grows with the generation, so the useful number
+      of active generations is small.
+    - The C++ side of the guide's Stage 6 API (record and destination sets
+      by handle, bank scaling and resampling in C++, zero-copy views): the
+      driver uses numpy copies, which is enough at these bank sizes.
+    - Swept fields (tandem, partial) in the iteration: the driver
+      implements frozen shapes; the residual sampler and the field sweep
+      already support the swept estimators within one generation.
+    - Per-generation diagnostics to HDF5 (the harness writes JSON).
+
