@@ -9,12 +9,23 @@
 #include "openmc/mesh.h"
 #include "openmc/random_lcg.h"
 #include "openmc/rmc/field.h"
+#include "openmc/rmc/mg_control.h"
 
 namespace openmc {
 namespace rmc {
 
 //! The loaded field. Owned here; everything else borrows it.
 unique_ptr<FrozenField> loaded_field;
+
+//! Its multigroup tables, read on first use
+unique_ptr<MGTables> loaded_mg;
+
+const MGTables& loaded_mg_tables()
+{
+  if (!loaded_mg)
+    loaded_mg = make_unique<MGTables>(loaded_field->file());
+  return *loaded_mg;
+}
 
 } // namespace rmc
 } // namespace openmc
@@ -43,6 +54,7 @@ extern "C" int openmc_rmc_field_load(
 {
   // fatal_error() inside the constructor ends the process; that is accepted
   // for malformed input files.
+  rmc::loaded_mg.reset();
   rmc::loaded_field =
     make_unique<rmc::FrozenField>(field_file, lift_file, volume_file);
   return 0;
@@ -50,6 +62,7 @@ extern "C" int openmc_rmc_field_load(
 
 extern "C" int openmc_rmc_field_free()
 {
+  rmc::loaded_mg.reset();
   rmc::loaded_field.reset();
   return 0;
 }

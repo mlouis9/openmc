@@ -10,7 +10,9 @@
 #include "openmc/constants.h"
 #include "openmc/error.h"
 #include "openmc/hdf5_interface.h"
+#include "openmc/material.h"
 #include "openmc/mesh.h"
+#include "openmc/random_lcg.h"
 #include "openmc/random_ray/source_region.h" // hash_combine
 
 namespace openmc {
@@ -89,7 +91,10 @@ FrozenField::FrozenField(const std::string& field_file,
   auto lift_ids = read_vec<int32_t>(lf, "material_ids");
   auto h_s = read_vec<double>(lf, "h_s");
   auto h_f = read_vec<double>(lf, "h_f");
+  if (object_exists(lf, "h_phi"))
+    lift_phi_ = read_vec<double>(lf, "h_phi");
   file_close(lf);
+  field_file_ = field_file;
   n_fine_ = static_cast<int>(fine_edges_.size()) - 1;
   n_lift_materials_ = static_cast<int>(lift_ids.size());
   if (static_cast<int64_t>(h_s.size()) !=
@@ -118,7 +123,22 @@ FrozenField::FrozenField(const std::string& field_file,
       fatal_error("RMC field: volume file does not match the field file.");
   }
 
+  // ---- Group edges on the fine grid (for drawing from the shapes) ----------
+  group_fine_.assign(G + 1, -1);
+  for (int g = 0; g <= G; ++g) {
+    auto it = std::lower_bound(
+      fine_edges_.begin(), fine_edges_.end(), group_edges_[g]);
+    if (it != fine_edges_.end() &&
+        std::abs(*it - group_edges_[g]) <= 1e-12 * group_edges_[g])
+      group_fine_[g] = static_cast<int>(it - fine_edges_.begin());
+  }
+
   // ---- Assemble -------------------------------------------------------------
+  volume_ = V;
+  region_material_.assign(R, MATERIAL_VOID);
+  region_cell_ = cell_id;
+  region_instance_ = instance;
+  region_bin_ = mesh_bin;
   lift_row_.assign(R, -1);
   region_mesh_.assign(R, -1);
   emission_.assign(2 * R * G, 0.0);
@@ -157,6 +177,9 @@ FrozenField::FrozenField(const std::string& field_file,
           fmt::format("RMC field: no lift for material {}.", material_id[r]));
       }
       lift_row_[r] = it->second;
+      auto im = model::material_map.find(material_id[r]);
+      if (im != model::material_map.end())
+        region_material_[r] = im->second;
     }
 
     for (int g = 0; g < G; ++g) {
@@ -226,6 +249,96 @@ double FrozenField::evaluate(int64_t region, Tag t, double E) const
   double Q = emission_[(ti * R + region) * n_groups_ + g];
   double h = lift_[(ti * n_lift_materials_ + lift_row_[region]) * n_fine_ + i];
   return Q * h / (4.0 * PI);
+}
+
+
+int FrozenField::group(double E) const
+{
+  return bin_index(group_edges_, E);
+}
+
+double FrozenField::shape(Shape k, int64_t region, double E) const
+{
+  if (region < 0 || lift_row_[region] < 0)
+    return 0.0;
+  int i = bin_index(fine_edges_, E);
+  if (i < 0)
+    return 0.0;
+  const int64_t row = lift_row_[region];
+  if (k == Shape::phi) {
+    if (lift_phi_.empty())
+      fatal_error("RMC field: the lift file has no flux shape h_phi.");
+    return lift_phi_[row * n_fine_ + i];
+  }
+  return lift_[(static_cast<int64_t>(k) * n_lift_materials_ + row) * n_fine_ +
+               i];
+}
+
+namespace {
+//! Mass of a shape over the fine bins [i0, i1)
+double shape_mass(const double* h, const vector<double>& edges, int i0, int i1)
+{
+  double m = 0.0;
+  for (int i = i0; i < i1; ++i)
+    m += h[i] * (edges[i + 1] - edges[i]);
+  return m;
+}
+} // namespace
+
+double FrozenField::sample_shape(
+  Shape k, int64_t region, int g, uint64_t* seed, double& density) const
+{
+  const double lo = group_edges_[g], hi = group_edges_[g + 1];
+  int i0 = group_fine_[g], i1 = group_fine_[g + 1];
+  if (i0 < 0 || i1 < 0)
+    fatal_error("RMC field: group edges are not on the lift grid.");
+  const double* h = nullptr;
+  if (region >= 0 && lift_row_[region] >= 0) {
+    const int64_t row = lift_row_[region];
+    h = (k == Shape::phi)
+          ? &lift_phi_[row * n_fine_]
+          : &lift_[(static_cast<int64_t>(k) * n_lift_materials_ + row) *
+                   n_fine_];
+  }
+  double m = h ? shape_mass(h, fine_edges_, i0, i1) : 0.0;
+  if (!(m > 0.0)) {
+    double E = lo * std::exp(std::log(hi / lo) * prn(seed));
+    density = 1.0 / (E * std::log(hi / lo));
+    return E;
+  }
+  double cut = prn(seed) * m, cum = 0.0;
+  int i = i0;
+  for (; i < i1 - 1; ++i) {
+    cum += h[i] * (fine_edges_[i + 1] - fine_edges_[i]);
+    if (cum > cut)
+      break;
+  }
+  double E = fine_edges_[i] + prn(seed) * (fine_edges_[i + 1] - fine_edges_[i]);
+  density = h[i] / m;
+  return E;
+}
+
+double FrozenField::shape_draw_density(
+  Shape k, int64_t region, int g, double E) const
+{
+  const double lo = group_edges_[g], hi = group_edges_[g + 1];
+  if (!(E >= lo && E < hi))
+    return 0.0;
+  int i0 = group_fine_[g], i1 = group_fine_[g + 1];
+  if (i0 < 0 || i1 < 0)
+    fatal_error("RMC field: group edges are not on the lift grid.");
+  const double* h = nullptr;
+  if (region >= 0 && lift_row_[region] >= 0) {
+    const int64_t row = lift_row_[region];
+    h = (k == Shape::phi)
+          ? &lift_phi_[row * n_fine_]
+          : &lift_[(static_cast<int64_t>(k) * n_lift_materials_ + row) *
+                   n_fine_];
+  }
+  double m = h ? shape_mass(h, fine_edges_, i0, i1) : 0.0;
+  if (!(m > 0.0))
+    return 1.0 / (E * std::log(hi / lo));
+  return h[bin_index(fine_edges_, E)] / m;
 }
 
 } // namespace rmc

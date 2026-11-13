@@ -47,3 +47,19 @@ def field_files(pincell, tmp_path_factory):
                                n_per_voxel=2_000, method='python')
     return dict(work=work, field=field_path, lifts=lift_path, volumes=volume_path,
                 statepoint=sp, mgxs=mgxs, rr_kwargs=RR_KWARGS)
+
+
+@pytest.fixture(scope='session')
+def infinite_files(field_files, tmp_path_factory):
+    """Random ray on the infinite medium (one region), with the pincell's
+    lifts: the problem where backward integrals have closed forms."""
+    import mg
+    model, mesh = problems.infinite_medium()
+    work = tmp_path_factory.mktemp('infinite_medium')
+    # One region, so batches are cheap; converged, so that the MG control
+    # reproduces the field (G3.6)
+    field_path, _, _, _ = mg.run_random_ray(
+        model, mesh, work / 'rr', mgxs_particles=2000, rays=100, batches=600,
+        inactive=500)
+    return dict(model=model, mesh=mesh, field=field_path, lifts=field_files['lifts'],
+                work=work)

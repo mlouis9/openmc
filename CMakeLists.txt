@@ -398,6 +398,8 @@ list(APPEND libopenmc_SOURCES
   src/rmc/production_capi.cpp
   src/rmc/random_ray_capi.cpp
   src/rmc/channels.cpp
+  src/rmc/mg_control.cpp
+  src/rmc/mg_control_capi.cpp
   src/rmc/channels_capi.cpp
   src/rmc/residual.cpp
   src/rmc/residual_capi.cpp

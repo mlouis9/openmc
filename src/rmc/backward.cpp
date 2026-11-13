@@ -2,6 +2,7 @@
 
 #include <cmath>
 
+#include "openmc/constants.h"
 #include "openmc/random_lcg.h"
 
 namespace openmc {
@@ -31,15 +32,31 @@ void BackwardFlux::evaluate_tags(Position r, Direction u_back,
   const vector<double>& E, const TailOptions& opt, uint64_t* seed,
   vector<double>& psi_s, vector<double>& psi_f, PathStats* stats)
 {
-  const size_t n = E.size();
-  psi_s.assign(n, 0.0);
-  psi_f.assign(n, 0.0);
+  evaluate_all(
+    r, u_back, E, nullptr, opt, seed, psi_s, psi_f, mg_s_, mg_f_, stats);
+}
+
+void BackwardFlux::evaluate_all(Position r, Direction u_back,
+  const vector<double>& E, const MGTables* mg, const TailOptions& opt,
+  uint64_t* seed, vector<double>& psi_s, vector<double>& psi_f,
+  vector<double>& mg_s, vector<double>& mg_f, PathStats* stats)
+{
+  // Channels 0..n_ce-1 are CE energies, then the MG groups (ascending)
+  const size_t n_ce = E.size();
+  const int G = mg ? field_.n_groups() : 0;
+  const size_t n = n_ce + G;
+  psi_s.assign(n_ce, 0.0);
+  psi_f.assign(n_ce, 0.0);
+  mg_s.assign(G, 0.0);
+  mg_f.assign(G, 0.0);
   T_.assign(n, 1.0);
   alive_.assign(n, 1);
   size_t n_alive = n;
   double travelled = 0.0;
   int64_t n_seg = 0, n_lookup = 0;
   bool hit_limit = false;
+  if (n == 0)
+    return;
 
   tracer_.begin(r, u_back);
   while (n_alive > 0) {
@@ -55,17 +72,30 @@ void BackwardFlux::evaluate_tags(Position r, Direction u_back,
       travelled += l;
       ++n_seg;
       int64_t region = chunk_.region[k];
+      int32_t mat = chunk_.material[k];
 
       for (size_t e = 0; e < n; ++e) {
         if (!alive_[e])
           continue;
-        double sigma = probe_.total(
-          chunk_.material[k], E[e], chunk_.sqrtkT[k], chunk_.density_mult[k]);
-        ++n_lookup;
+        double sigma;
+        if (e < n_ce) {
+          sigma = probe_.total(
+            mat, E[e], chunk_.sqrtkT[k], chunk_.density_mult[k]);
+          ++n_lookup;
+        } else {
+          sigma = mg->sigma_t(mat, chunk_.sqrtkT[k], static_cast<int>(e - n_ce));
+        }
         double w = T_[e] * attenuation_integral(sigma, l);
         if (region >= 0) {
-          psi_s[e] += w * field_.evaluate(region, Tag::s, E[e]);
-          psi_f[e] += w * field_.evaluate(region, Tag::f, E[e]);
+          if (e < n_ce) {
+            psi_s[e] += w * field_.evaluate(region, Tag::s, E[e]);
+            psi_f[e] += w * field_.evaluate(region, Tag::f, E[e]);
+          } else {
+            // Group-integrated, isotropic: Q_g / (4 pi)
+            int g = static_cast<int>(e - n_ce);
+            mg_s[g] += w * field_.emission(region, Tag::s, g) / (4.0 * PI);
+            mg_f[g] += w * field_.emission(region, Tag::f, g) / (4.0 * PI);
+          }
         }
         T_[e] *= std::exp(-sigma * l);
 

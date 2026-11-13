@@ -9,6 +9,7 @@
 
 #include "openmc/position.h"
 #include "openmc/rmc/field.h"
+#include "openmc/rmc/mg_control.h"
 #include "openmc/rmc/tracer.h"
 #include "openmc/rmc/xs_probe.h"
 #include "openmc/vector.h"
@@ -68,6 +69,16 @@ public:
     const TailOptions& opt, uint64_t* seed, vector<double>& psi_s,
     vector<double>& psi_f, PathStats* stats = nullptr);
 
+  //! The same, and, when mg is given, the multigroup angular fluxes
+  //! psi^MG_g (group-integrated, ascending groups) due to Q_s and Q_f on the
+  //! same path, with MG total cross sections. CE energies and MG groups each
+  //! have their own transmission and tail decisions; the path goes on while
+  //! any of them is alive. With E empty, this is an MG-only path.
+  void evaluate_all(Position r, Direction u_back, const vector<double>& E,
+    const MGTables* mg, const TailOptions& opt, uint64_t* seed,
+    vector<double>& psi_s, vector<double>& psi_f, vector<double>& mg_s,
+    vector<double>& mg_f, PathStats* stats = nullptr);
+
 private:
   const FrozenField& field_;
   CharacteristicTracer tracer_;
@@ -76,6 +87,7 @@ private:
   vector<double> T_; //!< transmission exp(-tau) per energy
   vector<char> alive_;
   vector<double> psi_s_, psi_f_;
+  vector<double> mg_s_, mg_f_;
 };
 
 //! Lambda(Sigma, l) = (1 - exp(-Sigma l)) / Sigma, and l for Sigma l -> 0,

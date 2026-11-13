@@ -145,6 +145,20 @@ int openmc_rmc_channel_production(int32_t material_id, int64_t n,
 int openmc_rmc_sample_sampler_route(int32_t material_id, double E_in,
   const double* u_in, double sqrtkT, double density_mult, int64_t n,
   uint64_t seed, double* production, double* E, double* u, int* kind);
+
+//! Groups, emission, and shapes of the loaded field, and the multigroup
+//! control (src/rmc/mg_control_capi.cpp)
+int openmc_rmc_field_groups(int* n_groups, double* edges);
+int openmc_rmc_field_emission(int64_t region, int tag, double* Q);
+int openmc_rmc_field_shape(
+  int64_t n, const int64_t* region, const double* E, int which, double* h);
+//! MG production q^MG of tag at the outgoing energies E, from the MG angular
+//! fluxes due to Q_s (q_s) and Q_f (q_f) on one MG-only backward path for
+//! incident direction u_in at r; mg_s, mg_f [G] are those fluxes.
+int openmc_rmc_mg_control(const double* r, const double* u_in, int64_t n_E,
+  const double* E, int tag, int tail, double cutoff, double length,
+  int64_t max_segments, uint64_t seed, double* q_s, double* q_f, double* mg_s,
+  double* mg_f);
 }
 
 #endif // OPENMC_RMC_CAPI_H

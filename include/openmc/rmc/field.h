@@ -7,6 +7,7 @@
 #ifndef OPENMC_RMC_FIELD_H
 #define OPENMC_RMC_FIELD_H
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -92,6 +93,67 @@ public:
   Position box_lower_left() const { return box_lower_left_; }
   Position box_upper_right() const { return box_upper_right_; }
 
+  //----------------------------------------------------------------------------
+  // Group structure, emission, and shapes (Stage 4 proposals and controls)
+
+  //! Path of the field file (its material tables feed the MG control)
+  const std::string& file() const { return field_file_; }
+
+  //! Group edges [eV], ascending; group g is [edges[g], edges[g+1])
+  const vector<double>& group_edges() const { return group_edges_; }
+
+  //! Ascending group containing E, or -1 outside the group structure
+  int group(double E) const;
+
+  //! Group-integrated emission Q_{t,R,g} per unit volume, in the field's
+  //! normalization (ascending g). evaluate() is Q * h_t(E) / (4 pi).
+  double emission(int64_t region, Tag t, int g) const
+  {
+    return emission_[(static_cast<int64_t>(t) * n_regions() + region) *
+                       n_groups_ + g];
+  }
+
+  //! Within-group shapes [1/eV], each normalized to 1 over every group:
+  //! the emission lifts h_s, h_f and the flux shape h_phi
+  enum class Shape { s = 0, f = 1, phi = 2 };
+  bool has_shape(Shape k) const
+  {
+    return k != Shape::phi || !lift_phi_.empty();
+  }
+  double shape(Shape k, int64_t region, double E) const;
+
+  //! Draw E from shape k within group g of the region's material; the shape
+  //! is piecewise constant on the fine grid, so E is uniform within the fine
+  //! bin drawn. Where the shape vanishes over the whole group, E is drawn
+  //! log-uniformly in the group instead. Returns E; density is set to the
+  //! density of the draw [1/eV].
+  double sample_shape(
+    Shape k, int64_t region, int g, uint64_t* seed, double& density) const;
+  //! Density of sample_shape() at E in group g
+  double shape_draw_density(Shape k, int64_t region, int g, double E) const;
+
+  //! Region volume [cm^3] from the volume file; NaN without one
+  double volume(int64_t region) const
+  {
+    return volume_.empty() ? std::nan("") : volume_[region];
+  }
+  bool has_volumes() const { return !volume_.empty(); }
+
+  //! Material of a region: index into model::materials, or MATERIAL_VOID
+  int32_t region_material(int64_t region) const
+  {
+    return region_material_[region];
+  }
+
+  //! Key of a region: cell ID, cell instance, and source-region mesh bin
+  void region_key(int64_t region, int32_t& cell_id, int32_t& instance,
+    int64_t& mesh_bin) const
+  {
+    cell_id = region_cell_[region];
+    instance = region_instance_[region];
+    mesh_bin = region_bin_[region];
+  }
+
 private:
   //----------------------------------------------------------------------------
   // Region keys
@@ -146,6 +208,16 @@ private:
   vector<double> fine_edges_; //!< [F+1] ascending energy [eV]
   vector<double> lift_;       //!< [2][M][F]: lift_[(t*M + row)*F + i] [1/eV]
   vector<int32_t> lift_row_;  //!< [R] row of the region's material, or -1
+  vector<double> lift_phi_;  //!< [M][F] flux shape h_phi, if the lift file
+                             //!< has one
+  vector<int> group_fine_;   //!< [G+1] fine-bin index of each group edge
+
+  std::string field_file_;
+  vector<double> volume_;           //!< [R] from the volume file, or empty
+  vector<int32_t> region_material_; //!< [R] index into model::materials
+  vector<int32_t> region_cell_;     //!< [R] cell ID
+  vector<int32_t> region_instance_; //!< [R]
+  vector<int64_t> region_bin_;      //!< [R]
 
   double mass_[2] {0.0, 0.0};
 };

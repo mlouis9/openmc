@@ -55,6 +55,11 @@ for _name, _args in [
                                       _f64p, _f64p]),
     ('openmc_rmc_sample_sampler_route', [c_int32, c_double, _f64p, c_double, c_double,
                                          c_int64, c_uint64, _f64p, _f64p, _f64p, _i32p]),
+    ('openmc_rmc_field_emission', [c_int64, c_int, _f64p]),
+    ('openmc_rmc_field_shape', [c_int64, _i64p, _f64p, c_int, _f64p]),
+    ('openmc_rmc_mg_control', [_f64p, _f64p, c_int64, _f64p, c_int, c_int, c_double,
+                               c_double, c_int64, c_uint64, _f64p, _f64p, _f64p,
+                               _f64p]),
     ('openmc_rmc_trace', [_f64p, _f64p, c_int, POINTER(c_int), _f64p, _i32p, _i64p,
                           POINTER(c_int)]),
 ]:
@@ -411,3 +416,54 @@ def sample_sampler_route(material_id, E_in, u_in, n, seed=1,
                                          out['E'], out['u'], out['kind'])
     out['u'] = out['u'].reshape(n, 3)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Field groups and shapes; multigroup control
+# ---------------------------------------------------------------------------
+
+SHAPES = {'s': 0, 'f': 1, 'phi': 2}
+
+
+def field_groups():
+    """Group edges [eV] of the loaded field, ascending."""
+    from ctypes import byref
+    G = c_int()
+    _dll.openmc_rmc_field_groups(byref(G), None)
+    edges = np.empty(G.value + 1)
+    _dll.openmc_rmc_field_groups(byref(G), edges.ctypes.data_as(POINTER(c_double)))
+    return edges
+
+
+def field_emission(region, tag):
+    """Group-integrated emission Q_{t,R,g} per unit volume (ascending g)."""
+    Q = np.empty(len(field_groups()) - 1)
+    _dll.openmc_rmc_field_emission(int(region), TAGS[tag], Q)
+    return Q
+
+
+def field_shape(region, E, which):
+    """Within-group shape h [1/eV] of 's', 'f', or 'phi' at (region, E)."""
+    region = np.ascontiguousarray(region, dtype=np.int64)
+    E = np.ascontiguousarray(np.broadcast_to(E, region.shape), dtype=float)
+    h = np.empty(region.shape)
+    _dll.openmc_rmc_field_shape(region.size, region.ravel(), E.ravel(),
+                                SHAPES[which], h.ravel())
+    return h
+
+
+def mg_control(r, u_in, E, tag, tail='roulette', cutoff=math.exp(-8.0),
+               length=0.0, max_segments=10_000_000, seed=1):
+    """MG production q^MG of tag at outgoing energies E, on one MG-only
+    backward path for incident direction u_in at r. Returns (q_s, q_f,
+    psi_s, psi_f): production from the MG flux of Q_s and of Q_f, and those
+    group-integrated angular fluxes."""
+    E = np.ascontiguousarray(np.atleast_1d(E), dtype=float)
+    G = len(field_groups()) - 1
+    q_s, q_f = np.empty(E.size), np.empty(E.size)
+    m_s, m_f = np.empty(G), np.empty(G)
+    _dll.openmc_rmc_mg_control(np.ascontiguousarray(r, dtype=float),
+                               np.ascontiguousarray(u_in, dtype=float), E.size, E,
+                               TAGS[tag], TAILS[tail], float(cutoff), float(length),
+                               int(max_segments), int(seed), q_s, q_f, m_s, m_f)
+    return q_s, q_f, m_s, m_f
