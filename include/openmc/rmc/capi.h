@@ -103,6 +103,19 @@ int openmc_rmc_sample_elastic(int i_nuclide, double kT, int64_t n,
 int openmc_rmc_tabular_law(const char* path, double E_in, int64_t n,
   const double* E_out, double* density, double* cdf, int64_t n_samples,
   uint64_t seed, double* samples);
+
+//! Backward characteristic and cross-section probe (src/rmc/backward_capi.cpp)
+//! Macroscopic total cross section [1/cm] of a material at n energies.
+int openmc_rmc_xs_total(int32_t material_id, int64_t n, const double* E,
+  double sqrtkT, double density_mult, double* sigma_t);
+//! CE angular flux at r for incident direction -u at n_E energies, due to
+//! the loaded field a_s Q_s + a_f Q_f, with tail 0 (vacuum), 1 (roulette with
+//! the given cutoff), or 2 (fixed length). Fails if the path reaches
+//! max_segments without ending.
+int openmc_rmc_backward_psi(const double* r, const double* u, int n_E,
+  const double* E, double a_s, double a_f, int tail, double cutoff,
+  double length, int64_t max_segments, uint64_t seed, double* psi,
+  int64_t* n_segments);
 }
 
 #endif // OPENMC_RMC_CAPI_H

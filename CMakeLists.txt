@@ -388,6 +388,8 @@ list(APPEND libopenmc_SOURCES
   src/random_ray/mg_data.cpp
   src/random_ray/moment_matrix.cpp
   src/random_ray/source_region.cpp
+  src/rmc/backward.cpp
+  src/rmc/backward_capi.cpp
   src/rmc/capi.cpp
   src/rmc/field.cpp
   src/rmc/kinematics.cpp
@@ -397,6 +399,7 @@ list(APPEND libopenmc_SOURCES
   src/rmc/random_ray_capi.cpp
   src/rmc/tracer.cpp
   src/rmc/tracer_capi.cpp
+  src/rmc/xs_probe.cpp
   src/ray.cpp
   src/reaction.cpp
   src/reaction_product.cpp

@@ -566,3 +566,52 @@ Not yet done in Stage 3
     and the first-collision gate G3.5. The registry and the full evaluators
     need cross sections at arbitrary energies (``XsProbe``) and
     :math:`\psi` along a backward path (Stage 2, Sections 5.3-5.4).
+
+.. _devguide_rmc_backward:
+
+Cross sections at any energy, and the backward integral with three tails
+------------------------------------------------------------------------
+
+**Commit:** "rmc: backward CE characteristic with vacuum, roulette, and
+fixed-length tails". This completes Stage 2 (Sections 5.3 and 5.4 of the
+implementation guide).
+
+Added
+    - ``rmc/xs_probe.{h,cpp}``: ``XsProbe::total(material, E, sqrtkT,
+      density_mult)`` through ``Material::calculate_xs`` on a scratch
+      particle; the particle's caches then hold every cross section at that
+      state. Lookups need the logarithmic energy grid, so the C API sets it
+      up (``initialize_data()``) if the session has not run a simulation.
+    - ``CharacteristicTracer`` is resumable: ``begin(r, u)`` and
+      ``extend(n, out)`` return a path in chunks, keeping a cell crossing's
+      remaining mesh pieces for the next chunk. ``trace()`` is ``begin`` plus
+      one ``extend``.
+    - ``rmc/backward.{h,cpp}``: ``BackwardFlux::evaluate`` sums eq.
+      ``rmc-backward-psi`` for several energies along one path, with the
+      tails of ``methods_rmc_tails``: ``vacuum`` (exact; refused when a path
+      reaches the segment limit, as in fully reflective problems),
+      ``roulette`` (unbiased, cutoff on :math:`e^{-\tau}` per energy), and
+      ``fixed_length`` (biased dead length). ``attenuation_integral`` avoids
+      cancellation for thin segments.
+    - C API ``openmc_rmc_xs_total`` and ``openmc_rmc_backward_psi``;
+      bindings ``openmc.lib.rmc.xs_total`` and ``backward_psi``.
+
+Verified by
+    - ``tests/rmc/test_backward_infinite.py`` (G2.2, G2.3): in the infinite
+      medium, the fixed-length tail equals
+      :math:`q(1-e^{-\Sigma_t L})/\Sigma_t` to :math:`10^{-12}` however
+      reflections cut the path; the roulette mean equals
+      :math:`q/\Sigma_t` for cutoffs :math:`e^{-4}, e^{-8}, e^{-16}` at
+      thermal, resonance-peak, and fast energies; its variance falls as the
+      cutoff falls; the vacuum tail is refused.
+    - ``tests/rmc/test_backward_slab.py``: in the slab box, the vacuum tail
+      equals an independent Python sum over the tracer's segments to
+      :math:`10^{-12}`; the roulette mean over 3,000 seeds equals it; the
+      fixed-length tail equals the partial sum and is never above the exact
+      value.
+
+Bug found
+    A second ``openmc.lib`` session in one process crashed in the first
+    lookup: OpenMC's ``log_spacing`` survives ``openmc_finalize()`` while the
+    nuclides are reloaded without their grids. The C API now checks every
+    nuclide's grid.

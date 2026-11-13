@@ -212,6 +212,33 @@ lengths and what each segment lies in: material, temperature, density
 multiplier, and field region. One trace serves every energy :math:`E'` at
 which the integral is wanted.
 
+.. _methods_rmc_tails:
+
+Ending the backward integral
+----------------------------
+
+The sum :eq:`rmc-backward-psi` runs to the end of the path. Three endings are
+available:
+
+- **Vacuum.** Follow the path to a vacuum boundary. The integral is exact for
+  the path, and adds no noise. A fully reflective problem has no vacuum
+  boundary, so this ending is refused there.
+- **Roulette.** When the transmission :math:`T = e^{-\tau}` falls below a
+  cutoff :math:`T_c`, continue with probability :math:`T/T_c` and set
+  :math:`T = T_c`, or stop. The expected remaining tail is unchanged, so the
+  estimate is unbiased for any :math:`T_c`; :math:`T_c` trades variance
+  against cost. Each energy has its own transmission and its own decisions.
+- **Fixed length.** Stop after a distance :math:`L` (a dead length). The
+  result is :math:`\psi` without the attenuated contribution beyond
+  :math:`L`, which is non-negative, so the approximation is biased low by at
+  most :math:`e^{-\tau(L)}\,\max Q^F/\Sigma_t`. It adds no noise and costs a
+  bounded amount, which can make it useful where :math:`\tau(L)` is large at
+  every energy that matters.
+
+Within a segment the attenuation integral
+:math:`\Lambda(\Sigma, \ell) = (1-e^{-\Sigma\ell})/\Sigma` is computed with
+``expm1``, and as a series for :math:`\Sigma\ell < 10^{-6}`.
+
 .. _methods_rmc_production:
 
 -----------------------------------

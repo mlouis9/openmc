@@ -3,7 +3,8 @@
 Experimental and opt-in: import as ``import openmc.lib.rmc``. Requires a
 continuous-energy model initialized with :func:`openmc.lib.init`.
 """
-from ctypes import c_char_p, c_double, c_int, c_int64, c_uint64, POINTER
+import math
+from ctypes import c_char_p, c_double, c_int, c_int32, c_int64, c_uint64, POINTER
 
 import numpy as np
 
@@ -39,6 +40,10 @@ for _name, _args in [
                                    _f64p]),
     ('openmc_rmc_tabular_law', [c_char_p, c_double, c_int64, _f64p, _f64p, _f64p,
                                 c_int64, c_uint64, _f64p]),
+    ('openmc_rmc_xs_total', [c_int32, c_int64, _f64p, c_double, c_double, _f64p]),
+    ('openmc_rmc_backward_psi', [_f64p, _f64p, c_int, _f64p, c_double, c_double, c_int,
+                                 c_double, c_double, c_int64, c_uint64, _f64p,
+                                 POINTER(c_int64)]),
     ('openmc_rmc_trace', [_f64p, _f64p, c_int, POINTER(c_int), _f64p, _i32p, _i64p,
                           POINTER(c_int)]),
 ]:
@@ -270,3 +275,38 @@ def tabular_law(path, E_in, E_out, n_samples=0, seed=1):
     _dll.openmc_rmc_tabular_law(str(path).encode(), float(E_in), E_out.size, E_out,
                                 f, F, int(n_samples), int(seed), x)
     return f, F, x[:int(n_samples)]
+
+
+# ---------------------------------------------------------------------------
+# Backward characteristic
+# ---------------------------------------------------------------------------
+
+TAILS = {'vacuum': 0, 'roulette': 1, 'fixed_length': 2}
+
+
+def xs_total(material_id, E, kT=294.0 * 8.617333262e-5, density_mult=1.0):
+    """Macroscopic total cross section [1/cm] of a material at energies E [eV]."""
+    E = np.ascontiguousarray(E, dtype=float)
+    out = np.empty_like(E)
+    _dll.openmc_rmc_xs_total(int(material_id), E.size, E, float(np.sqrt(kT)),
+                             float(density_mult), out)
+    return out
+
+
+def backward_psi(r, u, E, a=(1.0, 1.0), tail='roulette', cutoff=math.exp(-8.0),
+                 length=0.0, max_segments=1_000_000, seed=1):
+    """CE angular flux at r for incident direction -u, at energies E, due to
+    the loaded field a_s Q_s + a_f Q_f (eq. rmc-backward-psi).
+
+    tail is 'vacuum' (to the vacuum boundary; exact), 'roulette' (unbiased,
+    with the given cutoff on exp(-tau)), or 'fixed_length' (stop after
+    length cm; biased). Returns (psi, number of segments traced).
+    """
+    E = np.ascontiguousarray(np.atleast_1d(E), dtype=float)
+    out = np.empty_like(E)
+    n = c_int64()
+    _dll.openmc_rmc_backward_psi(np.ascontiguousarray(r, dtype=float),
+                                 np.ascontiguousarray(u, dtype=float), E.size, E,
+                                 float(a[0]), float(a[1]), TAILS[tail], float(cutoff),
+                                 float(length), int(max_segments), int(seed), out, n)
+    return out, n.value
