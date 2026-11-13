@@ -80,6 +80,9 @@ def materials():
 
 def box_region(half_x, half_y, half_z):
     """Region inside a box centred at the origin, reflective on every face."""
+    # The planes take automatic IDs; restart them so that they cannot reach
+    # the fixed surface IDs above, however many models this process built
+    openmc.reset_auto_ids()
     planes = [
         openmc.XPlane(-half_x, boundary_type='reflective'),
         openmc.XPlane(+half_x, boundary_type='reflective'),
