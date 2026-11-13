@@ -1,0 +1,75 @@
+Existing MGXS library file "/home/claude/vwork/pincell/rr/mgxs.h5" will be used
+Existing MGXS library file "/home/claude/vwork/pincell/rr/mgxs.h5" will be used
+ Maximum neutron transport energy: 20000000 eV for U235
+
+ ==========>     K EIGENVALUE SIMULATION (RANDOM RAY SOLVER)     <==========
+
+  Bat./Gen.      k            Average k
+  =========   ========   ====================
+        1/1    0.83117
+        2/1    0.73142    0.78129 +/- 0.04988
+        3/1    0.65220    0.73826 +/- 0.05178
+s  density route, uncontrolled                                    t 28.6s  energy: chi2 78/58 var 1.303e+02  space: chi2 195/172 var 1.255e+02  angle: chi2 58/60 var 1.313e+02
+f  density route, uncontrolled                                    t 3.3s  energy: chi2 11/14 var 2.474e+01  space: chi2 66/60 var 2.474e+01  angle: chi2 34/20 var 2.474e+01
+s  density route, MG control                                      t 30.0s  energy: chi2 79/58 var 2.375e+02  space: chi2 214/172 var 2.323e+02  angle: chi2 60/60 var 2.384e+02
+f  density route, MG control                                      t 6.8s  energy: chi2 20/14 var 5.210e+01  space: chi2 92/60 var 5.210e+01  angle: chi2 21/20 var 5.210e+01
+s  density route, MG control + flux difference                    t 31.9s  energy: chi2 84/58 var 2.303e+02  space: chi2 217/172 var 2.256e+02  angle: chi2 61/60 var 2.309e+02
+f  density route, MG control + flux difference                    t 7.0s  energy: chi2 20/14 var 5.210e+01  space: chi2 92/60 var 5.210e+01  angle: chi2 21/20 var 5.210e+01
+s  density route, tandem + flux difference                        t 37.6s  energy: chi2 86/58 var 3.081e+02  space: chi2 782/172 var 3.024e+02  angle: chi2 83/60 var 3.090e+02
+f  density route, tandem + flux difference                        t 5.8s  energy: chi2 17/14 var 2.794e+01  space: chi2 80/60 var 2.794e+01  angle: chi2 18/20 var 2.794e+01
+s  density free, uncontrolled, K=1                                t 10.1s  energy: chi2 62/58 var 2.275e+04  space: chi2 148/172 var 1.465e+04  angle: chi2 84/60 var 2.292e+04
+f  density free, uncontrolled, K=1                                t 3.3s  energy: chi2 16/14 var 7.202e+01  space: chi2 49/60 var 6.552e+01  angle: chi2 16/20 var 7.302e+01
+s  density free, K=4                                              t 18.8s  energy: chi2 66/58 var 2.150e+04  space: chi2 157/172 var 1.394e+04  angle: chi2 85/60 var 2.163e+04
+f  density free, K=4                                              t 6.0s  energy: chi2 17/14 var 6.972e+01  space: chi2 54/60 var 6.388e+01  angle: chi2 19/20 var 7.096e+01
+s  density free, K=4 common numbers                               t 18.8s  energy: chi2 72/58 var 2.147e+04  space: chi2 156/172 var 1.391e+04  angle: chi2 93/60 var 2.235e+04
+f  density free, K=4 common numbers                               t 5.5s  energy: chi2 13/14 var 7.075e+01  space: chi2 51/60 var 6.385e+01  angle: chi2 17/20 var 7.228e+01
+s  density free, flux difference, K=1                             t 11.3s  energy: chi2 57/58 var 3.594e+04  space: chi2 159/172 var 2.806e+04  angle: chi2 73/60 var 3.618e+04
+f  density free, flux difference, K=1                             t 3.3s  energy: chi2 28/14 var 7.370e+01  space: chi2 49/60 var 6.702e+01  angle: chi2 16/20 var 7.513e+01
+s  density free, flux difference, K=4 common numbers              t 20.1s  energy: chi2 74/58 var 3.010e+04  space: chi2 152/172 var 2.204e+04  angle: chi2 98/60 var 3.020e+04
+f  density free, flux difference, K=4 common numbers              t 6.3s  energy: chi2 9/14 var 7.362e+01  space: chi2 55/60 var 6.784e+01  angle: chi2 23/20 var 7.524e+01
+s  density free, flux difference, K=4 common numbers, net (biased) t 19.4s  energy: chi2 114/58 var 3.088e+04  space: chi2 153/172 var 2.268e+04  angle: chi2 84/60 var 3.094e+04
+f  density free, flux difference, K=4 common numbers, net (biased) t 6.3s  energy: chi2 30/14 var 7.324e+01  space: chi2 56/60 var 6.660e+01  angle: chi2 21/20 var 7.507e+01
+scan K, independent = 1: s var 3.809e+04 chi2 185/58  f var 8.066e+01 chi2 12/14
+scan K, independent = 2: s var 3.435e+04 chi2 99/58  f var 7.989e+01 chi2 11/14
+scan K, independent = 4: s var 3.749e+04 chi2 202/58  f var 8.013e+01 chi2 19/14
+scan K, independent = 8: s var 3.317e+04 chi2 163/58  f var 7.967e+01 chi2 28/14
+scan K, independent = 16: s var 3.134e+04 chi2 169/58  f var 7.930e+01 chi2 25/14
+scan K, common numbers = 1: s var 2.888e+04 chi2 195/58  f var 7.983e+01 chi2 28/14
+scan K, common numbers = 2: s var 3.552e+04 chi2 159/58  f var 7.945e+01 chi2 18/14
+scan K, common numbers = 4: s var 3.300e+04 chi2 143/58  f var 8.010e+01 chi2 24/14
+scan K, common numbers = 8: s var 3.467e+04 chi2 206/58  f var 8.104e+01 chi2 28/14
+scan K, common numbers = 16: s var 2.855e+04 chi2 189/58  f var 8.102e+01 chi2 10/14
+scan K, uncontrolled = 1: s var 2.587e+04 chi2 54/58  f var 8.148e+01 chi2 49/14
+scan K, uncontrolled = 2: s var 2.316e+04 chi2 54/58  f var 7.701e+01 chi2 23/14
+scan K, uncontrolled = 4: s var 2.189e+04 chi2 66/58  f var 7.570e+01 chi2 23/14
+scan K, uncontrolled = 8: s var 2.126e+04 chi2 62/58  f var 7.450e+01 chi2 26/14
+scan K, uncontrolled = 16: s var 2.096e+04 chi2 64/58  f var 7.450e+01 chi2 16/14
+scan J = 1: s var 5.738e+04 chi2 224/58  f var 8.218e+01 chi2 22/14
+scan J = 2: s var 3.868e+04 chi2 201/58  f var 8.035e+01 chi2 20/14
+scan J = 4: s var 3.809e+04 chi2 185/58  f var 8.066e+01 chi2 12/14
+scan J = 8: s var 3.096e+04 chi2 247/58  f var 8.120e+01 chi2 19/14
+scan J = 16: s var 3.493e+04 chi2 216/58  f var 8.114e+01 chi2 22/14
+scan M_II = 1: s var 1.002e+05 chi2 312/58  f var 1.309e+02 chi2 33/14
+scan M_II = 2: s var 7.400e+04 chi2 315/58  f var 1.007e+02 chi2 13/14
+scan M_II = 8: s var 3.809e+04 chi2 185/58  f var 8.066e+01 chi2 12/14
+scan M_II = 32: s var 3.370e+04 chi2 178/58  f var 7.568e+01 chi2 12/14
+scan M_II = 128: s var 3.188e+04 chi2 75/58  f var 7.438e+01 chi2 15/14
+scan cutoff, uncontrolled = 2: s var 2.596e+04 chi2 60/58  f var 8.151e+01 chi2 29/14
+scan cutoff, uncontrolled = 4: s var 2.587e+04 chi2 54/58  f var 8.148e+01 chi2 49/14
+scan cutoff, uncontrolled = 8: s var 2.595e+04 chi2 57/58  f var 8.108e+01 chi2 46/14
+scan cutoff, uncontrolled = 12: s var 2.588e+04 chi2 58/58  f var 8.082e+01 chi2 27/14
+scan cutoff, flux difference (M_II = 128) = 2: s var 2.946e+04 chi2 84/58  f var 7.468e+01 chi2 17/14
+scan cutoff, flux difference (M_II = 128) = 4: s var 3.188e+04 chi2 75/58  f var 7.438e+01 chi2 15/14
+scan cutoff, flux difference (M_II = 128) = 8: s var 2.869e+04 chi2 123/58  f var 7.462e+01 chi2 17/14
+scan cutoff, flux difference (M_II = 128) = 12: s var 2.765e+04 chi2 111/58  f var 7.449e+01 chi2 13/14
+wrote /tmp/claude-0/cstudy/full/controlled_residual_study.npz /tmp/claude-0/cstudy/full/controlled_residual_study.json
+wrote /tmp/claude-0/cstudy/full/figs/controlled_energy.png
+wrote /tmp/claude-0/cstudy/full/figs/controlled_relative_noise.png
+wrote /tmp/claude-0/cstudy/full/figs/controlled_space.png
+wrote /tmp/claude-0/cstudy/full/figs/controlled_angle.png
+wrote /tmp/claude-0/cstudy/full/figs/controlled_scans.png
+wrote /tmp/claude-0/cstudy/full/figs/controlled_decomposition.png
+wrote /tmp/claude-0/cstudy/full/figs/controlled_noise_scaling.png
+wrote /tmp/claude-0/cstudy/full/figs/controlled_low_term.png
+wrote /tmp/claude-0/cstudy/full/figs/controlled_channels.png
+wrote /tmp/claude-0/cstudy/full/figs/controlled_z.png

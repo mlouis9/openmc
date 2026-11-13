@@ -23,3 +23,4 @@ other related topics.
     docker
     rmc
     rmc_visual
+    rmc_controlled_residual

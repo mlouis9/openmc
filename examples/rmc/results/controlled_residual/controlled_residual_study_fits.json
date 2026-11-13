@@ -1,0 +1,506 @@
+{
+ "noise_fits": {
+  "density route, uncontrolled | s": {
+   "bins": 93,
+   "beta_r": 0.4582130429238554,
+   "beta_h": 0.46436512017429454
+  },
+  "density route, uncontrolled | f": {
+   "bins": 12,
+   "beta_r": 0.8307855092921731,
+   "beta_h": 0.5749177863597066
+  },
+  "density route, uncontrolled (high term only) | s": {
+   "bins": 93,
+   "beta_r": 0.02516683481080057,
+   "beta_h": 0.8845876460430191
+  },
+  "density route, uncontrolled (high term only) | f": {
+   "bins": 12,
+   "beta_r": 0.49724072688909227,
+   "beta_h": 0.7595263471914523
+  },
+  "density route, MG control | s": {
+   "bins": 93,
+   "beta_r": 0.4775331670129196,
+   "beta_h": 0.47741214836316664
+  },
+  "density route, MG control | f": {
+   "bins": 12,
+   "beta_r": 0.38173752812351663,
+   "beta_h": 0.8028388689524307
+  },
+  "density route, MG control (high term only) | s": {
+   "bins": 93,
+   "beta_r": 0.03487267120127183,
+   "beta_h": 0.875729786450143
+  },
+  "density route, MG control (high term only) | f": {
+   "bins": 12,
+   "beta_r": 0.5718463276907325,
+   "beta_h": 0.727576412531333
+  },
+  "density route, MG control + flux difference | s": {
+   "bins": 93,
+   "beta_r": 0.46850613968017624,
+   "beta_h": 0.48071422758669924
+  },
+  "density route, MG control + flux difference | f": {
+   "bins": 12,
+   "beta_r": 0.38173752812351663,
+   "beta_h": 0.8028388689524307
+  },
+  "density route, MG control + flux difference (high term only) | s": {
+   "bins": 93,
+   "beta_r": 0.03261941951085014,
+   "beta_h": 0.8760418171340942
+  },
+  "density route, MG control + flux difference (high term only) | f": {
+   "bins": 12,
+   "beta_r": 0.5718463276907325,
+   "beta_h": 0.727576412531333
+  },
+  "density route, tandem + flux difference | s": {
+   "bins": 93,
+   "beta_r": 0.24183830547954452,
+   "beta_h": 0.5926365832527685
+  },
+  "density route, tandem + flux difference | f": {
+   "bins": 12,
+   "beta_r": 0.20030964527797185,
+   "beta_h": 0.8569856106753636
+  },
+  "density route, tandem + flux difference (high term only) | s": {
+   "bins": 93,
+   "beta_r": 0.03276978626357328,
+   "beta_h": 0.8819406654376113
+  },
+  "density route, tandem + flux difference (high term only) | f": {
+   "bins": 12,
+   "beta_r": 0.4614634882226592,
+   "beta_h": 0.7731761254655694
+  },
+  "density free, uncontrolled, K=1 | s": {
+   "bins": 93,
+   "beta_r": 0.05103167459347562,
+   "beta_h": 0.8576159357660477
+  },
+  "density free, uncontrolled, K=1 | f": {
+   "bins": 12,
+   "beta_r": 0.005700272263318547,
+   "beta_h": 0.7893347910049487
+  },
+  "density free, uncontrolled, K=1 (high term only) | s": {
+   "bins": 93,
+   "beta_r": 0.05305035200978447,
+   "beta_h": 0.8587272397409663
+  },
+  "density free, uncontrolled, K=1 (high term only) | f": {
+   "bins": 12,
+   "beta_r": -0.17981939019549384,
+   "beta_h": 0.7207218279710584
+  },
+  "density free, K=4 | s": {
+   "bins": 93,
+   "beta_r": 0.04718066578160523,
+   "beta_h": 0.859175553418602
+  },
+  "density free, K=4 | f": {
+   "bins": 12,
+   "beta_r": -0.004582320160651802,
+   "beta_h": 0.7513915963757711
+  },
+  "density free, K=4 (high term only) | s": {
+   "bins": 93,
+   "beta_r": 0.07182428845616802,
+   "beta_h": 0.8499089700451156
+  },
+  "density free, K=4 (high term only) | f": {
+   "bins": 12,
+   "beta_r": -0.21757592464708791,
+   "beta_h": 0.6825663696256292
+  },
+  "density free, K=4 common numbers | s": {
+   "bins": 93,
+   "beta_r": 0.03557082120430034,
+   "beta_h": 0.8661179263964222
+  },
+  "density free, K=4 common numbers | f": {
+   "bins": 12,
+   "beta_r": -0.007657743823394397,
+   "beta_h": 0.7154909436597616
+  },
+  "density free, K=4 common numbers (high term only) | s": {
+   "bins": 93,
+   "beta_r": 0.021899619796521663,
+   "beta_h": 0.8885874009133712
+  },
+  "density free, K=4 common numbers (high term only) | f": {
+   "bins": 12,
+   "beta_r": -0.11027373211746135,
+   "beta_h": 0.5932117666360273
+  },
+  "density free, flux difference, K=1 | s": {
+   "bins": 93,
+   "beta_r": 0.2512628290096496,
+   "beta_h": 0.6059032003141103
+  },
+  "density free, flux difference, K=1 | f": {
+   "bins": 12,
+   "beta_r": 0.09143089641501224,
+   "beta_h": 0.8556785330376492
+  },
+  "density free, flux difference, K=1 (high term only) | s": {
+   "bins": 93,
+   "beta_r": 0.2978191606259153,
+   "beta_h": 0.5629124290712462
+  },
+  "density free, flux difference, K=1 (high term only) | f": {
+   "bins": 12,
+   "beta_r": -0.07777386817271852,
+   "beta_h": 0.8022253081089988
+  },
+  "density free, flux difference, K=4 common numbers | s": {
+   "bins": 93,
+   "beta_r": 0.22917192452250035,
+   "beta_h": 0.7243456963701509
+  },
+  "density free, flux difference, K=4 common numbers | f": {
+   "bins": 12,
+   "beta_r": 0.07523968261635684,
+   "beta_h": 0.6456777719703898
+  },
+  "density free, flux difference, K=4 common numbers (high term only) | s": {
+   "bins": 93,
+   "beta_r": 0.24614967635687748,
+   "beta_h": 0.7557053831428692
+  },
+  "density free, flux difference, K=4 common numbers (high term only) | f": {
+   "bins": 12,
+   "beta_r": -0.04049458685623823,
+   "beta_h": 0.5768610848607546
+  },
+  "density free, flux difference, K=4 common numbers, net (biased) | s": {
+   "bins": 93,
+   "beta_r": 0.25176503432964054,
+   "beta_h": 0.610431652301781
+  },
+  "density free, flux difference, K=4 common numbers, net (biased) | f": {
+   "bins": 12,
+   "beta_r": 0.10073465042618023,
+   "beta_h": 0.82023176139363
+  },
+  "density free, flux difference, K=4 common numbers, net (biased) (high term only) | s": {
+   "bins": 93,
+   "beta_r": 0.3193003067593908,
+   "beta_h": 0.49796181117245575
+  },
+  "density free, flux difference, K=4 common numbers, net (biased) (high term only) | f": {
+   "bins": 12,
+   "beta_r": -0.03231541218878442,
+   "beta_h": 0.7523895408212596
+  }
+ },
+ "bias": {
+  "density route, uncontrolled | s | energy": {
+   "chi2": 78.09289822147657,
+   "dof": 58,
+   "max_abs_z": 3.3179001465883395
+  },
+  "density route, uncontrolled | s | space": {
+   "chi2": 195.37662587363877,
+   "dof": 172,
+   "max_abs_z": 3.3946525369317273
+  },
+  "density route, uncontrolled | s | angle": {
+   "chi2": 57.852219640766464,
+   "dof": 60,
+   "max_abs_z": 2.1364210123899476
+  },
+  "density route, uncontrolled | f | energy": {
+   "chi2": 11.340853607638717,
+   "dof": 14,
+   "max_abs_z": 2.1373082018853586
+  },
+  "density route, uncontrolled | f | space": {
+   "chi2": 66.21586267747256,
+   "dof": 60,
+   "max_abs_z": 2.4610900496748207
+  },
+  "density route, uncontrolled | f | angle": {
+   "chi2": 34.404433201596554,
+   "dof": 20,
+   "max_abs_z": 2.4450636464895568
+  },
+  "density route, MG control | s | energy": {
+   "chi2": 79.20110598072962,
+   "dof": 58,
+   "max_abs_z": 2.4192156235129167
+  },
+  "density route, MG control | s | space": {
+   "chi2": 213.81227932779942,
+   "dof": 172,
+   "max_abs_z": 2.7088849786353806
+  },
+  "density route, MG control | s | angle": {
+   "chi2": 60.445332502931045,
+   "dof": 60,
+   "max_abs_z": 2.3455296976970677
+  },
+  "density route, MG control | f | energy": {
+   "chi2": 19.585885752530334,
+   "dof": 14,
+   "max_abs_z": 2.16441538096774
+  },
+  "density route, MG control | f | space": {
+   "chi2": 91.86151777741563,
+   "dof": 60,
+   "max_abs_z": 3.7218616525766426
+  },
+  "density route, MG control | f | angle": {
+   "chi2": 21.230952327082235,
+   "dof": 20,
+   "max_abs_z": 3.3458113563205254
+  },
+  "density route, MG control + flux difference | s | energy": {
+   "chi2": 83.91365225555155,
+   "dof": 58,
+   "max_abs_z": 2.540367140908796
+  },
+  "density route, MG control + flux difference | s | space": {
+   "chi2": 216.52548253640873,
+   "dof": 172,
+   "max_abs_z": 2.6083943613277554
+  },
+  "density route, MG control + flux difference | s | angle": {
+   "chi2": 61.272132519685556,
+   "dof": 60,
+   "max_abs_z": 2.346181822197341
+  },
+  "density route, MG control + flux difference | f | energy": {
+   "chi2": 19.585885752530334,
+   "dof": 14,
+   "max_abs_z": 2.16441538096774
+  },
+  "density route, MG control + flux difference | f | space": {
+   "chi2": 91.86151777741563,
+   "dof": 60,
+   "max_abs_z": 3.7218616525766426
+  },
+  "density route, MG control + flux difference | f | angle": {
+   "chi2": 21.230952327082235,
+   "dof": 20,
+   "max_abs_z": 3.3458113563205254
+  },
+  "density route, tandem + flux difference | s | energy": {
+   "chi2": 85.75689647210916,
+   "dof": 58,
+   "max_abs_z": 2.559219314205148
+  },
+  "density route, tandem + flux difference | s | space": {
+   "chi2": 781.8677674748084,
+   "dof": 172,
+   "max_abs_z": 5.513936005274434
+  },
+  "density route, tandem + flux difference | s | angle": {
+   "chi2": 83.27946806917929,
+   "dof": 60,
+   "max_abs_z": 2.439435024950381
+  },
+  "density route, tandem + flux difference | f | energy": {
+   "chi2": 16.97455897190713,
+   "dof": 14,
+   "max_abs_z": 2.254167269903116
+  },
+  "density route, tandem + flux difference | f | space": {
+   "chi2": 80.2940660758644,
+   "dof": 60,
+   "max_abs_z": 3.4072265818854968
+  },
+  "density route, tandem + flux difference | f | angle": {
+   "chi2": 18.00193287114726,
+   "dof": 20,
+   "max_abs_z": 1.6500326239586234
+  },
+  "density free, uncontrolled, K=1 | s | energy": {
+   "chi2": 62.185604837065114,
+   "dof": 58,
+   "max_abs_z": 2.713839077783687
+  },
+  "density free, uncontrolled, K=1 | s | space": {
+   "chi2": 147.9560536223007,
+   "dof": 172,
+   "max_abs_z": 2.975037389361513
+  },
+  "density free, uncontrolled, K=1 | s | angle": {
+   "chi2": 83.8893217734057,
+   "dof": 60,
+   "max_abs_z": 3.5908745391126025
+  },
+  "density free, uncontrolled, K=1 | f | energy": {
+   "chi2": 16.441300650585287,
+   "dof": 14,
+   "max_abs_z": 2.301516231602957
+  },
+  "density free, uncontrolled, K=1 | f | space": {
+   "chi2": 49.37807159729582,
+   "dof": 60,
+   "max_abs_z": 2.2629067681340285
+  },
+  "density free, uncontrolled, K=1 | f | angle": {
+   "chi2": 16.179619840850666,
+   "dof": 20,
+   "max_abs_z": 2.0658929371557564
+  },
+  "density free, K=4 | s | energy": {
+   "chi2": 66.35052947101099,
+   "dof": 58,
+   "max_abs_z": 2.8685015973134216
+  },
+  "density free, K=4 | s | space": {
+   "chi2": 156.62740727868953,
+   "dof": 172,
+   "max_abs_z": 2.798802044319281
+  },
+  "density free, K=4 | s | angle": {
+   "chi2": 84.69834901224147,
+   "dof": 60,
+   "max_abs_z": 3.0092250793604505
+  },
+  "density free, K=4 | f | energy": {
+   "chi2": 16.95704613598589,
+   "dof": 14,
+   "max_abs_z": 1.9457694036136886
+  },
+  "density free, K=4 | f | space": {
+   "chi2": 53.549923037898175,
+   "dof": 60,
+   "max_abs_z": 2.389214525502841
+  },
+  "density free, K=4 | f | angle": {
+   "chi2": 18.67148529776274,
+   "dof": 20,
+   "max_abs_z": 1.6918386767714404
+  },
+  "density free, K=4 common numbers | s | energy": {
+   "chi2": 71.56307458159226,
+   "dof": 58,
+   "max_abs_z": 3.059317090080372
+  },
+  "density free, K=4 common numbers | s | space": {
+   "chi2": 156.2673050398727,
+   "dof": 172,
+   "max_abs_z": 2.4209664517676726
+  },
+  "density free, K=4 common numbers | s | angle": {
+   "chi2": 93.32025041521142,
+   "dof": 60,
+   "max_abs_z": 3.3346788659020317
+  },
+  "density free, K=4 common numbers | f | energy": {
+   "chi2": 12.872403096605021,
+   "dof": 14,
+   "max_abs_z": 1.9062677443591483
+  },
+  "density free, K=4 common numbers | f | space": {
+   "chi2": 50.76572249893884,
+   "dof": 60,
+   "max_abs_z": 2.301383168058727
+  },
+  "density free, K=4 common numbers | f | angle": {
+   "chi2": 17.10927873292373,
+   "dof": 20,
+   "max_abs_z": 2.0341064859484366
+  },
+  "density free, flux difference, K=1 | s | energy": {
+   "chi2": 57.05009388073488,
+   "dof": 58,
+   "max_abs_z": 2.3390462874006843
+  },
+  "density free, flux difference, K=1 | s | space": {
+   "chi2": 158.85757273371732,
+   "dof": 172,
+   "max_abs_z": 2.6947150831426834
+  },
+  "density free, flux difference, K=1 | s | angle": {
+   "chi2": 73.21658554641176,
+   "dof": 60,
+   "max_abs_z": 2.7113823825244934
+  },
+  "density free, flux difference, K=1 | f | energy": {
+   "chi2": 28.291293169475537,
+   "dof": 14,
+   "max_abs_z": 3.4846921004638975
+  },
+  "density free, flux difference, K=1 | f | space": {
+   "chi2": 49.36635280753267,
+   "dof": 60,
+   "max_abs_z": 2.0939607981277524
+  },
+  "density free, flux difference, K=1 | f | angle": {
+   "chi2": 15.514325938228314,
+   "dof": 20,
+   "max_abs_z": 2.467071706893825
+  },
+  "density free, flux difference, K=4 common numbers | s | energy": {
+   "chi2": 73.95241951414573,
+   "dof": 58,
+   "max_abs_z": 3.0237598816477256
+  },
+  "density free, flux difference, K=4 common numbers | s | space": {
+   "chi2": 152.1759440919547,
+   "dof": 172,
+   "max_abs_z": 2.7891567751692583
+  },
+  "density free, flux difference, K=4 common numbers | s | angle": {
+   "chi2": 98.40310881569124,
+   "dof": 60,
+   "max_abs_z": 3.408295578202
+  },
+  "density free, flux difference, K=4 common numbers | f | energy": {
+   "chi2": 8.830778889860957,
+   "dof": 14,
+   "max_abs_z": 1.6700185284116422
+  },
+  "density free, flux difference, K=4 common numbers | f | space": {
+   "chi2": 55.29175357039699,
+   "dof": 60,
+   "max_abs_z": 2.45265625804624
+  },
+  "density free, flux difference, K=4 common numbers | f | angle": {
+   "chi2": 22.6082299300331,
+   "dof": 20,
+   "max_abs_z": 2.2482672228781175
+  },
+  "density free, flux difference, K=4 common numbers, net (biased) | s | energy": {
+   "chi2": 114.41043902216484,
+   "dof": 58,
+   "max_abs_z": 5.752775766806663
+  },
+  "density free, flux difference, K=4 common numbers, net (biased) | s | space": {
+   "chi2": 152.688544076276,
+   "dof": 172,
+   "max_abs_z": 2.748302432248708
+  },
+  "density free, flux difference, K=4 common numbers, net (biased) | s | angle": {
+   "chi2": 83.78790954136679,
+   "dof": 60,
+   "max_abs_z": 3.0841760561189426
+  },
+  "density free, flux difference, K=4 common numbers, net (biased) | f | energy": {
+   "chi2": 29.652880722791025,
+   "dof": 14,
+   "max_abs_z": 3.000251999652601
+  },
+  "density free, flux difference, K=4 common numbers, net (biased) | f | space": {
+   "chi2": 55.59542867753156,
+   "dof": 60,
+   "max_abs_z": 2.142849294429702
+  },
+  "density free, flux difference, K=4 common numbers, net (biased) | f | angle": {
+   "chi2": 21.167545395517436,
+   "dof": 20,
+   "max_abs_z": 2.325115384296888
+  }
+ }
+}

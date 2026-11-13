@@ -1142,3 +1142,81 @@ Not yet done in Stage 6
       already support the swept estimators within one generation.
     - Per-generation diagnostics to HDF5 (the harness writes JSON).
 
+
+-----------------------------------------------------
+Sampler-route control without densities
+-----------------------------------------------------
+
+.. _devguide_rmc_sampler_control:
+
+Density-free residual estimators and the controlled residual study
+------------------------------------------------------------------
+
+**Commit:** "rmc: density-free sampler-route estimators and the controlled
+residual study". Not a stage of the implementation guide: it settles, before
+sign cancellation (Stage 8), whether the residual can be controlled without
+a density for every CE reaction. The study is written up in
+:ref:`devguide_rmc_controlled_residual`; the theory is
+``methods_rmc_sampler_control``.
+
+Added
+    - ``rmc::SamplerOptions`` (``ResidualOptions::sampler``):
+      ``all_sampler`` (every channel, fission and stationary elastic
+      included, on the sampler route), ``energies`` (:math:`K` incident
+      energies per direction on one trace), ``common_numbers``,
+      ``control`` (``SamplerControl::region``, the flux-difference control
+      with ``region_samples`` :math:`M_{II}` forward samples of its region
+      term), and ``net`` (biased, for measurement).
+    - ``ChannelRegistry(bool all_sampler)``, ``route()`` (the registry's
+      route) and ``natural_route()`` (what OpenMC's physics allows);
+      fission on the sampler route through ``sample_fission`` and
+      ``sample_fission_neutron``.
+    - ``FrozenField::flux(region, g)`` and ``has_flux()``: the random ray
+      scalar flux, in the field's normalization, from ``regions/phi``.
+    - Residual records gain ``kind`` (0 density branch, 1 sampler particle
+      on a path, 2 region-term particle), ``channel``, and the term
+      :math:`Z` (eq. ``rmc-sampler-weight-z``); ``weight_records`` adds
+      :math:`Z` to sampler records. C API: six config fields, eight term
+      columns, and the kind and channel arrays; bindings
+      ``residual_sample(all_sampler=, n_energies=, common_numbers=,
+      sampler_control=, region_samples=, net=)``.
+    - ``examples/rmc/controlled_residual_study.py`` and
+      ``controlled_residual_figures.py``: the study (reference by Stage 5
+      flights from each field component, exact field integrals on geometric
+      volumes, three binnings, ten variants, five scans, the amplitude scan,
+      noise fits). Results in ``examples/rmc/results/controlled_residual/``,
+      figures ``rmc_figures/controlled_*.png``.
+    - ``residual_gates.field_integral(volumes=...)``.
+
+Verified by
+    - ``tests/rmc/test_residual.py``: with ``all_sampler`` and :math:`K = 3`
+      (independent and common numbers) the sampled particles' mean is the
+      whole production of each tag in the infinite medium; the two parts of
+      the flux-difference control have opposite means and leave the sampled
+      production unchanged.
+    - ``tests/rmc/test_residual_first_collision.py``: four new variants (K
+      = 4 with common numbers; flux difference on the density route; all
+      sampler; all sampler with flux difference and the MG control) against
+      OpenMC's first-collision tallies, both tags.
+    - The study's own reference (section 4 of the report).
+
+Findings (details in the report)
+    - The density-free residual is dominated by the low term: the sampled
+      particles never meet the destination's state, so its variance is
+      production-scale (scattering 175 times the density route's).
+    - The sampled high term is 7 times (scattering) and 19 times (fission)
+      quieter than the evaluators' at :math:`K = 1`.
+    - The flux-difference control helps fission (4.7 times on the high
+      term at :math:`M_{II} = 128`) and hurts scattering.
+    - No estimator has residual-scale noise; the density route reaches
+      :math:`\sigma \propto |r|^{0.5} h^{0.5}` through pointwise
+      cancellation. Sign cancellation is the next step.
+    - The field's sampled volumes :math:`V_A` are off by several per cent in
+      the regions cut by the pin surface; references must integrate the
+      field on geometric volumes.
+
+Not done
+    - A path-level control on the sampler route (needs densities or a trace
+      per control direction).
+    - Problems with S(:math:`\alpha,\beta`) data and a less accurate field
+      (larger residual).

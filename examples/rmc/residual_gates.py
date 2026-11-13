@@ -131,16 +131,21 @@ def _fine(files):
         return f['fine_edges'][()]
 
 
-def field_integral(rmc, files, regions_by_material, E_edges, tag, emission=None):
+def field_integral(rmc, files, regions_by_material, E_edges, tag, emission=None,
+                   volumes=None):
     """Integral of a field over (material, energy bin): sum over the regions
     of each material of V_R sum_g Q_{t,R,g} int_bin h_t. emission(region)
     gives Q_{t,R,g} (default: the loaded field's), so the same function
     integrates a sweep's region emission. Exact for bin edges on the fine
-    grid; otherwise the fine bin across an edge is split in proportion."""
+    grid; otherwise the fine bin across an edge is split in proportion.
+    volumes overrides the region volumes V_A of the volume file."""
     fine = _fine(files)
     groups = rmc.field_groups()
-    with h5py.File(files['volumes']) as f:
-        V = f['V_A'][()]
+    if volumes is None:
+        with h5py.File(files['volumes']) as f:
+            V = f['V_A'][()]
+    else:
+        V = np.asarray(volumes)
     mid = 0.5 * (fine[:-1] + fine[1:])
     width = np.diff(fine)
     # Overlap of every fine bin with every output bin
