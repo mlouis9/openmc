@@ -21,8 +21,19 @@ void BackwardFlux::evaluate(Position r, Direction u_back,
   const vector<double>& E, double a_s, double a_f, const TailOptions& opt,
   uint64_t* seed, vector<double>& psi, PathStats* stats)
 {
+  evaluate_tags(r, u_back, E, opt, seed, psi_s_, psi_f_, stats);
+  psi.resize(E.size());
+  for (size_t e = 0; e < E.size(); ++e)
+    psi[e] = a_s * psi_s_[e] + a_f * psi_f_[e];
+}
+
+void BackwardFlux::evaluate_tags(Position r, Direction u_back,
+  const vector<double>& E, const TailOptions& opt, uint64_t* seed,
+  vector<double>& psi_s, vector<double>& psi_f, PathStats* stats)
+{
   const size_t n = E.size();
-  psi.assign(n, 0.0);
+  psi_s.assign(n, 0.0);
+  psi_f.assign(n, 0.0);
   T_.assign(n, 1.0);
   alive_.assign(n, 1);
   size_t n_alive = n;
@@ -51,12 +62,11 @@ void BackwardFlux::evaluate(Position r, Direction u_back,
         double sigma = probe_.total(
           chunk_.material[k], E[e], chunk_.sqrtkT[k], chunk_.density_mult[k]);
         ++n_lookup;
-        double q = 0.0;
+        double w = T_[e] * attenuation_integral(sigma, l);
         if (region >= 0) {
-          q = a_s * field_.evaluate(region, Tag::s, E[e]) +
-              a_f * field_.evaluate(region, Tag::f, E[e]);
+          psi_s[e] += w * field_.evaluate(region, Tag::s, E[e]);
+          psi_f[e] += w * field_.evaluate(region, Tag::f, E[e]);
         }
-        psi[e] += T_[e] * q * attenuation_integral(sigma, l);
         T_[e] *= std::exp(-sigma * l);
 
         // Unbiased roulette: survive with probability T / cutoff and carry
@@ -70,9 +80,8 @@ void BackwardFlux::evaluate(Position r, Direction u_back,
           }
         }
       }
-      if (last) {
+      if (last)
         n_alive = 0;
-      }
     }
     if (chunk_.ends_in_vacuum)
       break;

@@ -9,6 +9,9 @@
 #include "openmc/particle.h"
 
 namespace openmc {
+
+class Reaction;
+
 namespace rmc {
 
 //==============================================================================
@@ -32,6 +35,14 @@ public:
   //! \param sqrtkT        sqrt(kT) [sqrt(eV)] of the cell instance
   //! \param density_mult  Density multiplier of the cell instance
   double total(int32_t material, double E, double sqrtkT, double density_mult);
+
+  //! Microscopic cross sections [b] of nuclide i_nuclide (an index into
+  //! data::nuclides that belongs to the material of the last total() call),
+  //! at that call's state.
+  double micro_elastic(int i_nuclide);
+  double micro_fission(int i_nuclide) const;
+  //! A partial fission reaction's cross section at that state
+  double micro_reaction(int i_nuclide, const Reaction& rx) const;
 
   //! The scratch particle after the last total() call: its macro_xs() and
   //! neutron_xs(i_nuclide) hold every cross section at that state.

@@ -61,6 +61,13 @@ public:
     double a_s, double a_f, const TailOptions& opt, uint64_t* seed,
     vector<double>& psi, PathStats* stats = nullptr);
 
+  //! The same, with the angular fluxes due to Q_s and to Q_f returned
+  //! separately (one path, shared transmissions and roulette decisions), so
+  //! that the field amplitudes can be applied later (deferred weights).
+  void evaluate_tags(Position r, Direction u_back, const vector<double>& E,
+    const TailOptions& opt, uint64_t* seed, vector<double>& psi_s,
+    vector<double>& psi_f, PathStats* stats = nullptr);
+
 private:
   const FrozenField& field_;
   CharacteristicTracer tracer_;
@@ -68,6 +75,7 @@ private:
   SegmentList chunk_;
   vector<double> T_; //!< transmission exp(-tau) per energy
   vector<char> alive_;
+  vector<double> psi_s_, psi_f_;
 };
 
 //! Lambda(Sigma, l) = (1 - exp(-Sigma l)) / Sigma, and l for Sigma l -> 0,

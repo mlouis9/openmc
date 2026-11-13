@@ -44,6 +44,13 @@ for _name, _args in [
     ('openmc_rmc_backward_psi', [_f64p, _f64p, c_int, _f64p, c_double, c_double, c_int,
                                  c_double, c_double, c_int64, c_uint64, _f64p,
                                  POINTER(c_int64)]),
+    ('openmc_rmc_xs', [c_int32, c_int64, _f64p, c_double, c_double, _f64p, _f64p, _f64p]),
+    ('openmc_rmc_residual_sample', [c_int, c_int64, c_uint64, c_int, c_int, c_double,
+                                    c_double, c_double, c_double, c_double, c_double,
+                                    _f64p, _f64p, _f64p, _f64p, _f64p, _f64p, _f64p]),
+    ('openmc_rmc_residual_weights', [c_int64, _i32p, _f64p, _f64p, _f64p, _f64p,
+                                     c_int64, c_double, c_double, c_double, c_double,
+                                     c_double, _f64p]),
     ('openmc_rmc_trace', [_f64p, _f64p, c_int, POINTER(c_int), _f64p, _i32p, _i64p,
                           POINTER(c_int)]),
 ]:
@@ -310,3 +317,51 @@ def backward_psi(r, u, E, a=(1.0, 1.0), tail='roulette', cutoff=math.exp(-8.0),
                                  float(a[0]), float(a[1]), TAILS[tail], float(cutoff),
                                  float(length), int(max_segments), int(seed), out, n)
     return out, n.value
+
+
+# ---------------------------------------------------------------------------
+# Residual samples (Stage 4)
+# ---------------------------------------------------------------------------
+
+def xs(material_id, E, kT=294.0 * 8.617333262e-5, density_mult=1.0):
+    """Total, elastic, and nu-fission macroscopic cross sections [1/cm]."""
+    E = np.ascontiguousarray(E, dtype=float)
+    t, el, nf = np.empty_like(E), np.empty_like(E), np.empty_like(E)
+    _dll.openmc_rmc_xs(int(material_id), E.size, E, float(np.sqrt(kT)),
+                       float(density_mult), t, el, nf)
+    return t, el, nf
+
+
+def residual_sample(tag, n, seed=1, n_directions=8, tail='roulette',
+                    cutoff=math.exp(-8.0), length=0.0, E_range=(1e-6, 2e7),
+                    Ein_range=(1e-5, 2e7)):
+    """n residual records of tag 's' or 'f' with the loaded field.
+
+    Returns a dict of arrays: r, u [n, 3]; E, density, C_s, C_f, U [n]; and
+    tag. Weights follow from residual_weights() for given amplitudes.
+    """
+    n = int(n)
+    out = {k: np.empty(n * 3) for k in ('r', 'u')}
+    out.update({k: np.empty(n) for k in ('E', 'density', 'C_s', 'C_f', 'U')})
+    _dll.openmc_rmc_residual_sample(TAGS[tag], n, int(seed), int(n_directions),
+                                    TAILS[tail], float(cutoff), float(length),
+                                    float(E_range[0]), float(E_range[1]),
+                                    float(Ein_range[0]), float(Ein_range[1]),
+                                    out['r'], out['u'], out['E'], out['density'],
+                                    out['C_s'], out['C_f'], out['U'])
+    out['r'] = out['r'].reshape(n, 3)
+    out['u'] = out['u'].reshape(n, 3)
+    out['tag'] = np.full(n, TAGS[tag], dtype=np.int32)
+    return out
+
+
+def residual_weights(rec, N, a=(1.0, 1.0), b=(1.0, 1.0), k=1.0):
+    """Weights of residual records for amplitudes a, b and eigenvalue k:
+    ((a_s C_s + a_f C_f) / k^[tag f] - b_tag U) / (N density)."""
+    n = len(rec['E'])
+    w = np.empty(n)
+    _dll.openmc_rmc_residual_weights(
+        n, np.ascontiguousarray(rec['tag'], dtype=np.int32), rec['C_s'], rec['C_f'],
+        rec['U'], rec['density'], int(N), float(a[0]), float(a[1]), float(b[0]),
+        float(b[1]), float(k), w)
+    return w

@@ -655,3 +655,108 @@ Limitations
       :math:`\gamma(3/2,\infty)` passes, as expected for that reason.
     - No evaporation law occurs in the test data, so ``Evaporation`` is
       untested. ``WattEnergy`` (law 11) still stops with an error.
+
+-----------------------------------------
+Stage 4: Residual samples
+-----------------------------------------
+
+Stage 4 turns the evaluators of Stage 3 and the backward integral of Stage 2
+into residual samples: records at sampled outgoing states whose weights
+estimate the residual :math:`R_t` of eq. ``rmc-residual``.
+
+.. _devguide_rmc_residual:
+
+Residual records with deferred weights (evaluator route)
+--------------------------------------------------------
+
+**Commit:** "rmc: residual records with deferred weights".
+
+Added
+    - ``rmc/residual.{h,cpp}``:
+
+      - ``Draw<T>``, a value with the density it was drawn from; weights are
+        formed only from that density.
+      - ``OutgoingProposal``: log-uniform energy, isotropic direction
+        (eq. ``rmc-residual-proposal`` without the :math:`1/V`).
+      - ``stratified_directions(J, seed, out)``: spherical Fibonacci points
+        under a uniformly random rotation (Arvo's method), so each is
+        marginally uniform.
+      - ``ResidualRecords`` (structure of arrays) and ``ResidualSampler``:
+        for each sample, a destination uniform in the field's ray source box,
+        the cell's material, temperature, and density multiplier, an outgoing
+        state, :math:`U = Q^{MG}_t` there, and :math:`C_{t,s}, C_{t,f}`
+        summed over :math:`J` incident directions. Tag :math:`s` uses
+        stationary-target elastic scattering of every nuclide (eq.
+        ``rmc-residual-elastic``), with the images :math:`E'_i` of all
+        nuclides evaluated on one backward path; tag :math:`f` uses one
+        log-uniform incident energy and the fission spectra with partial
+        fission reactions (eq. ``rmc-residual-fission``). Every sample has
+        its own random-number stream (``future_seed``), so results do not
+        depend on the order samples are drawn in.
+      - ``weight_records``: eq. ``rmc-residual-weight`` for given
+        :math:`a, b, k`.
+
+    - ``BackwardFlux::evaluate_tags``: :math:`\psi` of :math:`Q^{MG}_s` and of
+      :math:`Q^{MG}_f` separately on one path, which is what makes the
+      weights linear in :math:`a`.
+    - ``XsProbe::micro_elastic`` (computed on demand, as OpenMC does at a
+      collision), ``micro_fission``, and ``micro_reaction``.
+    - ``XsProbe::total`` clamps the energy into
+      ``[energy_min, energy_max)``. Transport never reaches ``energy_max``,
+      but a proposed energy can, and a lookup there read past the end of the
+      logarithmic grid (a segmentation fault, found by the quadrature grid of
+      the test, which ends at 20 MeV).
+    - C API ``openmc_rmc_xs`` (total, elastic, and
+      :math:`\nu\Sigma_f`), ``openmc_rmc_residual_sample``,
+      ``openmc_rmc_residual_weights``; bindings ``openmc.lib.rmc.xs``,
+      ``residual_sample``, ``residual_weights``.
+    - ``docs/source/methods/rmc.rst``: residual samples.
+
+Verified by ``tests/rmc/test_residual.py`` (infinite medium, roulette tail)
+    - **G4.3.** Every record's density equals eq.
+      ``rmc-residual-proposal`` to :math:`10^{-12}`; energies, direction
+      cosines, and positions pass :math:`\chi^2` tests of uniformity in the
+      proposal's variables.
+    - **Elastic production.** The mean of :math:`C_{s,s}/p` over 40,000
+      records equals :math:`4\pi V\int\Sigma_{el}Q^{MG}_s/\Sigma_t\,dE'`
+      (eq. ``rmc-residual-means``, by quadrature on 400,001 points) within
+      0.2 %, with a standard error of 0.7 %.
+    - **Fission production.** :math:`C_{f,s}/p` and :math:`C_{f,f}/p` against
+      :math:`4\pi V\int\nu\Sigma_f Q^{MG}_u/\Sigma_t\,dE'`, over all incident
+      energies and over a thermal and a resonance window, 200,000 records
+      each; agreement within 1.5 standard errors (0.7-1.5 %). In the
+      resonance window the field has no fission emission, and every
+      :math:`C_{f,f}` is exactly zero.
+    - **Low term.** The mean of :math:`U/p` for both tags equals
+      :math:`4\pi V\int Q^{MG}_t\,dE` within 0.5 % (standard errors 0.5 % and
+      0.9 %).
+    - **Weights.** ``weight_records`` equals the formula in NumPy to
+      :math:`10^{-13}` and is linear in :math:`(a, b)`.
+
+Limitations of this first cut
+    - **Evaluator route only.** Tag :math:`s` records hold elastic
+      production only. Inelastic scattering, :math:`(n,xn)`, and hydrogen
+      (and other targets that OpenMC treats with free gas or
+      S(:math:`\alpha,\beta`)) belong to the sampler route, not yet written.
+      The verification problems use ``free_gas_threshold = 1e-6``, so for
+      them the stationary-target kernel is what the forward transport does
+      for elastic scattering.
+    - **No multigroup control yet** (G3.6, G3.7): :math:`C` is the full CE
+      production, not its difference from the multigroup production on the
+      same paths, so the variance is that of a one-level estimator.
+    - **Uniform destinations** in the box, and a log-uniform energy over the
+      whole range. Importance in position and energy comes later.
+    - One incident energy per fission sample, and :math:`J` backward paths
+      per sample, each traced once for every energy it needs.
+
+Planned gates (not yet run)
+    - **G4.1**, the residual against first-collision tallies, needs the
+      sampler route for tag :math:`s`.
+    - **Residual against an oracle reference.** Compare the residual
+      estimated here with one built independently, as in the oracle ceiling
+      study (the field transported as a fixed source with analog CE
+      Monte Carlo, and its first-collision production tallied on a fine
+      energy grid by region): the two must have the same shape in energy and
+      space, and the noise of the records about that baseline should be
+      measured. This takes long runs and is deferred until the sampler route
+      and the multigroup control are in place, since both change the noise.

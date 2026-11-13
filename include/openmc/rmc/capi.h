@@ -116,6 +116,22 @@ int openmc_rmc_backward_psi(const double* r, const double* u, int n_E,
   const double* E, double a_s, double a_f, int tail, double cutoff,
   double length, int64_t max_segments, uint64_t seed, double* psi,
   int64_t* n_segments);
+
+//! Residual samples (src/rmc/residual_capi.cpp)
+//! Total, elastic, and nu-fission macroscopic cross sections of a material.
+int openmc_rmc_xs(int32_t material_id, int64_t n, const double* E,
+  double sqrtkT, double density_mult, double* total, double* elastic,
+  double* nu_fission);
+//! n residual records of tag (0 = s, 1 = f) with the loaded field
+//! (rmc::ResidualSampler). Arrays: r, u [n][3]; E, density, C_s, C_f, U [n].
+int openmc_rmc_residual_sample(int tag, int64_t n, uint64_t seed,
+  int n_directions, int tail, double cutoff, double length, double E_min,
+  double E_max, double Ein_min, double Ein_max, double* r, double* u,
+  double* E, double* density, double* C_s, double* C_f, double* U);
+//! Weights of records for amplitudes a, b, eigenvalue k, N samples per tag.
+int openmc_rmc_residual_weights(int64_t n, const int* tag, const double* C_s,
+  const double* C_f, const double* U, const double* density, int64_t N,
+  double a_s, double a_f, double b_s, double b_f, double k, double* w);
 }
 
 #endif // OPENMC_RMC_CAPI_H

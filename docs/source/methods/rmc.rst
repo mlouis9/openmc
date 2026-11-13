@@ -295,6 +295,112 @@ with :math:`p_{lab}` from eq. :eq:`rmc-p-lab`. The azimuth adds a factor
 :math:`A > 1`, no resonance scattering, and :math:`E'` at or above
 ``free_gas_threshold`` times :math:`kT`.
 
+.. _methods_rmc_residual:
+
+-----------------
+Residual Samples
+-----------------
+
+The residual of the field for tag :math:`t \in \{s, f\}` is the CE production
+of that tag from the field's flux, minus the field itself:
+
+.. math::
+    :label: rmc-residual
+
+    R_t(\mathbf{r}, E, \mathbf{\Omega}) = \frac{1}{k^{[t=f]}}\,
+    C_t(\mathbf{r}, E, \mathbf{\Omega}) - b_t\, Q^{MG}_t(\mathbf{r}, E, \mathbf{\Omega}),
+    \qquad
+    C_t = \int_{4\pi} d\mathbf{\Omega}' \int dE'\;
+    K_t(E', \mathbf{\Omega}' \to E, \mathbf{\Omega})\,
+    \psi(\mathbf{r}, E', \mathbf{\Omega}'),
+
+where :math:`K_s` is nonfission production, :math:`K_f` is fission
+production without the :math:`1/k`, and :math:`\psi` is
+eq. :eq:`rmc-backward-psi` for the field
+:math:`a_s Q^{MG}_s + a_f Q^{MG}_f`. Because :math:`\psi` is linear in the
+field, :math:`C_t = a_s C_{t,s} + a_f C_{t,f}`, with :math:`C_{t,s}` and
+:math:`C_{t,f}` the production from :math:`\psi` of :math:`Q^{MG}_s` and of
+:math:`Q^{MG}_f` alone. The amplitudes :math:`a, b` and the eigenvalue
+:math:`k` are scalars that change between generations.
+
+**Records with deferred weights.** A sample draws a destination
+:math:`\mathbf{r}` uniformly in the field's ray source box of volume
+:math:`V`, an energy log-uniformly on :math:`[E_{min}, E_{max}]`, and an
+isotropic direction, with joint density
+
+.. math::
+    :label: rmc-residual-proposal
+
+    p(\mathbf{r}, E, \mathbf{\Omega}) = \frac{1}{V}\,
+    \frac{1}{E \ln(E_{max}/E_{min})}\, \frac{1}{4\pi}.
+
+It stores :math:`(\mathbf{r}, E, \mathbf{\Omega}, p, t)` and estimates of
+:math:`C_{t,s}`, :math:`C_{t,f}`, and :math:`U = Q^{MG}_t(\mathbf{r}, E, \mathbf{\Omega})`, the field per unit solid angle.
+The weight of a record, for :math:`N` samples of its tag, is
+
+.. math::
+    :label: rmc-residual-weight
+
+    w = \frac{(a_s C_{t,s} + a_f C_{t,f})/k^{[t=f]} - b_t U}{N\,p},
+
+so that :math:`\sum w\, \delta(\cdot - \text{record})` is an unbiased
+estimate of :math:`R_t`. The records do not depend on :math:`a, b, k`, so one
+set of records serves every value of them; only eq.
+:eq:`rmc-residual-weight` is repeated.
+
+**Incident directions.** The direction integral in :math:`C_t` uses
+:math:`J` spherical Fibonacci points (cosines stratified on :math:`[-1, 1]`,
+azimuths at the golden angle), rotated as a set by a uniformly random
+rotation, with weights :math:`\omega_j = 4\pi/J`. Each rotated point is
+marginally uniform on the sphere, so the estimate is unbiased for any
+integrand, and the stratification removes most of the variance from smooth
+angular dependence.
+
+**Elastic production** (tag :math:`s`). For each nuclide :math:`i` with
+:math:`A_i > 1`, the incident energy that scatters into :math:`E` at
+:math:`\mu_0 = \mathbf{\Omega}'\cdot\mathbf{\Omega}` is
+:math:`E'_i = E/\gamma_{A_i}(\mu_0)`, so the energy integral collapses
+(eq. :eq:`rmc-elastic-image`):
+
+.. math::
+    :label: rmc-residual-elastic
+
+    \int dE'\, K^{el}\,\psi = \sum_i N_i\, \sigma_{el,i}(E'_i)\,
+    \frac{p_{lab,i}(\mu_0 \mid E'_i)}{2\pi\,\gamma_{A_i}(\mu_0)}\,
+    \psi(\mathbf{r}, E'_i, \mathbf{\Omega}').
+
+The :math:`E'_i` of all nuclides are evaluated on one backward path.
+
+**Fission production** (tag :math:`f`). Emission is isotropic, and one
+incident energy :math:`E'` is drawn log-uniformly on
+:math:`[E'_{min}, E'_{max}]` with density :math:`g(E')`:
+
+.. math::
+    :label: rmc-residual-fission
+
+    \int dE'\, K^{f}\,\psi \approx \frac{1}{4\pi\, g(E')}
+    \sum_i N_i\, \nu_i(E')\, \sigma_{f,i}(E')\, \chi_i(E \mid E')\,
+    \psi(\mathbf{r}, E', \mathbf{\Omega}'),
+
+with :math:`\chi_i` from eq. :eq:`rmc-fission-chi`, summed over partial
+fission reactions where a nuclide has them.
+
+**Means in an infinite medium.** With a flat field in a homogeneous,
+reflective medium, :math:`\psi = Q^{MG}(E')/\Sigma_t(E')`, and the means of
+the record terms reduce to energy integrals:
+
+.. math::
+    :label: rmc-residual-means
+
+    \mathrm{E}\Big[\frac{C_{s,u}}{p}\Big]
+    = 4\pi V \int \Sigma_{el}\, \frac{Q^{MG}_u}{\Sigma_t}\, dE', \quad
+    \mathrm{E}\Big[\frac{C_{f,u}}{p}\Big]
+    = 4\pi V \int \nu\Sigma_f\, \frac{Q^{MG}_u}{\Sigma_t}\, dE', \quad
+    \mathrm{E}\Big[\frac{U}{p}\Big] = 4\pi V \int Q^{MG}_t\, dE,
+
+for :math:`u \in \{s, f\}`, provided the proposal ranges cover the
+integrands. These are the checks of the implementation.
+
 .. _methods_rmc_kinematics:
 
 -------------------------------------

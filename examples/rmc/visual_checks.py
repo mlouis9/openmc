@@ -411,9 +411,93 @@ def fig_tracer(work, out):
     _save(fig, out, 'tracer.png')
 
 
+def fig_backward_tails(work, out):
+    """Backward angular flux in the slab box with the three tails."""
+    S = work.slab()
+    P = work.pincell()
+    E = np.geomspace(1e-3, 1e7, 400)
+    r = np.array([-0.2, 0.1, 0.0])   # in the fuel slab
+    u = np.array([0.12, 0.9, 0.42])  # glancing: many reflections before x = +2
+    u /= np.linalg.norm(u)
+    with pipeline.ce_session(S['model'], S['mesh'], S['work'] / 'ce'):
+        rmc.field_load(S['field'], P['lifts'])
+        exact, _ = rmc.backward_psi(r, u, E, tail='vacuum')
+        rou = np.array([rmc.backward_psi(r, u, E, tail='roulette', cutoff=math.exp(-1),
+                                         seed=s)[0] for s in range(1, 201)])
+        fixed = {L: rmc.backward_psi(r, u, E, tail='fixed_length', length=L)[0]
+                 for L in (0.3, 1.0, 3.0)}
+        rmc.field_free()
+    fig, (a0, a1) = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
+                                 gridspec_kw=dict(height_ratios=[2, 1]))
+    a0.loglog(E, E * exact, 'k', lw=2, label='vacuum (exact)')
+    a0.loglog(E, E * rou[0], color='C1', lw=0.6, alpha=0.7,
+              label=r'roulette, one seed ($T_c = e^{-1}$)', zorder=3)
+    for i, (L, f) in enumerate(fixed.items()):
+        a0.loglog(E, E * f, color=f'C{i + 2}', lw=1, label=f'fixed length {L} cm')
+    a0.set_ylim(bottom=1e-4 * np.max(E * exact))
+    a0.set(ylabel=r'$E\,\psi(E)$', title='Backward angular flux at one point and '
+           'direction of the slab box (field: $Q_s + Q_f$)')
+    a0.legend(fontsize=8)
+    ok = exact > 0
+    mean = rou.mean(axis=0)
+    sem = rou.std(axis=0, ddof=1) / math.sqrt(len(rou))
+    a1.semilogx(E[ok], mean[ok] / exact[ok] - 1, color='C1',
+                label='roulette, mean of 200 seeds')
+    a1.fill_between(E[ok], -3 * sem[ok] / exact[ok], 3 * sem[ok] / exact[ok],
+                    color='C1', alpha=0.2, label=r'$\pm 3$ standard errors')
+    for i, (L, f) in enumerate(fixed.items()):
+        a1.semilogx(E[ok], f[ok] / exact[ok] - 1, color=f'C{i + 2}', lw=1)
+    a1.semilogx(E[ok], rou[0][ok] / exact[ok] - 1, color='C1', lw=0.4, alpha=0.6)
+    a1.axhline(0, color='k', lw=0.8)
+    a1.set(xlabel='E [eV]', ylabel='relative to vacuum', ylim=(-1.05, 1.0))
+    a1.legend(fontsize=8, loc='lower left')
+    _save(fig, out, 'backward_tails.png')
+
+
+def fig_residual(work, out, n=20_000):
+    """Residual records in the graphite pincell, binned in energy."""
+    P = work.pincell()
+    k = openmc.StatePoint(P['statepoint']).keff.n
+    edges = np.geomspace(1e-5, 2e7, 61)
+    du = np.diff(np.log(edges))
+    with pipeline.ce_session(work.model, work.mesh, P['work'] / 'ce'):
+        rmc.field_load(P['field'], P['lifts'])
+        recs = {t: rmc.residual_sample(t, n, seed=5, n_directions=8,
+                                       E_range=(edges[0], edges[-1]))
+                for t in 'sf'}
+        rmc.field_free()
+    fig, axes = plt.subplots(2, 2, figsize=(12, 7), sharex=True,
+                             gridspec_kw=dict(height_ratios=[2, 1]))
+    for j, (t, rec) in enumerate(recs.items()):
+        kt = k if t == 'f' else 1.0
+        # High and low terms separately: b = 0, then a = 0
+        terms = {'CE production from the field': rmc.residual_weights(rec, n, (1, 1), (0, 0), k),
+                 r'field $Q^{MG}_' + t + '$': -rmc.residual_weights(rec, n, (0, 0), (1, 1), k)}
+        for i, (label, w) in enumerate(terms.items()):
+            h, _ = np.histogram(rec['E'], edges, weights=w)
+            axes[0, j].stairs(h / du, edges, color=f'C{i}', label=label)
+        w = rmc.residual_weights(rec, n, (1, 1), (1, 1), k)
+        h, _ = np.histogram(rec['E'], edges, weights=w)
+        h2, _ = np.histogram(rec['E'], edges, weights=w**2)
+        err = np.sqrt(np.maximum(h2 - h**2 / n, 0.0))  # per bin, n samples
+        axes[1, j].stairs(h / du, edges, color='C3')
+        axes[1, j].errorbar(np.sqrt(edges[1:] * edges[:-1]), h / du, err / du, fmt='none',
+                            color='C3', lw=0.8)
+        axes[1, j].axhline(0, color='k', lw=0.8)
+        axes[0, j].set(xscale='log', ylabel='per unit lethargy',
+                       title=('scattering (tag s, elastic only)' if t == 's' else
+                              f'fission (tag f, k = {k:.4f})'))
+        axes[0, j].legend(fontsize=8)
+        axes[1, j].set(xlabel='E [eV]', ylabel='residual')
+    fig.suptitle(f'Residual records in the graphite pincell, {n} per tag, '
+                 'a = b = 1, roulette tail')
+    _save(fig, out, 'residual.png')
+
+
 FIGURES = {'lifts': fig_lifts, 'field_maps': fig_field_maps,
            'split_meshes': fig_split_meshes, 'ce_vs_mg': fig_ce_vs_mg,
-           'segments': fig_segments, 'tracer': fig_tracer}
+           'segments': fig_segments, 'tracer': fig_tracer,
+           'backward_tails': fig_backward_tails, 'residual': fig_residual}
 
 
 def main():

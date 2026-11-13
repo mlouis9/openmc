@@ -180,3 +180,73 @@ empty and its title says so.
 .. literalinclude:: ../../../examples/rmc/visual_checks.py
     :language: python
     :pyobject: fig_tracer
+
+Ending the backward integral
+----------------------------
+
+.. figure:: rmc_figures/backward_tails.png
+    :width: 100%
+
+    Top: the backward angular flux :math:`E\,\psi(E)` of the field
+    :math:`Q^{MG}_s + Q^{MG}_f` at one point of the fuel slab of the slab
+    box, along a glancing direction that reflects many times off the y and z
+    walls before leaving through the vacuum face at :math:`x = 2`, with the
+    three tails of :ref:`methods_rmc_tails`. Bottom: each relative to the
+    vacuum tail, and the mean of 200 roulette seeds with three standard
+    errors.
+
+What to look for:
+
+- **Vacuum is the reference.** It is exact for the path, with no noise.
+- **Roulette is unbiased but noisy.** One seed (thin orange) scatters about
+  the exact curve by tens of percent with a deliberately high cutoff
+  (:math:`T_c = e^{-1}`); the mean of 200 seeds stays inside its band. The
+  few spikes near 0.01 eV are where :math:`\psi` itself is almost zero.
+- **Fixed length is biased low and noise-free.** The bias is largest where
+  the medium is thin, at fast energies (above about 100 keV the 3 cm path
+  misses most of the flux), and smallest at resonance peaks, where
+  :math:`\Sigma_t` is large and the path's first few millimeters carry
+  almost all of :math:`\psi`: the dips of the ratio toward zero at the U-238
+  resonances.
+- The steps in :math:`E\,\psi` are group edges of the field: within a group,
+  the field's energy dependence is its lift.
+
+.. literalinclude:: ../../../examples/rmc/visual_checks.py
+    :language: python
+    :pyobject: fig_backward_tails
+
+Residual records
+----------------
+
+.. figure:: rmc_figures/residual.png
+    :width: 100%
+
+    Records of the graphite pincell, 20,000 per tag, binned in energy per
+    unit lethargy. Top: the high term (CE production from the field, the sum
+    of :math:`(C_{t,s} + C_{t,f})/k^{[t=f]}/(Np)`) and the low term (the
+    field, :math:`U/(Np)`), with :math:`a = b = 1` and :math:`k` of the
+    multigroup solve. Bottom: their difference, the residual, with one
+    standard error per bin.
+
+What to look for:
+
+- **The two terms are close.** The field was computed with multigroup cross
+  sections collapsed from this problem, so its CE production differs from it
+  only by the energy and angle structure the groups do not capture. The
+  residual is a few percent of each term.
+- **Fission:** the residual is within noise of zero, as expected for a
+  converged field whose fission spectrum is close to the CE one.
+- **Scattering: a deficit from 100 keV to 2 MeV.** This is the limitation
+  of the first cut: tag :math:`s` records hold elastic production only, while
+  the field's :math:`Q^{MG}_s` also contains U-238 inelastic scattering
+  (threshold 45 keV) and :math:`(n,2n)`. It is a missing channel, not a
+  physics result, and it disappears with the sampler route.
+- Between about 50 eV and 1 keV a few bins are positive by more than their
+  errors: in the resolved resonance range the CE production inside a group
+  differs from the lifts. Whether this is that physics or noise will be
+  settled by the planned comparison with an oracle residual (see the
+  Stage 4 entry of :ref:`devguide_rmc`).
+
+.. literalinclude:: ../../../examples/rmc/visual_checks.py
+    :language: python
+    :pyobject: fig_residual

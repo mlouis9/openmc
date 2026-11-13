@@ -397,6 +397,8 @@ list(APPEND libopenmc_SOURCES
   src/rmc/production.cpp
   src/rmc/production_capi.cpp
   src/rmc/random_ray_capi.cpp
+  src/rmc/residual.cpp
+  src/rmc/residual_capi.cpp
   src/rmc/tracer.cpp
   src/rmc/tracer_capi.cpp
   src/rmc/xs_probe.cpp
