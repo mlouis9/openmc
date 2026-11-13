@@ -9,6 +9,7 @@ openmc.lib, so the CE model must be initialized first (see ce_session()).
 """
 import contextlib
 import copy
+from contextlib import contextmanager
 import os
 from pathlib import Path
 
@@ -131,3 +132,28 @@ def run_random_ray_in_ce(ce_model, mg_model, field_file, workdir,
         os.chdir(cwd)
     path = workdir / export_file
     return (path, extra) if after is not None else path
+
+
+@contextmanager
+def sweep_session(ce_model, mesh, mgxs_path, field_file, workdir, rays=500,
+                  batches=1000, threads=None, random_ray=None):
+    """A CE session that can drive random ray one batch at a time
+    (openmc.lib.rmc.sweep_*), from the field file's multigroup tables, for
+    field sweeps. batches only bounds how many batches can be run. Finalizes
+    on exit."""
+    import mg as mgmod
+    m = mgmod.mg_model(ce_model, mesh, mgxs_path, rays=rays, batches=batches,
+                       inactive=0, random_ray=random_ray)
+    ce = random_ray_ce_model(ce_model, m, field_file)
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    ce.export_to_model_xml(workdir / 'model.xml')
+    cwd = os.getcwd()
+    os.chdir(workdir)
+    try:
+        openmc.lib.init(['-s', str(threads)] if threads else None, output=False)
+        yield
+    finally:
+        openmc.lib.finalize()
+        os.chdir(cwd)
+

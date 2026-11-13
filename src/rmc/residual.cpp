@@ -1,5 +1,6 @@
 #include "openmc/rmc/residual.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "openmc/cell.h"
@@ -7,41 +8,221 @@
 #include "openmc/error.h"
 #include "openmc/geometry.h"
 #include "openmc/material.h"
+#include "openmc/mesh.h"
 #include "openmc/nuclide.h"
 #include "openmc/random_lcg.h"
+#include "openmc/reaction.h"
 #include "openmc/rmc/production.h"
 
 namespace openmc {
 namespace rmc {
 
-//==============================================================================
-// Proposals and directions
-//==============================================================================
+namespace {
 
-OutgoingProposal::OutgoingProposal(double E_min, double E_max)
-  : E_min_(E_min), E_max_(E_max), log_ratio_(std::log(E_max / E_min))
+//! Locate a point: its region and the cell instance's material state
+bool locate(const FrozenField& field, Position r, int64_t& region,
+  int32_t& material, double& sqrtkT, double& density_mult)
 {
-  if (!(E_min > 0.0 && E_max > E_min))
-    fatal_error("RMC residual: invalid outgoing energy range.");
+  GeometryState gs;
+  gs.init_from_r_u(r, {0.0, 0.0, 1.0});
+  if (!exhaustive_find_cell(gs))
+    return false;
+  const Cell& cell = *model::cells[gs.lowest_coord().cell()];
+  int32_t inst = gs.cell_instance();
+  material = cell.material(inst);
+  sqrtkT = cell.sqrtkT(inst);
+  density_mult = cell.density_mult(inst);
+  region = field.locate(gs);
+  return true;
 }
 
-Draw<OutgoingState> OutgoingProposal::sample(uint64_t* seed) const
+int64_t draw_index(const vector<double>& cdf, uint64_t* seed)
+{
+  double x = prn(seed) * cdf.back();
+  auto it = std::upper_bound(cdf.begin(), cdf.end(), x);
+  return std::min<int64_t>(it - cdf.begin(), cdf.size() - 1);
+}
+
+} // namespace
+
+//==============================================================================
+// Voxel proposal
+//==============================================================================
+
+VoxelProposal::VoxelProposal(const FrozenField& field, const VoxelOptions& opt)
+  : field_(field), opt_(opt)
+{
+  Position w = field.box_upper_right() - field.box_lower_left();
+  V_box_ = w.x * w.y * w.z;
+  if (opt.mode == VoxelMode::box)
+    return;
+  if (!field.has_volumes())
+    fatal_error("RMC residual: region-based destinations need region volumes "
+                "(load the field with a volume file).");
+  const int64_t R = field.n_regions();
+  pi_.assign(R, 0.0);
+  for (int64_t r = 0; r < R; ++r) {
+    double V = field.volume(r);
+    switch (opt.mode) {
+    case VoxelMode::volume:
+      pi_[r] = V;
+      break;
+    case VoxelMode::fissionable: {
+      int32_t m = field.region_material(r);
+      pi_[r] = (m != MATERIAL_VOID && model::materials[m]->fissionable()) ? V
+                                                                          : 0.0;
+      break;
+    }
+    case VoxelMode::tabulated:
+      if (static_cast<int64_t>(opt.weights.size()) != R)
+        fatal_error("RMC residual: tabulated voxel weights need one value per "
+                    "region.");
+      pi_[r] = opt.weights_per_volume ? V * opt.weights[r] : opt.weights[r];
+      break;
+    default:
+      break;
+    }
+    if (!(pi_[r] >= 0.0) || (pi_[r] > 0.0 && !(V > 0.0)))
+      fatal_error("RMC residual: invalid voxel weight or volume.");
+  }
+  double sum = 0.0;
+  for (double p : pi_)
+    sum += p;
+  if (!(sum > 0.0))
+    fatal_error("RMC residual: every voxel has zero probability.");
+  cdf_.resize(R);
+  double c = 0.0;
+  for (int64_t r = 0; r < R; ++r) {
+    pi_[r] /= sum;
+    c += pi_[r];
+    cdf_[r] = c;
+  }
+}
+
+double VoxelProposal::density(int64_t region) const
+{
+  if (opt_.mode == VoxelMode::box)
+    return 1.0 / V_box_;
+  if (region < 0 || pi_[region] == 0.0)
+    return 0.0;
+  return pi_[region] / field_.volume(region);
+}
+
+Draw<Position> VoxelProposal::sample(uint64_t* seed, int64_t& region) const
+{
+  const Position lo = field_.box_lower_left();
+  const Position w = field_.box_upper_right() - lo;
+  int32_t m;
+  double kT, dm;
+  if (opt_.mode == VoxelMode::box) {
+    Position r {
+      lo.x + w.x * prn(seed), lo.y + w.y * prn(seed), lo.z + w.z * prn(seed)};
+    if (!locate(field_, r, region, m, kT, dm))
+      fatal_error("RMC residual: destination outside the geometry.");
+    return {r, 1.0 / V_box_};
+  }
+
+  // A region, then a point uniform in it by rejection from its mesh element
+  // (or the box, for a region without a mesh)
+  int64_t target = draw_index(cdf_, seed);
+  int32_t mesh = field_.region_mesh(target);
+  int32_t cell_id, instance;
+  int64_t bin;
+  field_.region_key(target, cell_id, instance, bin);
+  for (int tries = 0; tries < 10'000'000; ++tries) {
+    Position r =
+      (mesh >= 0) ? model::meshes[mesh]->sample_element(bin, seed)
+                  : Position {lo.x + w.x * prn(seed), lo.y + w.y * prn(seed),
+                      lo.z + w.z * prn(seed)};
+    if (locate(field_, r, region, m, kT, dm) && region == target)
+      return {r, pi_[target] / field_.volume(target)};
+  }
+  fatal_error("RMC residual: could not place a point in a region.");
+}
+
+//==============================================================================
+// Outgoing proposal
+//==============================================================================
+
+OutgoingProposal::OutgoingProposal(
+  const FrozenField& field, const OutgoingOptions& opt)
+  : field_(field), opt_(opt), log_ratio_(std::log(opt.E_max / opt.E_min))
+{
+  if (!(opt.E_min > 0.0 && opt.E_max > opt.E_min))
+    fatal_error("RMC residual: invalid outgoing energy range.");
+  if (!(opt.beta > 0.0 && opt.beta <= 1.0))
+    fatal_error("RMC residual: the log-uniform weight beta must be in (0, 1] "
+                "so that the proposal covers the residual's support.");
+}
+
+namespace {
+double group_sum(const FrozenField& f, Tag t, int64_t region)
+{
+  double s = 0.0;
+  if (region < 0)
+    return 0.0;
+  for (int g = 0; g < f.n_groups(); ++g)
+    s += f.emission(region, t, g);
+  return s;
+}
+} // namespace
+
+Draw<OutgoingState> OutgoingProposal::sample(
+  Tag t, int64_t region, uint64_t* seed) const
 {
   OutgoingState s;
-  s.E = E_min_ * std::exp(log_ratio_ * prn(seed));
+  double mass = (opt_.beta < 1.0) ? group_sum(field_, t, region) : 0.0;
+  if (mass > 0.0 && prn(seed) >= opt_.beta) {
+    // Group by emission, then the lift within the group
+    double x = prn(seed) * mass, c = 0.0;
+    int g = 0;
+    for (; g < field_.n_groups() - 1; ++g) {
+      c += field_.emission(region, t, g);
+      if (c > x)
+        break;
+    }
+    double dens;
+    s.E = field_.sample_shape(
+      static_cast<FrozenField::Shape>(t), region, g, seed, dens);
+  } else {
+    s.E = opt_.E_min * std::exp(log_ratio_ * prn(seed));
+  }
   double mu = 2.0 * prn(seed) - 1.0;
   double phi = 2.0 * PI * prn(seed);
   double st = std::sqrt(std::max(0.0, 1.0 - mu * mu));
   s.u = {st * std::cos(phi), st * std::sin(phi), mu};
-  return {s, density(s)};
+  return {s, density(t, region, s)};
 }
 
-double OutgoingProposal::density(const OutgoingState& s) const
+double OutgoingProposal::energy_density(Tag t, int64_t region, double E) const
 {
-  if (s.E < E_min_ || s.E > E_max_)
-    return 0.0;
-  return 1.0 / (s.E * log_ratio_) / (4.0 * PI);
+  double f = 0.0;
+  double mass = (opt_.beta < 1.0) ? group_sum(field_, t, region) : 0.0;
+  double beta = (mass > 0.0) ? opt_.beta : 1.0;
+  if (E >= opt_.E_min && E <= opt_.E_max)
+    f += beta / (E * log_ratio_);
+  if (mass > 0.0) {
+    int g = field_.group(E);
+    if (g >= 0) {
+      double Qg = field_.emission(region, t, g);
+      if (Qg > 0.0)
+        f += (1.0 - beta) * Qg / mass *
+             field_.shape_draw_density(
+               static_cast<FrozenField::Shape>(t), region, g, E);
+    }
+  }
+  return f;
 }
+
+double OutgoingProposal::density(
+  Tag t, int64_t region, const OutgoingState& s) const
+{
+  return energy_density(t, region, s.E) / (4.0 * PI);
+}
+
+//==============================================================================
+// Directions and records
+//==============================================================================
 
 void stratified_directions(int J, uint64_t* seed, vector<Direction>& out)
 {
@@ -70,169 +251,451 @@ void stratified_directions(int J, uint64_t* seed, vector<Direction>& out)
 
 void ResidualRecords::clear()
 {
-  r.clear();
-  u.clear();
-  E.clear();
-  density.clear();
+  for (auto* v : {&r, &u, &E, &density, &C_s, &C_f, &M_s, &M_f, &R_s, &R_f, &U})
+    v->clear();
   tag.clear();
-  C_s.clear();
-  C_f.clear();
-  U.clear();
+  sampler.clear();
+}
+
+void weight_records(const ResidualRecords& rec, int64_t N,
+  const WeightScalars& x, vector<double>& w)
+{
+  w.resize(rec.size());
+  for (int64_t i = 0; i < rec.size(); ++i) {
+    const int t = rec.tag[i];
+    const double inv_k = (t == static_cast<int>(Tag::f)) ? 1.0 / x.k : 1.0;
+    double num;
+    if (rec.sampler[i]) {
+      num = (x.a[0] * rec.C_s[i] + x.a[1] * rec.C_f[i]) * inv_k;
+    } else {
+      double high =
+        x.a[0] * (rec.C_s[i] - x.c * rec.M_s[i] + x.c * rec.R_s[i]) +
+        x.a[1] * (rec.C_f[i] - x.c * rec.M_f[i] + x.c * rec.R_f[i]);
+      double swept = (x.a[0] * rec.R_s[i] + x.a[1] * rec.R_f[i]) * inv_k;
+      num = high * inv_k -
+            x.b[t] * ((1.0 - x.lambda) * rec.U[i] + x.lambda * swept);
+    }
+    w[i] = num / (N * rec.density[i]);
+  }
 }
 
 //==============================================================================
 // ResidualSampler
 //==============================================================================
 
-ResidualSampler::ResidualSampler(
-  const FrozenField& field, const ResidualOptions& opt)
-  : field_(field), opt_(opt), proposal_(opt.E_min, opt.E_max),
-    backward_(field)
+ResidualSampler::ResidualSampler(const FrozenField& field,
+  const ResidualOptions& opt, const MGTables* tables, const SweepRecords* sweep)
+  : field_(field), opt_(opt), tables_(tables), sweep_(sweep),
+    voxel_(field, opt.voxel), outgoing_(field, opt.outgoing), backward_(field)
 {
-  if (opt.n_directions < 1)
+  if (opt.directions == DirectionMode::isotropic && opt.n_directions < 1)
     fatal_error("RMC residual: at least one incident direction is needed.");
+  if (opt.directions == DirectionMode::sweep && !sweep)
+    fatal_error("RMC residual: sweep directions need a field sweep.");
+  if (opt.directions == DirectionMode::sweep && !field.has_volumes())
+    fatal_error("RMC residual: sweep weights need region volumes.");
+  bool need_tables = opt.control ||
+                     opt.incident.mode == IncidentMode::flux ||
+                     opt.directions == DirectionMode::sweep;
+  if (need_tables && !tables)
+    fatal_error("RMC residual: the control, the flux proposal, and sweep "
+                "directions need the MG tables.");
+  if (opt.control && opt.directions == DirectionMode::isotropic &&
+      opt.n_control_directions < 1)
+    fatal_error("RMC residual: an isotropic control needs L >= 1 MG-only "
+                "directions to restore its mean.");
+  if (opt.incident.mode == IncidentMode::flux &&
+      !field.has_shape(FrozenField::Shape::phi))
+    fatal_error("RMC residual: the flux proposal needs the flux shape h_phi.");
+  if (opt.control_energy == ControlEnergy::same_energy &&
+      !field.has_shape(FrozenField::Shape::phi))
+    fatal_error("RMC residual: the same-energy control needs the flux shape.");
 }
 
-void ResidualSampler::production(Tag t, Position r, Direction omega_in,
-  const OutgoingState& s, uint64_t* seed, double& c_s, double& c_f)
+bool ResidualSampler::needs_mg_flux(Tag t) const
 {
-  c_s = c_f = 0.0;
-  if (material_ == MATERIAL_VOID)
-    return;
-  const Material& mat = *model::materials[material_];
-  const double kT = sqrtkT_ * sqrtkT_;
-  const Direction u_back = -omega_in;
+  return opt_.control || (opt_.incident.mode == IncidentMode::flux &&
+                           (t == Tag::f || opt_.sampler_route));
+}
 
-  if (t == Tag::s) {
-    // Stationary-target elastic, every nuclide with A > 1: the incident
-    // energy that scatters into E at mu0 differs by nuclide, so collect them
-    // and evaluate psi at all of them along one path
-    const double mu0 = omega_in.dot(s.u);
+Draw<double> ResidualSampler::incident(Tag t, const Destination& d,
+  const vector<double>& mg_s, const vector<double>& mg_f, uint64_t* seed)
+{
+  const auto& o = opt_.incident;
+  const double log_ratio = std::log(o.E_max / o.E_min);
+  if (o.mode == IncidentMode::flux) {
+    const int G = field_.n_groups();
+    w_g_.assign(G, 0.0);
+    double sum = 0.0;
+    for (int g = 0; g < G; ++g) {
+      double psi = mg_s[g] + mg_f[g];
+      double x = (t == Tag::f)
+                   ? tables_->nu_sigma_f(d.material, d.sqrtkT, g) * psi
+                   : psi;
+      w_g_[g] = std::max(x, 0.0);
+      sum += w_g_[g];
+    }
+    if (sum > 0.0 && prn(seed) >= o.beta) {
+      double x = prn(seed) * sum, c = 0.0;
+      int g = 0;
+      for (; g < G - 1; ++g) {
+        c += w_g_[g];
+        if (c > x)
+          break;
+      }
+      double dens;
+      double E = field_.sample_shape(
+        FrozenField::Shape::phi, d.region, g, seed, dens);
+      return {E, incident_density(t, d, mg_s, mg_f, E)};
+    }
+    double E = o.E_min * std::exp(log_ratio * prn(seed));
+    return {E, incident_density(t, d, mg_s, mg_f, E)};
+  }
+  double E = o.E_min * std::exp(log_ratio * prn(seed));
+  return {E, 1.0 / (E * log_ratio)};
+}
+
+double ResidualSampler::incident_density(Tag t, const Destination& d,
+  const vector<double>& mg_s, const vector<double>& mg_f, double E) const
+{
+  const auto& o = opt_.incident;
+  const double log_ratio = std::log(o.E_max / o.E_min);
+  double lu = (E >= o.E_min && E <= o.E_max) ? 1.0 / (E * log_ratio) : 0.0;
+  if (o.mode != IncidentMode::flux)
+    return lu;
+  const int G = field_.n_groups();
+  double sum = 0.0, wg = 0.0;
+  int gE = field_.group(E);
+  for (int g = 0; g < G; ++g) {
+    double psi = mg_s[g] + mg_f[g];
+    double x = (t == Tag::f)
+                 ? tables_->nu_sigma_f(d.material, d.sqrtkT, g) * psi
+                 : psi;
+    x = std::max(x, 0.0);
+    sum += x;
+    if (g == gE)
+      wg = x;
+  }
+  if (!(sum > 0.0))
+    return lu;
+  double f = o.beta * lu;
+  if (gE >= 0 && wg > 0.0)
+    f += (1.0 - o.beta) * wg / sum *
+         field_.shape_draw_density(FrozenField::Shape::phi, d.region, gE, E);
+  return f;
+}
+
+void ResidualSampler::mg_terms(Tag t, const Destination& d,
+  const OutgoingState& s, const vector<double>& mg_s,
+  const vector<double>& mg_f, double E_in, double p_in, double M[2]) const
+{
+  MGControl ctl(field_, *tables_);
+  const vector<double>* mg[2] = {&mg_s, &mg_f};
+  for (int y = 0; y < 2; ++y) {
+    if (t == Tag::f && opt_.control_energy == ControlEnergy::same_energy) {
+      M[y] = ctl.fission_same_energy(
+        d.region, d.material, d.sqrtkT, s.E, E_in, p_in, *mg[y]);
+    } else {
+      M[y] = ctl.production(t, d.region, d.material, d.sqrtkT, s.E, *mg[y]);
+    }
+    // The tables are for unit density; the cell instance scales them
+    M[y] *= d.density_mult;
+  }
+}
+
+void ResidualSampler::direction(Tag t, const Destination& d,
+  Direction omega_in, const OutgoingState& s, const double* psi_seg_s,
+  const double* psi_seg_f, uint64_t* seed, DirectionTerms& out)
+{
+  out = DirectionTerms {};
+  const Material& mat = *model::materials[d.material];
+  const Direction u_back = -omega_in;
+  const bool sweep_dir = psi_seg_s != nullptr;
+  const int G = field_.n_groups();
+  const bool want_mg = needs_mg_flux(t);
+
+  // MG fluxes of this direction: its sweep segment, or its own path
+  bool two_pass = false;
+  if (sweep_dir && want_mg) {
+    mg_s_.assign(psi_seg_s, psi_seg_s + G);
+    mg_f_.assign(psi_seg_f, psi_seg_f + G);
+  } else if (want_mg && opt_.incident.mode == IncidentMode::flux) {
+    // The incident proposal needs the MG flux before the CE energies are
+    // known: an MG-only pass first, then the CE pass on the same path
+    two_pass = true;
     energies_.clear();
-    image_density_.clear();
-    image_nuclide_.clear();
+    backward_.evaluate_all(d.r, u_back, energies_, tables_, opt_.tail, seed,
+      psi_s_, psi_f_, mg_s_, mg_f_);
+  }
+
+  // CE incident energies: elastic images of every nuclide (tag s), and one
+  // drawn energy for fission (tag f) or for the sampler route (tag s)
+  energies_.clear();
+  image_density_.clear();
+  image_nuclide_.clear();
+  double mu0 = omega_in.dot(s.u);
+  if (t == Tag::s) {
+    probe_.total(d.material, s.E, d.sqrtkT, d.density_mult);
     for (int i = 0; i < static_cast<int>(mat.nuclide_.size()); ++i) {
-      auto img = elastic_stationary(mat.nuclide_[i], kT, s.E, mu0);
+      int i_nuc = mat.nuclide_[i];
+      auto img = elastic_stationary(
+        i_nuc, ChannelRegistry::elastic_kT(i_nuc, probe_), s.E, mu0);
       if (img.density > 0.0) {
         energies_.push_back(img.E_in);
         image_density_.push_back(img.density);
         image_nuclide_.push_back(i);
       }
     }
-    if (energies_.empty())
-      return;
-    backward_.evaluate_tags(r, u_back, energies_, opt_.tail, seed, psi_s_, psi_f_);
+  }
+  Draw<double> Ein {0.0, 0.0};
+  bool drawn = (t == Tag::f) || opt_.sampler_route;
+  if (drawn) {
+    Ein = incident(t, d, mg_s_, mg_f_, seed);
+    energies_.push_back(Ein.value);
+  }
+
+  // Backward pass(es)
+  const bool combined = want_mg && !sweep_dir && !two_pass;
+  backward_.evaluate_all(d.r, u_back, energies_, combined ? tables_ : nullptr,
+    opt_.tail, seed, psi_s_, psi_f_, seg_s_, seg_f_);
+  if (combined) {
+    mg_s_ = seg_s_;
+    mg_f_ = seg_f_;
+  }
+
+  // CE production of the evaluator channels
+  if (t == Tag::s) {
     for (size_t k = 0; k < image_nuclide_.size(); ++k) {
       int i = image_nuclide_[k];
-      probe_.total(material_, energies_[k], sqrtkT_, density_mult_);
-      double sigma_el = mat.atom_density(i, density_mult_) *
-                        probe_.micro_elastic(mat.nuclide_[i]);
+      probe_.total(d.material, energies_[k], d.sqrtkT, d.density_mult);
+      Channel el {i, mat.nuclide_[i], 0, ChannelKind::elastic, Tag::s};
+      if (ChannelRegistry::route(el, energies_[k], probe_) != Route::evaluator)
+        continue;
+      double sigma_el = ChannelRegistry::production(el, d.density_mult, probe_);
       // Density per unit mu0 and azimuth: 1 / (2 pi)
       double f = sigma_el * image_density_[k] / (2.0 * PI);
-      c_s += f * psi_s_[k];
-      c_f += f * psi_f_[k];
+      out.C[0] += f * psi_s_[k];
+      out.C[1] += f * psi_f_[k];
     }
-  } else {
-    // Fission: one incident energy E' drawn log-uniformly; isotropic emission
-    double log_ratio = std::log(opt_.Ein_max / opt_.Ein_min);
-    double E_in = opt_.Ein_min * std::exp(log_ratio * prn(seed));
-    double g = 1.0 / (E_in * log_ratio);
-    energies_.assign(1, E_in);
-    backward_.evaluate_tags(r, u_back, energies_, opt_.tail, seed, psi_s_, psi_f_);
-    probe_.total(material_, E_in, sqrtkT_, density_mult_);
-    double emission = 0.0; // sum_i N_i nu_i sigma_f,i chi_i(E | E')
+    if (opt_.sampler_route && Ein.density > 0.0) {
+      size_t k = energies_.size() - 1;
+      probe_.total(d.material, Ein.value, d.sqrtkT, d.density_mult);
+      auto smp = sample_sampler_route(registry_, Tag::s, omega_in, probe_, seed);
+      if (smp.production > 0.0) {
+        out.has_sampler = true;
+        out.S[0] = smp.production * psi_s_[k] / Ein.density;
+        out.S[1] = smp.production * psi_f_[k] / Ein.density;
+        out.sampler_state = {smp.E, smp.u};
+      }
+    }
+  } else if (Ein.density > 0.0) {
+    // Fission: OpenMC's tabulated nu-fission per nuclide, shared among
+    // partial fission reactions by their cross sections (as sample_fission)
+    probe_.total(d.material, Ein.value, d.sqrtkT, d.density_mult);
+    const Particle& p = probe_.particle();
+    double emission = 0.0;
     for (int i = 0; i < static_cast<int>(mat.nuclide_.size()); ++i) {
       int i_nuc = mat.nuclide_[i];
       const Nuclide& nuc = *data::nuclides[i_nuc];
       if (!nuc.fissionable_)
         continue;
-      double N = mat.atom_density(i, density_mult_);
-      double nu = nuc.nu(E_in, Nuclide::EmissionMode::total);
+      const auto& micro = p.neutron_xs(i_nuc);
+      if (!(micro.fission > 0.0))
+        continue;
+      double nu_sigma_f = mat.atom_density(i, d.density_mult) * micro.nu_fission;
       if (nuc.has_partial_fission_) {
-        // As sample_fission(): each partial reaction with its share
         for (const Reaction* rx : nuc.fission_rx_) {
-          double xs = probe_.micro_reaction(i_nuc, *rx);
+          double xs = rx->xs(micro);
           if (xs > 0.0)
-            emission +=
-              N * nu * xs * fission_energy_density(i_nuc, *rx, E_in, s.E);
+            emission += nu_sigma_f * xs / micro.fission *
+                        fission_energy_density(i_nuc, *rx, Ein.value, s.E);
         }
       } else {
-        double xs = probe_.micro_fission(i_nuc);
-        if (xs > 0.0)
-          emission += N * nu * xs *
-                      fission_energy_density(i_nuc, *nuc.fission_rx_[0], E_in, s.E);
+        emission += nu_sigma_f * fission_energy_density(i_nuc,
+                                   *nuc.fission_rx_[0], Ein.value, s.E);
       }
     }
-    double f = emission / (4.0 * PI * g);
-    c_s = f * psi_s_[0];
-    c_f = f * psi_f_[0];
+    double f = emission / (4.0 * PI * Ein.density);
+    out.C[0] = f * psi_s_[0];
+    out.C[1] = f * psi_f_[0];
+  }
+
+  // MG control on this direction
+  if (opt_.control)
+    mg_terms(t, d, s, mg_s_, mg_f_, Ein.value, Ein.density, out.M);
+}
+
+void ResidualSampler::control_mean(
+  Tag t, const Destination& d, const OutgoingState& s, uint64_t* seed,
+  double R[2])
+{
+  R[0] = R[1] = 0.0;
+  const int L = opt_.n_control_directions;
+  vector<Direction> dirs;
+  stratified_directions(L, seed, dirs);
+  const double omega = 4.0 * PI / L;
+  vector<double> none;
+  for (const auto& omega_in : dirs) {
+    backward_.evaluate_all(d.r, -omega_in, none, tables_, opt_.tail, seed,
+      psi_s_, psi_f_, mg_s_, mg_f_);
+    // The same MG estimator as on the J directions, so the same mean
+    Draw<double> Ein {0.0, 0.0};
+    if (t == Tag::f && opt_.control_energy == ControlEnergy::same_energy)
+      Ein = incident(t, d, mg_s_, mg_f_, seed);
+    double M[2];
+    mg_terms(t, d, s, mg_s_, mg_f_, Ein.value, Ein.density, M);
+    R[0] += omega * M[0];
+    R[1] += omega * M[1];
   }
 }
 
 void ResidualSampler::sample(
   Tag t, int64_t n, uint64_t seed, ResidualRecords& out)
 {
-  const Position lo = field_.box_lower_left();
-  const Position w = field_.box_upper_right() - lo;
-  const double V = w.x * w.y * w.z;
-  const int J = opt_.n_directions;
-  const double omega = 4.0 * PI / J;
+  const int G = field_.n_groups();
   vector<Direction> dirs;
-  GeometryState gs;
+  vector<double> weights;
+  vector<double> Psi_s, Psi_f;
+  if (keep_) {
+    kept_ce_.clear();
+    kept_mg_.clear();
+  }
 
   for (int64_t i = 0; i < n; ++i) {
     // Each sample has its own stream, so results do not depend on order
     uint64_t s = future_seed(static_cast<uint64_t>(i) * 1000003ULL, seed);
 
-    // Destination uniform in the box
-    Position r {lo.x + w.x * prn(&s), lo.y + w.y * prn(&s), lo.z + w.z * prn(&s)};
-    gs.init_from_r_u(r, {0.0, 0.0, 1.0});
-    if (!exhaustive_find_cell(gs))
+    // Destination and its state
+    int64_t region;
+    auto rd = voxel_.sample(&s, region);
+    Destination d;
+    d.r = rd.value;
+    if (!locate(field_, d.r, d.region, d.material, d.sqrtkT, d.density_mult))
       fatal_error("RMC residual: destination outside the geometry.");
-    const Cell& cell = *model::cells[gs.lowest_coord().cell()];
-    int32_t inst = gs.cell_instance();
-    material_ = cell.material(inst);
-    sqrtkT_ = cell.sqrtkT(inst);
-    density_mult_ = cell.density_mult(inst);
-    int64_t region = field_.locate(gs);
 
     // Outgoing state, and the field at it
-    auto draw = proposal_.sample(&s);
+    auto draw = outgoing_.sample(t, d.region, &s);
     const OutgoingState& st = draw.value;
-    double U = field_.evaluate(region, t, st.E);
+    double U = field_.evaluate(d.region, t, st.E);
 
-    // CE production over J incident directions
-    double C_s = 0.0, C_f = 0.0;
-    stratified_directions(J, &s, dirs);
-    for (const auto& omega_in : dirs) {
-      double cs, cf;
-      production(t, r, omega_in, st, &s, cs, cf);
-      C_s += omega * cs;
-      C_f += omega * cf;
+    double C[2] = {0.0, 0.0}, M[2] = {0.0, 0.0}, R[2] = {0.0, 0.0};
+    bool active = d.material != MATERIAL_VOID;
+    if (t == Tag::f && active)
+      active = model::materials[d.material]->fissionable();
+
+    if (active) {
+      // Directions and weights
+      const double* seg_s = nullptr;
+      const double* seg_f = nullptr;
+      if (opt_.directions == DirectionMode::isotropic) {
+        stratified_directions(opt_.n_directions, &s, dirs);
+        weights.assign(dirs.size(), 4.0 * PI / opt_.n_directions);
+        picks_.clear();
+      } else {
+        // Sweep segments in the region; omega_j = 4 pi l_j / (rho V_R)
+        int64_t lo = (d.region >= 0) ? sweep_->offset[d.region] : 0;
+        int64_t cnt = (d.region >= 0) ? sweep_->count(d.region) : 0;
+        double scale = 4.0 * PI / (sweep_->rho * field_.volume(d.region));
+        picks_.clear();
+        weights.clear();
+        dirs.clear();
+        double total_w = 0.0;
+        for (int64_t j = lo; j < lo + cnt; ++j)
+          total_w += scale * sweep_->length[j];
+        if (opt_.n_directions <= 0 || cnt <= opt_.n_directions) {
+          for (int64_t j = lo; j < lo + cnt; ++j) {
+            picks_.push_back(j);
+            weights.push_back(scale * sweep_->length[j]);
+          }
+        } else {
+          // Subsample with probability proportional to omega_j: each pick
+          // estimates the region's sum with weight sum(omega) / J
+          for (int k = 0; k < opt_.n_directions; ++k) {
+            double x = prn(&s) * total_w, c = 0.0;
+            int64_t j = lo;
+            for (; j < lo + cnt - 1; ++j) {
+              c += scale * sweep_->length[j];
+              if (c > x)
+                break;
+            }
+            picks_.push_back(j);
+            weights.push_back(total_w / opt_.n_directions);
+          }
+        }
+        for (int64_t j : picks_)
+          dirs.push_back(sweep_->u[j]);
+
+        // The sweep's region emission Q-hat (restored mean, and the swept
+        // field candidate): sum_j omega_j over every segment, which is linear
+        // in psi, so one MG production of the omega-weighted flux
+        {
+          Psi_s.assign(G, 0.0);
+          Psi_f.assign(G, 0.0);
+          for (int64_t j = lo; j < lo + cnt; ++j) {
+            double w = scale * sweep_->length[j];
+            for (int g = 0; g < G; ++g) {
+              Psi_s[g] += w * sweep_->psi_s[j * G + g];
+              Psi_f[g] += w * sweep_->psi_f[j * G + g];
+            }
+          }
+          MGControl ctl(field_, *tables_);
+          R[0] = d.density_mult *
+                 ctl.production(t, d.region, d.material, d.sqrtkT, st.E, Psi_s);
+          R[1] = d.density_mult *
+                 ctl.production(t, d.region, d.material, d.sqrtkT, st.E, Psi_f);
+        }
+      }
+
+      for (size_t j = 0; j < dirs.size(); ++j) {
+        DirectionTerms dt;
+        const double* ps = nullptr;
+        const double* pf = nullptr;
+        if (opt_.directions == DirectionMode::sweep) {
+          ps = &sweep_->psi_s[picks_[j] * G];
+          pf = &sweep_->psi_f[picks_[j] * G];
+        }
+        direction(t, d, dirs[j], st, ps, pf, &s, dt);
+        C[0] += weights[j] * dt.C[0];
+        C[1] += weights[j] * dt.C[1];
+        M[0] += weights[j] * dt.M[0];
+        M[1] += weights[j] * dt.M[1];
+        if (keep_) {
+          kept_ce_.push_back(dt.C[0] + dt.C[1]);
+          kept_mg_.push_back(dt.M[0] + dt.M[1]);
+        }
+        if (dt.has_sampler) {
+          // A sampler-route particle: its density is the destination's
+          out.r.insert(out.r.end(), {d.r.x, d.r.y, d.r.z});
+          const auto& ss = dt.sampler_state;
+          out.u.insert(out.u.end(), {ss.u.x, ss.u.y, ss.u.z});
+          out.E.push_back(ss.E);
+          out.density.push_back(rd.density);
+          out.tag.push_back(static_cast<int>(t));
+          out.sampler.push_back(1);
+          out.C_s.push_back(weights[j] * dt.S[0]);
+          out.C_f.push_back(weights[j] * dt.S[1]);
+          for (auto* v : {&out.M_s, &out.M_f, &out.R_s, &out.R_f, &out.U})
+            v->push_back(0.0);
+        }
+      }
+      if (opt_.control && opt_.directions == DirectionMode::isotropic)
+        control_mean(t, d, st, &s, R);
     }
 
-    out.r.insert(out.r.end(), {r.x, r.y, r.z});
+    // The density-branch record
+    out.r.insert(out.r.end(), {d.r.x, d.r.y, d.r.z});
     out.u.insert(out.u.end(), {st.u.x, st.u.y, st.u.z});
     out.E.push_back(st.E);
-    out.density.push_back(draw.density / V);
+    out.density.push_back(draw.density * rd.density);
     out.tag.push_back(static_cast<int>(t));
-    out.C_s.push_back(C_s);
-    out.C_f.push_back(C_f);
+    out.sampler.push_back(0);
+    out.C_s.push_back(C[0]);
+    out.C_f.push_back(C[1]);
+    out.M_s.push_back(M[0]);
+    out.M_f.push_back(M[1]);
+    out.R_s.push_back(R[0]);
+    out.R_f.push_back(R[1]);
     out.U.push_back(U);
-  }
-}
-
-void weight_records(const ResidualRecords& rec, int64_t N, double a_s,
-  double a_f, double b_s, double b_f, double k, vector<double>& w)
-{
-  w.resize(rec.size());
-  for (int64_t i = 0; i < rec.size(); ++i) {
-    bool fission = rec.tag[i] == static_cast<int>(Tag::f);
-    double high = a_s * rec.C_s[i] + a_f * rec.C_f[i];
-    if (fission)
-      high /= k;
-    double low = (fission ? b_f : b_s) * rec.U[i];
-    w[i] = (high - low) / (N * rec.density[i]);
   }
 }
 

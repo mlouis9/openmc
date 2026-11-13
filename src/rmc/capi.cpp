@@ -10,6 +10,7 @@
 #include "openmc/random_lcg.h"
 #include "openmc/rmc/field.h"
 #include "openmc/rmc/mg_control.h"
+#include "openmc/rmc/residual.h"
 
 namespace openmc {
 namespace rmc {
@@ -19,6 +20,9 @@ unique_ptr<FrozenField> loaded_field;
 
 //! Its multigroup tables, read on first use
 unique_ptr<MGTables> loaded_mg;
+
+//! Segment records of the last field sweep
+unique_ptr<SweepRecords> loaded_sweep;
 
 const MGTables& loaded_mg_tables()
 {
@@ -54,6 +58,7 @@ extern "C" int openmc_rmc_field_load(
 {
   // fatal_error() inside the constructor ends the process; that is accepted
   // for malformed input files.
+  rmc::loaded_sweep.reset();
   rmc::loaded_mg.reset();
   rmc::loaded_field =
     make_unique<rmc::FrozenField>(field_file, lift_file, volume_file);
@@ -62,6 +67,7 @@ extern "C" int openmc_rmc_field_load(
 
 extern "C" int openmc_rmc_field_free()
 {
+  rmc::loaded_sweep.reset();
   rmc::loaded_mg.reset();
   rmc::loaded_field.reset();
   return 0;

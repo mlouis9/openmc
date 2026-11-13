@@ -82,6 +82,7 @@ extern "C" int openmc_rmc_mg_control(const double* r, const double* u_in,
   int32_t inst = gs.cell_instance();
   int32_t m = cell.material(inst);
   double sqrtkT = cell.sqrtkT(inst);
+  double dm = cell.density_mult(inst);
   int64_t region = field.locate(gs);
 
   rmc::TailOptions opt;
@@ -102,8 +103,8 @@ extern "C" int openmc_rmc_mg_control(const double* r, const double* u_in,
   rmc::MGControl ctl(field, tables);
   auto t = static_cast<rmc::Tag>(tag);
   for (int64_t i = 0; i < n_E; ++i) {
-    q_s[i] = ctl.production(t, region, m, sqrtkT, E[i], ms);
-    q_f[i] = ctl.production(t, region, m, sqrtkT, E[i], mf);
+    q_s[i] = dm * ctl.production(t, region, m, sqrtkT, E[i], ms);
+    q_f[i] = dm * ctl.production(t, region, m, sqrtkT, E[i], mf);
   }
   std::copy(ms.begin(), ms.end(), mg_s);
   std::copy(mf.begin(), mf.end(), mg_f);

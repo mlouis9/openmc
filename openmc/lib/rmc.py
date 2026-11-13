@@ -4,7 +4,8 @@ Experimental and opt-in: import as ``import openmc.lib.rmc``. Requires a
 continuous-energy model initialized with :func:`openmc.lib.init`.
 """
 import math
-from ctypes import c_char_p, c_double, c_int, c_int32, c_int64, c_uint64, POINTER
+from ctypes import (byref, c_char_p, c_double, c_int, c_int32, c_int64, c_uint64,
+                    POINTER, Structure)
 
 import numpy as np
 
@@ -45,12 +46,6 @@ for _name, _args in [
                                  c_double, c_double, c_int64, c_uint64, _f64p,
                                  POINTER(c_int64)]),
     ('openmc_rmc_xs', [c_int32, c_int64, _f64p, c_double, c_double, _f64p, _f64p, _f64p]),
-    ('openmc_rmc_residual_sample', [c_int, c_int64, c_uint64, c_int, c_int, c_double,
-                                    c_double, c_double, c_double, c_double, c_double,
-                                    _f64p, _f64p, _f64p, _f64p, _f64p, _f64p, _f64p]),
-    ('openmc_rmc_residual_weights', [c_int64, _i32p, _f64p, _f64p, _f64p, _f64p,
-                                     c_int64, c_double, c_double, c_double, c_double,
-                                     c_double, _f64p]),
     ('openmc_rmc_channel_production', [c_int32, c_int64, _f64p, c_double, c_double,
                                       _f64p, _f64p]),
     ('openmc_rmc_sample_sampler_route', [c_int32, c_double, _f64p, c_double, c_double,
@@ -65,6 +60,15 @@ for _name, _args in [
 ]:
     _fn = getattr(_dll, _name)
     _fn.argtypes, _fn.restype, _fn.errcheck = _args, c_int, _error_handler
+
+# Functions called with explicit ctypes arguments (pointers, structures): no
+# argument types, but errors are still raised
+for _name in ('openmc_rmc_field_groups', 'openmc_rmc_residual_sample',
+              'openmc_rmc_residual_records', 'openmc_rmc_residual_directions',
+              'openmc_rmc_residual_weights', 'openmc_rmc_sweep_field',
+              'openmc_rmc_sweep_field_region'):
+    _fn = getattr(_dll, _name)
+    _fn.restype, _fn.errcheck = c_int, _error_handler
 
 TAGS = {'s': 0, 'f': 1}
 
@@ -341,39 +345,129 @@ def xs(material_id, E, kT=294.0 * 8.617333262e-5, density_mult=1.0):
     return t, el, nf
 
 
-def residual_sample(tag, n, seed=1, n_directions=8, tail='roulette',
-                    cutoff=math.exp(-8.0), length=0.0, E_range=(1e-6, 2e7),
-                    Ein_range=(1e-5, 2e7)):
-    """n residual records of tag 's' or 'f' with the loaded field.
+class ResidualConfig(Structure):
+    """Mirror of openmc_rmc_residual_config (include/openmc/rmc/capi.h)."""
+    _fields_ = [('directions', c_int), ('n_directions', c_int), ('control', c_int),
+                ('n_control_directions', c_int), ('control_energy', c_int),
+                ('sampler_route', c_int), ('tail', c_int), ('cutoff', c_double),
+                ('length', c_double), ('max_segments', c_int64),
+                ('voxel_mode', c_int), ('voxel_weights', POINTER(c_double)),
+                ('n_voxel_weights', c_int64), ('weights_per_volume', c_int),
+                ('beta', c_double), ('E_min', c_double), ('E_max', c_double),
+                ('incident_mode', c_int), ('beta_in', c_double),
+                ('Ein_min', c_double), ('Ein_max', c_double)]
 
-    Returns a dict of arrays: r, u [n, 3]; E, density, C_s, C_f, U [n]; and
-    tag. Weights follow from residual_weights() for given amplitudes.
+
+DIRECTIONS = {'isotropic': 0, 'sweep': 1}
+CONTROL_ENERGY = {'exact': 0, 'same_energy': 1}
+VOXELS = {'box': 0, 'volume': 1, 'fissionable': 2, 'tabulated': 3}
+INCIDENT = {'log_uniform': 0, 'flux': 1}
+TERMS = ('C_s', 'C_f', 'M_s', 'M_f', 'R_s', 'R_f', 'U')
+
+
+def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
+                    control=False, n_control_directions=0, control_energy='exact',
+                    sampler_route=True, tail='roulette', cutoff=math.exp(-8.0),
+                    length=0.0, max_segments=10_000_000, voxel='box',
+                    voxel_weights=None, weights_per_volume=False, beta=1.0,
+                    E_range=(1e-5, 2e7), incident='log_uniform', beta_in=0.1,
+                    Ein_range=(1e-5, 2e7), keep_directions=False):
+    """Residual records of n samples of tag 's' or 'f' with the loaded field.
+
+    The options are those of rmc::ResidualOptions (include/openmc/rmc/
+    residual.h). Returns a dict of arrays: r, u [m, 3]; E, density, tag,
+    sampler, and the terms C_s, C_f, M_s, M_f, R_s, R_f, U [m], where m
+    counts the n density-branch records and the sampler-route particles.
+    With keep_directions, also 'ce' and 'mg': the per-direction CE and MG
+    estimates (G3.7).
     """
-    n = int(n)
-    out = {k: np.empty(n * 3) for k in ('r', 'u')}
-    out.update({k: np.empty(n) for k in ('E', 'density', 'C_s', 'C_f', 'U')})
-    _dll.openmc_rmc_residual_sample(TAGS[tag], n, int(seed), int(n_directions),
-                                    TAILS[tail], float(cutoff), float(length),
-                                    float(E_range[0]), float(E_range[1]),
-                                    float(Ein_range[0]), float(Ein_range[1]),
-                                    out['r'], out['u'], out['E'], out['density'],
-                                    out['C_s'], out['C_f'], out['U'])
-    out['r'] = out['r'].reshape(n, 3)
-    out['u'] = out['u'].reshape(n, 3)
-    out['tag'] = np.full(n, TAGS[tag], dtype=np.int32)
+    w = None
+    if voxel_weights is not None:
+        w = np.ascontiguousarray(voxel_weights, dtype=float)
+    cfg = ResidualConfig(
+        DIRECTIONS[directions], int(n_directions), int(bool(control)),
+        int(n_control_directions), CONTROL_ENERGY[control_energy],
+        int(bool(sampler_route)), TAILS[tail], float(cutoff), float(length),
+        int(max_segments), VOXELS[voxel],
+        w.ctypes.data_as(POINTER(c_double)) if w is not None else None,
+        0 if w is None else w.size, int(bool(weights_per_volume)), float(beta),
+        float(E_range[0]), float(E_range[1]), INCIDENT[incident], float(beta_in),
+        float(Ein_range[0]), float(Ein_range[1]))
+    m = c_int64()
+    _dll.openmc_rmc_residual_sample(byref(cfg), TAGS[tag], int(n), int(seed),
+                                    int(bool(keep_directions)), byref(m))
+    m = m.value
+    out = dict(r=np.empty(3 * m), u=np.empty(3 * m), E=np.empty(m),
+               density=np.empty(m), tag=np.empty(m, dtype=np.int32),
+               sampler=np.empty(m, dtype=np.int32))
+    terms = np.empty(7 * max(m, 1))
+    p = lambda a: a.ctypes.data_as(POINTER(c_double))
+    _dll.openmc_rmc_residual_records(p(out['r']), p(out['u']), p(out['E']),
+                                     p(out['density']),
+                                     out['tag'].ctypes.data_as(POINTER(c_int)),
+                                     out['sampler'].ctypes.data_as(POINTER(c_int)),
+                                     p(terms))
+    out['r'] = out['r'].reshape(m, 3)
+    out['u'] = out['u'].reshape(m, 3)
+    for i, name in enumerate(TERMS):
+        out[name] = terms[i * m:(i + 1) * m].copy()
+    if keep_directions:
+        k = c_int64()
+        _dll.openmc_rmc_residual_directions(byref(k), None, None)
+        ce, mg = np.empty(k.value), np.empty(k.value)
+        _dll.openmc_rmc_residual_directions(byref(k), p(ce), p(mg))
+        out['ce'], out['mg'] = ce, mg
     return out
 
 
-def residual_weights(rec, N, a=(1.0, 1.0), b=(1.0, 1.0), k=1.0):
-    """Weights of residual records for amplitudes a, b and eigenvalue k:
-    ((a_s C_s + a_f C_f) / k^[tag f] - b_tag U) / (N density)."""
+def residual_weights(rec, N, a=(1.0, 1.0), b=(1.0, 1.0), k=1.0, c=0.0, lam=0.0):
+    """Weights of residual records for amplitudes a, b, eigenvalue k, control
+    coefficient c, and mixing lambda (rmc::weight_records)."""
     n = len(rec['E'])
+    terms = np.ascontiguousarray(np.concatenate([rec[t] for t in TERMS]))
+    if n == 0:
+        return np.empty(0)
     w = np.empty(n)
+    scalars = np.array([a[0], a[1], b[0], b[1], k, c, lam], dtype=float)
+    p = lambda x: x.ctypes.data_as(POINTER(c_double))
+    tag = np.ascontiguousarray(rec['tag'], dtype=np.int32)
+    smp = np.ascontiguousarray(rec['sampler'], dtype=np.int32)
     _dll.openmc_rmc_residual_weights(
-        n, np.ascontiguousarray(rec['tag'], dtype=np.int32), rec['C_s'], rec['C_f'],
-        rec['U'], rec['density'], int(N), float(a[0]), float(a[1]), float(b[0]),
-        float(b[1]), float(k), w)
+        c_int64(n), tag.ctypes.data_as(POINTER(c_int)),
+        smp.ctypes.data_as(POINTER(c_int)), p(terms),
+        p(np.ascontiguousarray(rec['density'], dtype=float)), c_int64(int(N)),
+        p(scalars), p(w))
     return w
+
+
+def sweep_field(batch):
+    """One random ray transport sweep from Q_s and one from Q_f of the
+    loaded field, with the rays of the given batch (needs sweep_init(), a
+    few sweep_iterate() batches so that every region exists, and a field
+    loaded with volumes). Returns the number of recorded segments."""
+    n = c_int64()
+    _dll.openmc_rmc_sweep_field(c_int64(int(batch)), byref(n))
+    return n.value
+
+
+def sweep_field_region(region):
+    """Segments of the last field sweep in one field region: dict with u
+    [n, 3], length [n], psi_s, psi_f [n, G] (ascending groups, per unit solid
+    angle), and rho, the sweep's track length per unit volume."""
+    rho, n = c_double(), c_int64()
+    _dll.openmc_rmc_sweep_field_region(c_int64(int(region)), byref(rho), byref(n),
+                                       None, None, None, None)
+    m = n.value
+    G = len(field_groups()) - 1
+    out = dict(u=np.empty(3 * max(m, 1)), length=np.empty(max(m, 1)),
+               psi_s=np.empty(max(m, 1) * G), psi_f=np.empty(max(m, 1) * G))
+    p = lambda a: a.ctypes.data_as(POINTER(c_double))
+    _dll.openmc_rmc_sweep_field_region(c_int64(int(region)), byref(rho), byref(n),
+                                       p(out['u']), p(out['length']),
+                                       p(out['psi_s']), p(out['psi_f']))
+    return dict(u=out['u'][:3 * m].reshape(m, 3), length=out['length'][:m],
+                psi_s=out['psi_s'][:m * G].reshape(m, G),
+                psi_f=out['psi_f'][:m * G].reshape(m, G), rho=rho.value)
 
 
 # ---------------------------------------------------------------------------

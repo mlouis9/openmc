@@ -122,16 +122,48 @@ int openmc_rmc_backward_psi(const double* r, const double* u, int n_E,
 int openmc_rmc_xs(int32_t material_id, int64_t n, const double* E,
   double sqrtkT, double density_mult, double* total, double* elastic,
   double* nu_fission);
-//! n residual records of tag (0 = s, 1 = f) with the loaded field
-//! (rmc::ResidualSampler). Arrays: r, u [n][3]; E, density, C_s, C_f, U [n].
-int openmc_rmc_residual_sample(int tag, int64_t n, uint64_t seed,
-  int n_directions, int tail, double cutoff, double length, double E_min,
-  double E_max, double Ein_min, double Ein_max, double* r, double* u,
-  double* E, double* density, double* C_s, double* C_f, double* U);
-//! Weights of records for amplitudes a, b, eigenvalue k, N samples per tag.
-int openmc_rmc_residual_weights(int64_t n, const int* tag, const double* C_s,
-  const double* C_f, const double* U, const double* density, int64_t N,
-  double a_s, double a_f, double b_s, double b_f, double k, double* w);
+
+//! Configuration of the residual sampler (rmc::ResidualOptions); enums as
+//! integers in their declaration order
+typedef struct {
+  int directions;   //!< 0 isotropic, 1 sweep
+  int n_directions; //!< J
+  int control;      //!< 0/1
+  int n_control_directions;
+  int control_energy; //!< 0 exact, 1 same_energy
+  int sampler_route;  //!< 0/1
+  int tail;           //!< 0 vacuum, 1 roulette, 2 fixed_length
+  double cutoff;
+  double length;
+  int64_t max_segments;
+  int voxel_mode; //!< 0 box, 1 volume, 2 fissionable, 3 tabulated
+  const double* voxel_weights;
+  int64_t n_voxel_weights;
+  int weights_per_volume;
+  double beta;
+  double E_min;
+  double E_max;
+  int incident_mode; //!< 0 log_uniform, 1 flux
+  double beta_in;
+  double Ein_min;
+  double Ein_max;
+} openmc_rmc_residual_config;
+
+//! Draw the records of n samples of tag (0 = s, 1 = f) with the loaded
+//! field; they are kept until the next call. n_records counts density-branch
+//! and sampler-route records.
+int openmc_rmc_residual_sample(const openmc_rmc_residual_config* cfg, int tag,
+  int64_t n, uint64_t seed, int keep_directions, int64_t* n_records);
+//! Copy the kept records: r, u [n][3]; E, density, tag, sampler [n]; terms
+//! [7][n] (C_s, C_f, M_s, M_f, R_s, R_f, U).
+int openmc_rmc_residual_records(double* r, double* u, double* E,
+  double* density, int* tag, int* sampler, double* terms);
+//! Per-direction CE and MG estimates of the last call (keep_directions)
+int openmc_rmc_residual_directions(int64_t* n, double* ce, double* mg);
+//! Weights for scalars [a_s, a_f, b_s, b_f, k, c, lambda], N samples per tag
+int openmc_rmc_residual_weights(int64_t n, const int* tag, const int* sampler,
+  const double* terms, const double* density, int64_t N, const double* scalars,
+  double* w);
 
 //! Channel registry (src/rmc/channels_capi.cpp)
 //! Production nu_bar Sigma [1/cm] at each energy, summed by channel kind
@@ -159,6 +191,18 @@ int openmc_rmc_mg_control(const double* r, const double* u_in, int64_t n_E,
   const double* E, int tag, int tail, double cutoff, double length,
   int64_t max_segments, uint64_t seed, double* q_s, double* q_f, double* mg_s,
   double* mg_f);
+
+//! One random ray transport sweep from Q_s and one from Q_f of the loaded
+//! field, with the rays of the given batch, recording every segment
+//! (src/rmc/random_ray_capi.cpp). The records replace those of an earlier
+//! call and serve sweep directions in openmc_rmc_residual_sample. The
+//! solve's own flux iterate is unchanged; its volume accumulators are not.
+int openmc_rmc_sweep_field(int64_t batch, int64_t* n_records);
+//! The field sweep's segments in one field region (u [n][3], length [n],
+//! psi_s, psi_f [n][G] ascending, per unit solid angle), and rho. With u
+//! null, only n and rho are set.
+int openmc_rmc_sweep_field_region(int64_t region, double* rho, int64_t* n,
+  double* u, double* length, double* psi_s, double* psi_f);
 }
 
 #endif // OPENMC_RMC_CAPI_H

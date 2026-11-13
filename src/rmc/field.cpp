@@ -124,8 +124,14 @@ FrozenField::FrozenField(const std::string& field_file,
   }
 
   // ---- Group edges on the fine grid (for drawing from the shapes) ----------
+  // The lowest group may start below the lift grid (often at 0); the lifts
+  // are zero there, so the group starts at the grid's first bin
   group_fine_.assign(G + 1, -1);
   for (int g = 0; g <= G; ++g) {
+    if (group_edges_[g] <= fine_edges_.front()) {
+      group_fine_[g] = 0;
+      continue;
+    }
     auto it = std::lower_bound(
       fine_edges_.begin(), fine_edges_.end(), group_edges_[g]);
     if (it != fine_edges_.end() &&
@@ -288,7 +294,8 @@ double shape_mass(const double* h, const vector<double>& edges, int i0, int i1)
 double FrozenField::sample_shape(
   Shape k, int64_t region, int g, uint64_t* seed, double& density) const
 {
-  const double lo = group_edges_[g], hi = group_edges_[g + 1];
+  const double lo = std::max(group_edges_[g], fine_edges_.front());
+  const double hi = group_edges_[g + 1];
   int i0 = group_fine_[g], i1 = group_fine_[g + 1];
   if (i0 < 0 || i1 < 0)
     fatal_error("RMC field: group edges are not on the lift grid.");
@@ -321,7 +328,8 @@ double FrozenField::sample_shape(
 double FrozenField::shape_draw_density(
   Shape k, int64_t region, int g, double E) const
 {
-  const double lo = group_edges_[g], hi = group_edges_[g + 1];
+  const double lo = std::max(group_edges_[g], fine_edges_.front());
+  const double hi = group_edges_[g + 1];
   if (!(E >= lo && E < hi))
     return 0.0;
   int i0 = group_fine_[g], i1 = group_fine_[g + 1];

@@ -52,7 +52,25 @@ def run_random_ray(ce_model, mesh, workdir, groups='CASMO-8', mgxs_particles=20_
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     mgxs_path = Path(mgxs_path) if mgxs_path else workdir / 'mgxs.h5'
+    mg = mg_model(ce_model, mesh, mgxs_path, groups=groups,
+                  mgxs_particles=mgxs_particles, rays=rays, batches=batches,
+                  inactive=inactive, field_file=field_file, random_ray=random_ray,
+                  seed=seed)
 
+    t = openmc.Tally(name='rr_nu_fission')
+    t.filters = [openmc.MeshFilter(meshes_of(mesh)[0])]
+    t.scores = ['nu-fission']
+    mg.tallies = openmc.Tallies([t])
+
+    sp = mg.run(cwd=workdir, output=False, threads=threads)
+    return workdir / field_file, Path(sp), mgxs_path, mg
+
+
+def mg_model(ce_model, mesh, mgxs_path, groups='CASMO-8', mgxs_particles=20_000,
+             rays=2_000, batches=150, inactive=50, field_file='rmc_field.h5',
+             random_ray=None, seed=None):
+    """The multigroup random ray model of a CE model, with the MGXS library
+    at mgxs_path (generated there if absent)."""
     mg = copy.deepcopy(ce_model)
     mg.convert_to_multigroup(method='material_wise', groups=groups,
                              mgxs_path=mgxs_path, particles=mgxs_particles)
@@ -67,14 +85,7 @@ def run_random_ray(ce_model, mesh, workdir, groups='CASMO-8', mgxs_particles=20_
     mg.settings.particles = rays
     mg.settings.batches = batches
     mg.settings.inactive = inactive
-
-    t = openmc.Tally(name='rr_nu_fission')
-    t.filters = [openmc.MeshFilter(meshes_of(mesh)[0])]
-    t.scores = ['nu-fission']
-    mg.tallies = openmc.Tallies([t])
-
-    sp = mg.run(cwd=workdir, output=False, threads=threads)
-    return workdir / field_file, Path(sp), mgxs_path, mg
+    return mg
 
 
 def fine_grid(group_edges, per_group=60):

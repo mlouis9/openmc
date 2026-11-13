@@ -83,7 +83,9 @@ void BackwardFlux::evaluate_all(Position r, Direction u_back,
             mat, E[e], chunk_.sqrtkT[k], chunk_.density_mult[k]);
           ++n_lookup;
         } else {
-          sigma = mg->sigma_t(mat, chunk_.sqrtkT[k], static_cast<int>(e - n_ce));
+          // MG tables are for unit density; the cell instance scales them
+          sigma = mg->sigma_t(mat, chunk_.sqrtkT[k], static_cast<int>(e - n_ce)) *
+                  chunk_.density_mult[k];
         }
         double w = T_[e] * attenuation_integral(sigma, l);
         if (region >= 0) {

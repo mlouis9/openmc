@@ -14,6 +14,8 @@
 #include "openmc/random_ray/random_ray.h"
 #include "openmc/random_ray/random_ray_simulation.h"
 #include "openmc/rmc/capi.h"
+#include "openmc/rmc/field.h"
+#include "openmc/rmc/residual.h"
 #include "openmc/settings.h"
 #include "openmc/simulation.h"
 
@@ -220,3 +222,146 @@ extern "C" int openmc_rmc_sweep_finalize()
   sweep_state.reset();
   return 0;
 }
+
+//==============================================================================
+// One transport sweep from the frozen field (the tandem and sweep-control
+// residual estimators)
+//==============================================================================
+
+extern "C" int openmc_rmc_sweep_field(int64_t batch, int64_t* n_records)
+{
+  if (!sweep_state)
+    return no_sweep();
+  if (!rmc::loaded_field) {
+    set_errmsg("No RMC field is loaded; call openmc_rmc_field_load first.");
+    return OPENMC_E_ALLOCATE;
+  }
+  const auto& field = *rmc::loaded_field;
+  if (!field.has_volumes()) {
+    set_errmsg("A field sweep needs region volumes (load the field with a "
+               "volume file).");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+  FlatSourceDomain& d = *sweep_state->sim->domain();
+  const int G = d.n_groups();
+  if (G != field.n_groups()) {
+    set_errmsg("The sweep and the field have different group structures.");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+
+  // Field region of every source region of the solve
+  vector<int32_t> cell_id, instance, mesh_id;
+  vector<int64_t> mesh_bin;
+  d.source_region_keys(cell_id, instance, mesh_id, mesh_bin);
+  const int64_t n_sr = d.n_source_regions();
+  vector<int64_t> to_field(n_sr);
+  for (int64_t sr = 0; sr < n_sr; ++sr)
+    to_field[sr] = field.region(cell_id[sr], instance[sr], mesh_bin[sr]);
+
+  // Rays of the given batch, the same for both sweeps
+  int saved_batch = simulation::current_batch;
+  simulation::current_batch = static_cast<int>(batch);
+  d.set_segment_recording({}, true);
+
+  SegmentRecords rec[2];
+  for (int y = 0; y < 2; ++y) {
+    // Source of tag y alone: the reduced source Q / Sigma_t, as
+    // update_single_neutron_source() writes it
+    for (int64_t sr = 0; sr < n_sr; ++sr) {
+      int m = d.source_regions_.material(sr);
+      for (int g = 0; g < G; ++g) {
+        double q = 0.0;
+        int64_t r = to_field[sr];
+        if (m != MATERIAL_VOID && r >= 0) {
+          int t = d.source_regions_.temperature_idx(sr);
+          double dm = d.source_regions_.density_mult(sr);
+          double sigma_t =
+            d.sigma_t_[(static_cast<int64_t>(m) * d.ntemperature_ + t) * G + g] *
+            dm;
+          if (sigma_t > 0.0)
+            q = field.emission(r, static_cast<rmc::Tag>(y), G - 1 - g) / sigma_t;
+        }
+        d.source_regions_.source(sr, g) = static_cast<float>(q);
+      }
+    }
+    sweep_state->sim->sweep();
+    if (d.n_source_regions() != n_sr) {
+      simulation::current_batch = saved_batch;
+      set_errmsg("The field sweep discovered new source regions; run random "
+                 "ray batches first (openmc_rmc_sweep_iterate).");
+      return OPENMC_E_ALLOCATE;
+    }
+    rec[y] = d.gather_segment_records();
+  }
+  simulation::current_batch = saved_batch;
+  if (rec[0].size() != rec[1].size() || rec[0].length != rec[1].length) {
+    set_errmsg("The two field sweeps did not trace the same rays.");
+    return OPENMC_E_UNASSIGNED;
+  }
+
+  // Index the segments by field region (CSR), groups ascending, psi per
+  // unit solid angle (records carry 4 pi psi)
+  auto out = make_unique<rmc::SweepRecords>();
+  out->n_groups = G;
+  out->rho = settings::n_particles * RandomRay::distance_active_ /
+             d.simulation_volume();
+  const int64_t R = field.n_regions();
+  const int64_t n = rec[0].size();
+  out->offset.assign(R + 1, 0);
+  for (int64_t i = 0; i < n; ++i) {
+    int64_t r = to_field[rec[0].region[i]];
+    if (r >= 0)
+      ++out->offset[r + 1];
+  }
+  for (int64_t r = 0; r < R; ++r)
+    out->offset[r + 1] += out->offset[r];
+  const int64_t total = out->offset[R];
+  out->u.resize(total);
+  out->length.resize(total);
+  out->psi_s.resize(total * G);
+  out->psi_f.resize(total * G);
+  vector<int64_t> next(out->offset.begin(), out->offset.end() - 1);
+  for (int64_t i = 0; i < n; ++i) {
+    int64_t r = to_field[rec[0].region[i]];
+    if (r < 0)
+      continue;
+    int64_t j = next[r]++;
+    out->u[j] = {rec[0].u[3 * i], rec[0].u[3 * i + 1], rec[0].u[3 * i + 2]};
+    out->length[j] = rec[0].length[i];
+    for (int g = 0; g < G; ++g) {
+      out->psi_s[j * G + (G - 1 - g)] = rec[0].psi_bar[i * G + g] / (4.0 * PI);
+      out->psi_f[j * G + (G - 1 - g)] = rec[1].psi_bar[i * G + g] / (4.0 * PI);
+    }
+  }
+  rmc::loaded_sweep = std::move(out);
+  *n_records = total;
+  return 0;
+}
+
+extern "C" int openmc_rmc_sweep_field_region(int64_t region, double* rho,
+  int64_t* n, double* u, double* length, double* psi_s, double* psi_f)
+{
+  if (!rmc::loaded_sweep) {
+    set_errmsg("No field sweep is loaded.");
+    return OPENMC_E_ALLOCATE;
+  }
+  const auto& sw = *rmc::loaded_sweep;
+  *rho = sw.rho;
+  int64_t lo = sw.offset[region], cnt = sw.count(region);
+  *n = cnt;
+  if (!u)
+    return 0;
+  const int G = sw.n_groups;
+  for (int64_t j = 0; j < cnt; ++j) {
+    u[3 * j] = sw.u[lo + j].x;
+    u[3 * j + 1] = sw.u[lo + j].y;
+    u[3 * j + 2] = sw.u[lo + j].z;
+    length[j] = sw.length[lo + j];
+    for (int g = 0; g < G; ++g) {
+      psi_s[j * G + g] = sw.psi_s[(lo + j) * G + g];
+      psi_f[j * G + g] = sw.psi_f[(lo + j) * G + g];
+    }
+  }
+  return 0;
+}
+

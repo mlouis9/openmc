@@ -12,6 +12,15 @@
 
 using namespace openmc;
 
+namespace {
+
+//! The records of the last openmc_rmc_residual_sample call, and the
+//! per-direction diagnostics if requested
+rmc::ResidualRecords last_records;
+vector<double> last_ce, last_mg;
+
+} // namespace
+
 extern "C" int openmc_rmc_xs(int32_t material_id, int64_t n, const double* E,
   double sqrtkT, double density_mult, double* total, double* elastic,
   double* nu_fission)
@@ -40,61 +49,123 @@ extern "C" int openmc_rmc_xs(int32_t material_id, int64_t n, const double* E,
   return 0;
 }
 
-extern "C" int openmc_rmc_residual_sample(int tag, int64_t n, uint64_t seed,
-  int n_directions, int tail, double cutoff, double length, double E_min,
-  double E_max, double Ein_min, double Ein_max, double* r, double* u,
-  double* E, double* density, double* C_s, double* C_f, double* U)
+extern "C" int openmc_rmc_residual_sample(
+  const openmc_rmc_residual_config* cfg, int tag, int64_t n, uint64_t seed,
+  int keep_directions, int64_t* n_records)
 {
   if (!rmc::loaded_field) {
     set_errmsg("No RMC field is loaded; call openmc_rmc_field_load first.");
     return OPENMC_E_ALLOCATE;
   }
-  if (tag < 0 || tag > 1 || tail < 0 || tail > 2 || n_directions < 1) {
-    set_errmsg("Invalid tag, tail, or number of directions.");
+  if (tag < 0 || tag > 1 || cfg->tail < 0 || cfg->tail > 2) {
+    set_errmsg("Invalid tag or tail.");
     return OPENMC_E_INVALID_ARGUMENT;
   }
+  auto dir_mode = static_cast<rmc::DirectionMode>(cfg->directions);
+  if (dir_mode == rmc::DirectionMode::sweep && !rmc::loaded_sweep) {
+    set_errmsg("Sweep directions need a field sweep (openmc_rmc_sweep_field).");
+    return OPENMC_E_ALLOCATE;
+  }
   // Cross-section lookups need the energy grid (see backward_capi.cpp)
-  double dummy;
+  double dummy, E1 = 1.0;
   int32_t any_id = model::materials[0]->id();
-  if (int err = openmc_rmc_xs_total(any_id, 1, &E_min, 0.16, 1.0, &dummy))
+  if (int err = openmc_rmc_xs_total(any_id, 1, &E1, 0.16, 1.0, &dummy))
     return err;
 
   rmc::ResidualOptions opt;
-  opt.n_directions = n_directions;
-  opt.tail.mode = static_cast<rmc::Tail>(tail);
-  opt.tail.cutoff = cutoff;
-  opt.tail.length = length;
-  opt.E_min = E_min;
-  opt.E_max = E_max;
-  opt.Ein_min = Ein_min;
-  opt.Ein_max = Ein_max;
-  rmc::ResidualSampler sampler(*rmc::loaded_field, opt);
-  rmc::ResidualRecords rec;
-  sampler.sample(static_cast<rmc::Tag>(tag), n, seed, rec);
+  opt.directions = dir_mode;
+  opt.n_directions = cfg->n_directions;
+  opt.control = cfg->control != 0;
+  opt.n_control_directions = cfg->n_control_directions;
+  opt.control_energy = static_cast<rmc::ControlEnergy>(cfg->control_energy);
+  opt.sampler_route = cfg->sampler_route != 0;
+  opt.tail.mode = static_cast<rmc::Tail>(cfg->tail);
+  opt.tail.cutoff = cfg->cutoff;
+  opt.tail.length = cfg->length;
+  opt.tail.max_segments = cfg->max_segments;
+  opt.voxel.mode = static_cast<rmc::VoxelMode>(cfg->voxel_mode);
+  if (cfg->n_voxel_weights > 0)
+    opt.voxel.weights.assign(
+      cfg->voxel_weights, cfg->voxel_weights + cfg->n_voxel_weights);
+  opt.voxel.weights_per_volume = cfg->weights_per_volume != 0;
+  opt.outgoing.beta = cfg->beta;
+  opt.outgoing.E_min = cfg->E_min;
+  opt.outgoing.E_max = cfg->E_max;
+  opt.incident.mode = static_cast<rmc::IncidentMode>(cfg->incident_mode);
+  opt.incident.beta = cfg->beta_in;
+  opt.incident.E_min = cfg->Ein_min;
+  opt.incident.E_max = cfg->Ein_max;
+
+  bool need_tables = opt.control ||
+                     opt.incident.mode == rmc::IncidentMode::flux ||
+                     dir_mode == rmc::DirectionMode::sweep;
+  const rmc::MGTables* tables =
+    need_tables ? &rmc::loaded_mg_tables() : nullptr;
+  rmc::ResidualSampler sampler(
+    *rmc::loaded_field, opt, tables, rmc::loaded_sweep.get());
+  sampler.keep_directions(keep_directions != 0);
+  last_records.clear();
+  sampler.sample(static_cast<rmc::Tag>(tag), n, seed, last_records);
+  last_ce = sampler.kept_ce();
+  last_mg = sampler.kept_mg();
+  *n_records = last_records.size();
+  return 0;
+}
+
+extern "C" int openmc_rmc_residual_records(double* r, double* u, double* E,
+  double* density, int* tag, int* sampler, double* terms)
+{
+  const auto& rec = last_records;
+  const int64_t n = rec.size();
   std::copy(rec.r.begin(), rec.r.end(), r);
   std::copy(rec.u.begin(), rec.u.end(), u);
   std::copy(rec.E.begin(), rec.E.end(), E);
   std::copy(rec.density.begin(), rec.density.end(), density);
-  std::copy(rec.C_s.begin(), rec.C_s.end(), C_s);
-  std::copy(rec.C_f.begin(), rec.C_f.end(), C_f);
-  std::copy(rec.U.begin(), rec.U.end(), U);
+  std::copy(rec.tag.begin(), rec.tag.end(), tag);
+  std::copy(rec.sampler.begin(), rec.sampler.end(), sampler);
+  // terms [7][n]: C_s, C_f, M_s, M_f, R_s, R_f, U
+  const vector<double>* cols[7] = {
+    &rec.C_s, &rec.C_f, &rec.M_s, &rec.M_f, &rec.R_s, &rec.R_f, &rec.U};
+  for (int c = 0; c < 7; ++c)
+    std::copy(cols[c]->begin(), cols[c]->end(), terms + c * n);
+  return 0;
+}
+
+extern "C" int openmc_rmc_residual_directions(
+  int64_t* n, double* ce, double* mg)
+{
+  *n = static_cast<int64_t>(last_ce.size());
+  if (ce)
+    std::copy(last_ce.begin(), last_ce.end(), ce);
+  if (mg)
+    std::copy(last_mg.begin(), last_mg.end(), mg);
   return 0;
 }
 
 extern "C" int openmc_rmc_residual_weights(int64_t n, const int* tag,
-  const double* C_s, const double* C_f, const double* U, const double* density,
-  int64_t N, double a_s, double a_f, double b_s, double b_f, double k,
-  double* w)
+  const int* sampler, const double* terms, const double* density, int64_t N,
+  const double* scalars, double* w)
 {
   rmc::ResidualRecords rec;
   rec.tag.assign(tag, tag + n);
-  rec.C_s.assign(C_s, C_s + n);
-  rec.C_f.assign(C_f, C_f + n);
-  rec.U.assign(U, U + n);
+  rec.sampler.assign(sampler, sampler + n);
+  vector<double>* cols[7] = {
+    &rec.C_s, &rec.C_f, &rec.M_s, &rec.M_f, &rec.R_s, &rec.R_f, &rec.U};
+  for (int c = 0; c < 7; ++c)
+    cols[c]->assign(terms + c * n, terms + (c + 1) * n);
   rec.density.assign(density, density + n);
   rec.E.assign(n, 0.0);
+  // scalars: a_s, a_f, b_s, b_f, k, c, lambda
+  rmc::WeightScalars x;
+  x.a[0] = scalars[0];
+  x.a[1] = scalars[1];
+  x.b[0] = scalars[2];
+  x.b[1] = scalars[3];
+  x.k = scalars[4];
+  x.c = scalars[5];
+  x.lambda = scalars[6];
   vector<double> out;
-  rmc::weight_records(rec, N, a_s, a_f, b_s, b_f, k, out);
+  rmc::weight_records(rec, N, x, out);
   std::copy(out.begin(), out.end(), w);
   return 0;
 }

@@ -1,6 +1,8 @@
 //! \file residual.h
 //! \brief Residual samples (Stage 4): the CE production of the field minus
-//! the field, at sampled outgoing states, as records with deferred weights.
+//! the field, at sampled outgoing states, as records with deferred weights,
+//! for the whole family of estimators (direction source, multigroup control,
+//! mixing).
 //!
 //! Theory: docs/source/methods/rmc.rst, methods_rmc_residual.
 
@@ -9,9 +11,12 @@
 
 #include <cstdint>
 
+#include "openmc/memory.h"
 #include "openmc/position.h"
 #include "openmc/rmc/backward.h"
+#include "openmc/rmc/channels.h"
 #include "openmc/rmc/field.h"
+#include "openmc/rmc/mg_control.h"
 #include "openmc/vector.h"
 
 namespace openmc {
@@ -32,100 +37,266 @@ struct OutgoingState {
 };
 
 //==============================================================================
-//! Outgoing-state proposal: energy log-uniform on [E_min, E_max], direction
-//! isotropic. Positive wherever the residual can be non-zero, as long as the
-//! range covers the field's lifts and the CE emission.
+// Proposals
 //==============================================================================
 
-class OutgoingProposal {
+//! How destinations are drawn. Every mode except box draws a region R with
+//! probability pi_R, then a point uniform in R (needs region volumes).
+enum class VoxelMode {
+  box,         //!< uniform in the field's ray source box
+  volume,      //!< pi_R proportional to V_R
+  fissionable, //!< pi_R proportional to V_R in fissionable materials
+  tabulated    //!< pi_R proportional to given weights w_R (V_R w_R if
+               //!< weights_per_volume)
+};
+
+struct VoxelOptions {
+  VoxelMode mode {VoxelMode::box};
+  vector<double> weights; //!< [R] for tabulated
+  bool weights_per_volume {false};
+};
+
+//! Destination proposal; density is per unit volume
+class VoxelProposal {
 public:
-  OutgoingProposal(double E_min, double E_max);
-  Draw<OutgoingState> sample(uint64_t* seed) const;
-  double density(const OutgoingState& s) const;
+  VoxelProposal(const FrozenField& field, const VoxelOptions& opt);
+  //! A destination, its region, and its density [1/cm^3]
+  Draw<Position> sample(uint64_t* seed, int64_t& region) const;
+  //! Density at a point in region R
+  double density(int64_t region) const;
+  double pi(int64_t region) const { return pi_.empty() ? 0.0 : pi_[region]; }
 
 private:
-  double E_min_, E_max_, log_ratio_;
+  const FrozenField& field_;
+  VoxelOptions opt_;
+  double V_box_;
+  vector<double> pi_;  //!< [R] region probabilities (not for box)
+  vector<double> cdf_; //!< [R]
+};
+
+struct OutgoingOptions {
+  double beta {1.0};   //!< weight of the log-uniform component; 1 gives a
+                       //!< pure log-uniform proposal
+  double E_min {1e-5}; //!< log-uniform range [eV]
+  double E_max {2e7};
+};
+
+//! Outgoing-state proposal: direction isotropic; energy from (1 - beta)
+//! times the region's emission spectrum of the tag (group by Q_{t,R,g},
+//! then the lift within the group) plus beta times log-uniform. Positive
+//! wherever the residual can be non-zero when beta > 0 and the range covers
+//! the field's lifts and the CE emission.
+class OutgoingProposal {
+public:
+  OutgoingProposal(const FrozenField& field, const OutgoingOptions& opt);
+  Draw<OutgoingState> sample(Tag t, int64_t region, uint64_t* seed) const;
+  double density(Tag t, int64_t region, const OutgoingState& s) const;
+
+private:
+  double energy_density(Tag t, int64_t region, double E) const;
+  const FrozenField& field_;
+  OutgoingOptions opt_;
+  double log_ratio_;
+};
+
+//! Incident-energy proposal of the fission evaluator and the sampler route
+enum class IncidentMode {
+  log_uniform, //!< log-uniform on [Ein_min, Ein_max]
+  flux //!< (1 - beta_in) times a group drawn by w_g' (below), then the flux
+       //!< shape h_phi within it, plus beta_in times log-uniform. Weights:
+       //!< nu Sigma_f,g' psi^MG_g' (fission) or psi^MG_g' (sampler route),
+       //!< from the direction's own MG flux (its path, or its sweep segment)
+};
+
+struct IncidentOptions {
+  IncidentMode mode {IncidentMode::log_uniform};
+  double beta {0.1};
+  double E_min {1e-5};
+  double E_max {2e7};
 };
 
 //==============================================================================
-//! Residual records: one per sample, SoA. A record holds what the weight
-//! needs except the scalars (a, b, k), which enter only in weight_records():
-//!
-//!   w = ((a_s C_s + a_f C_f) / k^[tag f] - b_tag U) / (N density)
-//!
-//! where C_s and C_f are the CE production of the record's tag from the
-//! field's Q_s and Q_f (the 1/k of fission production removed), U is the
-//! field Q_tag at the record's state, and density is that of the whole draw
-//! (position, energy, direction).
+// Field sweep: one random ray transport sweep from the field
 //==============================================================================
 
+//! Segment records of one transport sweep from Q_s and one from Q_f with the
+//! same rays, indexed by field region (CSR). psi_s, psi_f are chord-averaged
+//! group-integrated angular fluxes per unit solid angle (ascending groups).
+//! Quadrature weights are omega_j = 4 pi length_j / (rho V_R), with rho the
+//! sweep's active track length per unit volume and V_R the field's volume.
+struct SweepRecords {
+  int n_groups {0};
+  double rho {0.0};
+  vector<int64_t> offset; //!< [R + 1]
+  vector<Direction> u;    //!< direction of travel of each segment
+  vector<double> length;
+  vector<double> psi_s, psi_f; //!< [n * G]
+
+  int64_t size() const { return static_cast<int64_t>(length.size()); }
+  int64_t count(int64_t region) const
+  {
+    return offset[region + 1] - offset[region];
+  }
+};
+
+//! The records of the last field sweep through the C API (src/rmc/capi.cpp)
+extern unique_ptr<SweepRecords> loaded_sweep;
+
+//==============================================================================
+// Records
+//==============================================================================
+
+//! Residual records: one per sample (density branch) plus the sampler-route
+//! particles, SoA. Every term is stored per source tag y (from Q_s and Q_f),
+//! so the scalars a, b, k, c, lambda enter only in weight_records():
+//!
+//!   density branch, tag t:
+//!     w = { sum_y a_y (C_y - c M_y + c R_y) / k^[t=f]
+//!           - b_t [ (1 - lambda) U + lambda sum_y a_y R_y / k^[t=f] ] }
+//!         / (N density)
+//!   sampler branch:  w = sum_y a_y C_y / k^[t=f] / (N density)
+//!
+//! C_y: CE production (the channels of the record's branch); M_y: MG control
+//! on the same directions; R_y: the control's mean, restored (L MG-only
+//! directions, or the sweep's region emission Q-hat); U: the field.
 struct ResidualRecords {
   vector<double> r;       //!< [3n] position
   vector<double> u;       //!< [3n] direction
   vector<double> E;       //!< [n] energy [eV]
-  vector<double> density; //!< [n] density of (r, E, u)
+  vector<double> density; //!< [n] density of the draw (per unit volume for
+                          //!< sampler records, of (r, E, u) otherwise)
   vector<int> tag;        //!< [n] 0 = s, 1 = f
-  vector<double> C_s;     //!< [n]
-  vector<double> C_f;     //!< [n]
-  vector<double> U;       //!< [n]
+  vector<int> sampler;    //!< [n] 1 for sampler-route particles
+  vector<double> C_s, C_f, M_s, M_f, R_s, R_f, U;
 
   int64_t size() const { return static_cast<int64_t>(E.size()); }
   void clear();
 };
 
+enum class DirectionMode {
+  isotropic, //!< J stratified isotropic directions, omega_j = 4 pi / J
+  sweep      //!< the sweep segments in the destination's region
+};
+
+//! How the MG fission control handles the incident energy
+enum class ControlEnergy {
+  exact,      //!< exact sum over incident groups
+  same_energy //!< estimated at the CE estimate's sampled E' (shares its noise)
+};
+
 struct ResidualOptions {
-  int n_directions {8};   //!< J stratified isotropic incident directions
-  TailOptions tail;       //!< ending of each backward integral
-  double E_min {1e-6};    //!< outgoing energy proposal range [eV]
-  double E_max {2e7};
-  double Ein_min {1e-5};  //!< incident energy proposal range for fission [eV]
-  double Ein_max {2e7};
+  DirectionMode directions {DirectionMode::isotropic};
+  int n_directions {8}; //!< J; for sweep directions, the number of segments
+                        //!< subsampled with probability proportional to
+                        //!< omega_j (0 = every segment in the region)
+  bool control {false}; //!< compute M and R (needs the MG tables)
+  int n_control_directions {0}; //!< L MG-only directions (isotropic)
+  ControlEnergy control_energy {ControlEnergy::exact};
+  bool sampler_route {true}; //!< tag s: sampler-route particles
+  TailOptions tail;
+  VoxelOptions voxel;
+  OutgoingOptions outgoing;
+  IncidentOptions incident;
 };
 
 //==============================================================================
-//! Draws residual samples of one tag with destinations uniform in the field's
-//! ray source box, J stratified isotropic directions with omega_j = 4 pi / J,
-//! and the evaluator-route channels of Stage 3: stationary-target elastic
-//! scattering for tag s, fission for tag f. Other scattering channels
-//! (inelastic, (n,xn), hydrogen) belong to the sampler route, which is not
-//! yet implemented, so tag-s records omit their production.
+//! Draws residual samples of one tag. Each sample: a destination from the
+//! voxel proposal, an outgoing state, the field there (U), and over the
+//! directions of the direction source the CE production of the evaluator
+//! channels (C), the MG control (M) and its restored mean (R); and, for tag
+//! s, one sampler-route particle per direction.
 //==============================================================================
 
 class ResidualSampler {
 public:
-  ResidualSampler(const FrozenField& field, const ResidualOptions& opt);
+  ResidualSampler(const FrozenField& field, const ResidualOptions& opt,
+    const MGTables* tables = nullptr, const SweepRecords* sweep = nullptr);
 
-  //! Append n records of tag t, drawn with random numbers derived from seed
-  //! (sample i uses its own stream, so results do not depend on order).
+  //! Append the records of n samples of tag t (sample i uses its own
+  //! stream, so results do not depend on order).
   void sample(Tag t, int64_t n, uint64_t seed, ResidualRecords& out);
 
+  //! Diagnostics: per direction of the last sample() call, the CE and MG
+  //! estimates of q_j (from Q_s + Q_f) at the sample's outgoing state, for
+  //! the same-path correlation study (G3.7). Only kept if requested.
+  void keep_directions(bool on) { keep_ = on; }
+  const vector<double>& kept_ce() const { return kept_ce_; }
+  const vector<double>& kept_mg() const { return kept_mg_; }
+
 private:
-  //! CE production of tag t at (r, E, Omega) in the located material, from
-  //! Q_s and from Q_f, for one incident direction
-  void production(Tag t, Position r, Direction omega_in, const OutgoingState& s,
-    uint64_t* seed, double& c_s, double& c_f);
+  //! Destination state
+  struct Destination {
+    Position r;
+    int64_t region;
+    int32_t material;
+    double sqrtkT;
+    double density_mult;
+  };
+
+  //! Terms of one direction (per source tag y = s, f)
+  struct DirectionTerms {
+    double C[2] {0.0, 0.0};
+    double M[2] {0.0, 0.0};
+    bool has_sampler {false};
+    double S[2] {0.0, 0.0}; //!< sampler-route production times psi / p(E')
+    OutgoingState sampler_state;
+  };
+
+  void direction(Tag t, const Destination& d, Direction omega_in,
+    const OutgoingState& s, const double* psi_seg_s, const double* psi_seg_f,
+    uint64_t* seed, DirectionTerms& out);
+
+  //! Restored control mean (isotropic): L MG-only directions
+  void control_mean(Tag t, const Destination& d, const OutgoingState& s,
+    uint64_t* seed, double R[2]);
+
+  //! MG control of one direction from its MG fluxes; E_in, p_in are the
+  //! fission estimate's incident energy and density (same-energy form)
+  void mg_terms(Tag t, const Destination& d, const OutgoingState& s,
+    const vector<double>& mg_s, const vector<double>& mg_f, double E_in,
+    double p_in, double M[2]) const;
+
+  //! Incident-energy draw with weights from MG fluxes (mg_s + mg_f)
+  Draw<double> incident(Tag t, const Destination& d, const vector<double>& mg_s,
+    const vector<double>& mg_f, uint64_t* seed);
+  double incident_density(Tag t, const Destination& d,
+    const vector<double>& mg_s, const vector<double>& mg_f, double E) const;
+
+  bool needs_mg_flux(Tag t) const;
 
   const FrozenField& field_;
   ResidualOptions opt_;
-  OutgoingProposal proposal_;
+  const MGTables* tables_;
+  const SweepRecords* sweep_;
+  VoxelProposal voxel_;
+  OutgoingProposal outgoing_;
+  ChannelRegistry registry_;
   BackwardFlux backward_;
   XsProbe probe_;
-  // State of the current destination
-  int32_t material_ {-1};
-  double sqrtkT_ {0.0};
-  double density_mult_ {1.0};
+
+  bool keep_ {false};
+  vector<double> kept_ce_, kept_mg_;
+
   // Scratch, reused between samples (no allocation in steady state)
-  vector<double> energies_, psi_s_, psi_f_, image_density_;
+  vector<double> energies_, psi_s_, psi_f_, mg_s_, mg_f_, image_density_;
   vector<int> image_nuclide_;
+  vector<double> seg_s_, seg_f_, w_g_;
+  vector<int64_t> picks_;
 };
 
-//! Weights of the records for amplitudes (a_s, a_f), (b_s, b_f), eigenvalue
-//! k, and N samples of each record's tag.
-void weight_records(const ResidualRecords& rec, int64_t N, double a_s,
-  double a_f, double b_s, double b_f, double k, vector<double>& w);
+//! Weights of records for amplitudes (a_s, a_f), (b_s, b_f), eigenvalue k,
+//! control coefficient c, mixing lambda, and N samples of each tag.
+struct WeightScalars {
+  double a[2] {1.0, 1.0};
+  double b[2] {1.0, 1.0};
+  double k {1.0};
+  double c {0.0};
+  double lambda {0.0};
+};
+void weight_records(const ResidualRecords& rec, int64_t N,
+  const WeightScalars& x, vector<double>& w);
 
-//! J directions of a spherical Fibonacci set under a uniformly random
-//! rotation: stratified, and each one marginally uniform on the sphere.
+//! J spherical Fibonacci points under a uniformly random rotation
 void stratified_directions(int J, uint64_t* seed, vector<Direction>& out);
 
 } // namespace rmc
