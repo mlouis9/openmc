@@ -5,11 +5,12 @@ Each evaluator is the density of what an OpenMC sampler does, so the test
 of each is the same: sample with OpenMC on a scratch particle, histogram,
 and compare with the evaluator integrated over the same bins.
 
-- Fission (rmc::fission_energy_density, ContinuousTabular::evaluate): the
-  outgoing-energy law of U-235 and U-238 at incident energies on and between
-  the tabulated incident grid, where the sampler's random choice of table and
-  its rescaling of the outgoing energy both matter. The density integrates to
-  its CDF.
+- Fission (rmc::fission_energy_density, ContinuousTabular::evaluate,
+  MaxwellEnergy::evaluate): the outgoing-energy law of U-235 and U-238 at
+  incident energies on and between the tabulated incident grid, where the
+  sampler's random choice of table and its rescaling of the outgoing energy
+  both matter, and of U-236, whose prompt spectrum is a Maxwell law. The
+  density integrates to its CDF.
 - Elastic scattering off a stationary target (rmc::elastic_stationary): the
   joint (E, mu0) density for a 1/E incident spectrum, for C, O-16 (strongly
   forward-peaked above a few MeV), and U-238, including the kinematic edge
@@ -50,9 +51,13 @@ def lib(pincell, field_files):
 # ---------------------------------------------------------------------------
 
 # On the incident grid (1.5 MeV) and between grid points where neighboring
-# tables differ strongly (17.5 MeV, multi-chance fission; 0.25 MeV)
+# tables differ strongly (17.5 MeV, multi-chance fission; 0.25 MeV). U-236's
+# prompt spectrum is a Maxwell law (MaxwellEnergy), not a table. Its
+# restriction energy is -30 MeV, so the truncation at E - U never acts below
+# energy_max, and only the conditioning on E_out < energy_max is exercised.
 FISSION_CASES = [('U235', 1.5e6), ('U235', 1.75e7), ('U235', 2.5e5),
-                 ('U238', 1.5e6), ('U238', 2.5e7), ('U238', 1e3)]
+                 ('U238', 1.5e6), ('U238', 2.5e7), ('U238', 1e3),
+                 ('U236', 1e3), ('U236', 1.5e6), ('U236', 1.2e7)]
 
 
 @pytest.mark.slow
@@ -69,7 +74,7 @@ def test_fission_energy_law_matches_sampler(lib, nuclide, E_in):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize('nuclide,E_in', FISSION_CASES[:3])
+@pytest.mark.parametrize('nuclide,E_in', FISSION_CASES[:3] + FISSION_CASES[-2:])
 def test_fission_density_integrates_to_cdf(lib, nuclide, E_in):
     """The density and the CDF are the same law: trapezoid integrals of the
     density on a fine grid equal CDF differences."""

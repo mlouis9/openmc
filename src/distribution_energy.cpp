@@ -1,11 +1,13 @@
 #include "openmc/distribution_energy.h"
 
 #include <algorithm> // for max, min, copy, move, upper_bound
+#include <cmath>
 #include <cstddef>   // for size_t
 #include <iterator>  // for back_inserter
 
 #include "openmc/tensor.h"
 
+#include "openmc/constants.h"
 #include "openmc/endf.h"
 #include "openmc/error.h"
 #include "openmc/hdf5_interface.h"
@@ -391,6 +393,11 @@ double EnergyDistribution::evaluate(double E, double E_out) const
   fatal_error("evaluate() is not implemented for this energy distribution.");
 }
 
+double EnergyDistribution::cdf(double E, double E_out) const
+{
+  fatal_error("cdf() is not implemented for this energy distribution.");
+}
+
 //==============================================================================
 // MaxwellEnergy implementation
 //==============================================================================
@@ -448,6 +455,65 @@ double Evaporation::sample(double E, uint64_t* seed) const
   }
 
   return x * theta;
+}
+
+// Lower incomplete gamma functions gamma(3/2, y) and gamma(2, y), the
+// normalizations of the Maxwell and evaporation spectra on [0, y theta]
+namespace {
+double lower_gamma_3_2(double y)
+{
+  double s = std::sqrt(y);
+  return 0.5 * SQRT_PI * std::erf(s) - s * std::exp(-y);
+}
+double lower_gamma_2(double y)
+{
+  // 1 - e^-y (1 + y), with a series for small y to avoid cancellation
+  if (y < 1e-3)
+    return y * y * (0.5 - y / 3.0 + y * y / 8.0);
+  return -std::expm1(-y) - y * std::exp(-y);
+}
+} // namespace
+
+double MaxwellEnergy::evaluate(double E, double E_out) const
+{
+  double theta = theta_(E);
+  double y = (E - u_) / theta;
+  if (E_out <= 0.0 || E_out > E - u_ || y <= 0.0)
+    return 0.0;
+  double x = E_out / theta;
+  return std::sqrt(x) * std::exp(-x) / (theta * lower_gamma_3_2(y));
+}
+
+double MaxwellEnergy::cdf(double E, double E_out) const
+{
+  double theta = theta_(E);
+  double y = (E - u_) / theta;
+  if (E_out <= 0.0 || y <= 0.0)
+    return 0.0;
+  if (E_out >= E - u_)
+    return 1.0;
+  return lower_gamma_3_2(E_out / theta) / lower_gamma_3_2(y);
+}
+
+double Evaporation::evaluate(double E, double E_out) const
+{
+  double theta = theta_(E);
+  double y = (E - u_) / theta;
+  if (E_out <= 0.0 || E_out > E - u_ || y <= 0.0)
+    return 0.0;
+  double x = E_out / theta;
+  return x * std::exp(-x) / (theta * lower_gamma_2(y));
+}
+
+double Evaporation::cdf(double E, double E_out) const
+{
+  double theta = theta_(E);
+  double y = (E - u_) / theta;
+  if (E_out <= 0.0 || y <= 0.0)
+    return 0.0;
+  if (E_out >= E - u_)
+    return 1.0;
+  return lower_gamma_2(E_out / theta) / lower_gamma_2(y);
 }
 
 //==============================================================================

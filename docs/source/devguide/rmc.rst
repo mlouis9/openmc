@@ -615,3 +615,43 @@ Bug found
     lookup: OpenMC's ``log_spacing`` survives ``openmc_finalize()`` while the
     nuclides are reloaded without their grids. The C API now checks every
     nuclide's grid.
+
+.. _devguide_rmc_maxwell:
+
+Maxwell and evaporation fission spectra
+---------------------------------------
+
+**Commit:** "rmc: densities of Maxwell and evaporation energy laws".
+
+The first residual samples in the infinite medium stopped with
+"evaluate() is not implemented for this energy distribution": the prompt
+fission spectra of U-236 and U-237 in the test data are Maxwell laws (ACE
+law 7), not tables. The default that stops with an error did its job.
+
+Added
+    - ``EnergyDistribution::cdf``, virtual, with the same stopping default
+      as ``evaluate``; ``ContinuousTabular::cdf`` now overrides it, and
+      ``rmc::fission_energy_density`` and ``fission_energy_cdf`` use it for
+      any law instead of requiring ``ContinuousTabular``.
+    - ``MaxwellEnergy::evaluate`` and ``cdf``: the Maxwell spectrum
+      :math:`\sqrt{E}\,e^{-E/\theta}` truncated to :math:`[0, E'-U]` by the
+      sampler's rejection, normalized by the lower incomplete gamma function
+      :math:`\gamma(3/2, (E'-U)/\theta)`.
+    - ``Evaporation::evaluate`` and ``cdf``: :math:`E\,e^{-E/\theta}` on
+      :math:`[0, E'-U]`. The sampler draws the sum of two truncated
+      exponentials and rejects sums above :math:`E'-U`; the sum's density is
+      :math:`x e^{-x}` on that range, so the law is exact.
+
+Verified by ``tests/rmc/test_production.py``
+    U-236 fission at 1 keV, 1.5 MeV, and 12 MeV against
+    ``sample_fission_neutron`` (G3.2 criterion), and the density integrates
+    to its CDF.
+
+Limitations
+    - In the test data the Maxwell restriction energy is :math:`-30` MeV, so
+      the truncation at :math:`E'-U` never acts below ``energy_max``; only
+      the conditioning on :math:`E < E_{max}` is exercised. **Mutation check
+      (done by hand):** normalizing by the untruncated
+      :math:`\gamma(3/2,\infty)` passes, as expected for that reason.
+    - No evaporation law occurs in the test data, so ``Evaporation`` is
+      untested. ``WattEnergy`` (law 11) still stops with an error.

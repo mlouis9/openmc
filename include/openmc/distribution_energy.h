@@ -30,6 +30,10 @@ public:
   //!   law without an implementation is never silently treated as zero.
   virtual double evaluate(double E, double E_out) const;
 
+  //! Cumulative distribution consistent with evaluate(): the probability
+  //! that sample() returns less than E_out. The default stops with an error.
+  virtual double cdf(double E, double E_out) const;
+
   virtual ~EnergyDistribution() = default;
 };
 
@@ -97,7 +101,7 @@ public:
 
   //! Cumulative distribution of the outgoing energy, consistent with
   //! evaluate(): the probability that sample() returns less than E_out.
-  double cdf(double E, double E_out) const;
+  double cdf(double E, double E_out) const override;
 
 private:
   //! Interpolation weights of the incident tables sample() may choose, and
@@ -145,6 +149,14 @@ public:
   //! \return Sampled energy in [eV]
   double sample(double E, uint64_t* seed) const override;
 
+
+  //! Density of the outgoing energy that sample() produces: the spectrum
+  //! truncated to [0, E - U] by sample()'s rejection, and renormalized.
+  double evaluate(double E, double E_out) const override;
+
+  //! Cumulative distribution consistent with evaluate()
+  double cdf(double E, double E_out) const override;
+
 private:
   Tabulated1D theta_; //!< Incoming energy dependent parameter
   double u_;          //!< Restriction energy
@@ -164,6 +176,14 @@ public:
   //! \param[inout] seed Pseudorandom number seed pointer
   //! \return Sampled energy in [eV]
   double sample(double E, uint64_t* seed) const override;
+
+
+  //! Density of the outgoing energy that sample() produces: the spectrum
+  //! truncated to [0, E - U] by sample()'s rejection, and renormalized.
+  double evaluate(double E, double E_out) const override;
+
+  //! Cumulative distribution consistent with evaluate()
+  double cdf(double E, double E_out) const override;
 
 private:
   Tabulated1D theta_; //!< Incoming energy dependent parameter

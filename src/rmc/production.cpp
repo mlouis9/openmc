@@ -84,12 +84,8 @@ double fission_energy_cdf(
   // is conditioned on E_out < E_max
   auto conditioned = [&](const ReactionProduct& prod) {
     auto cdf_at = [&](double x) {
-      return product_mix(prod, E_in, [&](const EnergyDistribution& d) {
-        auto* ct = dynamic_cast<const ContinuousTabular*>(&d);
-        if (!ct)
-          fatal_error("RMC production: fission CDF needs ContinuousTabular.");
-        return ct->cdf(E_in, x);
-      });
+      return product_mix(prod, E_in,
+        [&](const EnergyDistribution& d) { return d.cdf(E_in, x); });
     };
     double Z = cdf_at(E_max);
     return cdf_at(std::min(E_out, E_max)) / Z;
@@ -108,13 +104,8 @@ double fission_energy_density(
   auto conditioned = [&](const ReactionProduct& prod) {
     double f = product_mix(prod, E_in,
       [&](const EnergyDistribution& d) { return d.evaluate(E_in, E_out); });
-    double Z = product_mix(prod, E_in, [&](const EnergyDistribution& d) {
-      auto* ct = dynamic_cast<const ContinuousTabular*>(&d);
-      // Only ContinuousTabular provides the normalization below E_max
-      if (!ct)
-        fatal_error("RMC production: fission density needs ContinuousTabular.");
-      return ct->cdf(E_in, E_max);
-    });
+    double Z = product_mix(prod, E_in,
+      [&](const EnergyDistribution& d) { return d.cdf(E_in, E_max); });
     return f / Z;
   };
   return over_products(nuc, rx, E_in, conditioned);
