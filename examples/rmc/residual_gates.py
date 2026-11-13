@@ -161,3 +161,108 @@ def residual_histogram(rec, w, material_of, E_edges, n_materials):
     total = per.sum(axis=0)
     sem = per.std(axis=0, ddof=1) * math.sqrt(N)
     return total.reshape(n_materials, nb), sem.reshape(n_materials, nb)
+
+
+def bank_reference(model, bank, workdir, E_edges, material_ids, flux_edges=None,
+                   particles=100_000, runs=5, k=1.0, threads=None, seed=1):
+    """Gate G5.2/G5.4's reference: the first-collision production and the
+    uncollided flux of a signed bank, from OpenMC's own transport.
+
+    The positive and negative parts of the bank are written as two source
+    files with site weights |w_i|; OpenMC chooses a site uniformly, so the
+    tallies per source particle times N_file are the absolute response. Each part runs as
+    in first_collision_reference() (one-batch eigenvalue runs, energy cutoff,
+    CollisionFilter([1]) for production); the uncollided flux is tallied with
+    a track-length estimator and CollisionFilter([0]) by material and energy.
+    Returns {'s', 'f', 'flux': (mean, std)}, signed (positive part minus
+    negative part), with the fission production divided by k.
+    """
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    flux_edges = E_edges if flux_edges is None else flux_edges
+    parts = {}
+    for sign, name in ((1.0, 'positive'), (-1.0, 'negative')):
+        idx = np.flatnonzero(np.sign(bank['w']) == sign)
+        if idx.size == 0:
+            continue
+        # Site weights |w_i|; the tallies are scaled by N_file afterwards.
+        # (Weights N_file |w_i| would give the same mean, but in an
+        # eigenvalue run a collision banks about wgt nu Sigma_f / Sigma_t
+        # fission sites, and weights of hundreds overflow the fission bank.)
+        sites = [openmc.SourceParticle(r=tuple(bank['r'][i]), u=tuple(bank['u'][i]),
+                                       E=float(bank['E'][i]),
+                                       wgt=float(abs(bank['w'][i])))
+                 for i in idx]
+        src = workdir / f'{name}.h5'
+        openmc.write_source_file(sites, src)
+        results = []
+        for i_run in range(runs):
+            m = openmc.Model(geometry=model.geometry, materials=model.materials)
+            s = openmc.Settings()
+            s.run_mode = 'eigenvalue'
+            s.particles, s.batches, s.inactive = int(particles), 1, 0
+            s.seed = seed + i_run
+            s.source = openmc.FileSource(str(src))
+            s.cutoff = {'energy_neutron': 2.0e7}
+            for key in ('free_gas_threshold', 'ptables', 'temperature'):
+                val = getattr(model.settings, key)
+                if val is not None:
+                    setattr(s, key, val)
+            m.settings = s
+            t = openmc.Tally(name='first_collision')
+            t.filters = [openmc.MaterialFilter(list(material_ids)),
+                         openmc.EnergyoutFilter(list(E_edges)),
+                         openmc.CollisionFilter([1])]
+            t.scores = ['nu-scatter', 'nu-fission']
+            t.estimator = 'analog'
+            f = openmc.Tally(name='uncollided')
+            f.filters = [openmc.MaterialFilter(list(material_ids)),
+                         openmc.EnergyFilter(list(flux_edges)),
+                         openmc.CollisionFilter([0])]
+            f.scores = ['flux']
+            f.estimator = 'tracklength'
+            m.tallies = openmc.Tallies([t, f])
+            sp_path = m.run(cwd=workdir / f'{name}_run{i_run}', output=False,
+                            threads=threads)
+            with openmc.StatePoint(sp_path) as sp:
+                a = sp.get_tally(name='first_collision').mean.reshape(
+                    len(material_ids), len(E_edges) - 1, 2)
+                b = sp.get_tally(name='uncollided').mean.reshape(
+                    len(material_ids), len(flux_edges) - 1)
+            results.append((a, b))
+        a = idx.size * np.array([x[0] for x in results])
+        b = idx.size * np.array([x[1] for x in results])
+        parts[name] = (sign, a.mean(0), a.std(0, ddof=1) / math.sqrt(runs),
+                       b.mean(0), b.std(0, ddof=1) / math.sqrt(runs))
+    out = {}
+    for key, j in (('s', 0), ('f', 1)):
+        mean = sum(p[0] * p[1][..., j] for p in parts.values())
+        std = np.sqrt(sum(p[2][..., j]**2 for p in parts.values()))
+        if key == 'f':
+            mean, std = mean / k, std / k
+        out[key] = (mean, std)
+    out['flux'] = (sum(p[0] * p[3] for p in parts.values()),
+                   np.sqrt(sum(p[4]**2 for p in parts.values())))
+    return out
+
+
+def children_histogram(children, n_flights, material_of, E_edges, n_materials):
+    """Children's weights by (collision material, energy bin) and tag, with
+    standard errors from the flights (a flight has at most one child; the
+    flights that left none contribute zero)."""
+    out = {}
+    for t, it in (('s', 0), ('f', 1)):
+        m = children['tag'] == it
+        mat = material_of(children['r'][m])
+        b = np.searchsorted(E_edges, children['E'][m], side='right') - 1
+        ok = (b >= 0) & (b < len(E_edges) - 1) & (mat >= 0)
+        nb = len(E_edges) - 1
+        idx = mat[ok] * nb + b[ok]
+        w = children['w'][m][ok]
+        total = np.bincount(idx, weights=w, minlength=n_materials * nb)
+        sq = np.bincount(idx, weights=(w * n_flights)**2, minlength=n_materials * nb)
+        # Per flight x_j = N w_child (0 for the others): sum = mean(x)
+        var = (sq / n_flights - total**2) / n_flights
+        out[t] = (total.reshape(n_materials, nb),
+                  np.sqrt(np.maximum(var, 0.0)).reshape(n_materials, nb))
+    return out

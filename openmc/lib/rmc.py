@@ -66,7 +66,9 @@ for _name, _args in [
 for _name in ('openmc_rmc_field_groups', 'openmc_rmc_residual_sample',
               'openmc_rmc_residual_records', 'openmc_rmc_residual_directions',
               'openmc_rmc_residual_weights', 'openmc_rmc_sweep_field',
-              'openmc_rmc_sweep_field_region'):
+              'openmc_rmc_sweep_field_region', 'openmc_rmc_bank_create',
+              'openmc_rmc_bank_size', 'openmc_rmc_bank_get', 'openmc_rmc_bank_free',
+              'openmc_rmc_propagate'):
     _fn = getattr(_dll, _name)
     _fn.restype, _fn.errcheck = c_int, _error_handler
 
@@ -561,3 +563,72 @@ def mg_control(r, u_in, E, tag, tail='roulette', cutoff=math.exp(-8.0),
                                TAGS[tag], TAILS[tail], float(cutoff), float(length),
                                int(max_segments), int(seed), q_s, q_f, m_s, m_f)
     return q_s, q_f, m_s, m_f
+
+
+# ---------------------------------------------------------------------------
+# Signed banks and forward flights
+# ---------------------------------------------------------------------------
+
+def _dp(a):
+    return a.ctypes.data_as(POINTER(c_double))
+
+
+class Bank:
+    """A signed bank held in C++ memory (rmc::SignedBank), by handle."""
+
+    def __init__(self, r=None, u=None, E=None, w=None, tag=None):
+        n = 0 if w is None else len(w)
+        r = np.ascontiguousarray(np.zeros((0, 3)) if r is None else r, dtype=float)
+        u = np.ascontiguousarray(np.zeros((0, 3)) if u is None else u, dtype=float)
+        E = np.ascontiguousarray([] if E is None else E, dtype=float)
+        w = np.ascontiguousarray([] if w is None else w, dtype=float)
+        t = np.ascontiguousarray([] if tag is None else
+                                 [TAGS[x] if isinstance(x, str) else int(x) for x in tag],
+                                 dtype=np.int32)
+        h = c_int32()
+        _dll.openmc_rmc_bank_create(c_int64(n), _dp(r), _dp(u), _dp(E), _dp(w),
+                                    t.ctypes.data_as(POINTER(c_int)), byref(h))
+        self.handle = h.value
+
+    def __len__(self):
+        n = c_int64()
+        _dll.openmc_rmc_bank_size(c_int32(self.handle), byref(n))
+        return n.value
+
+    def arrays(self):
+        """Copies of the bank: dict of r, u [n, 3], E, w, tag [n]."""
+        n = len(self)
+        out = dict(r=np.empty((n, 3)), u=np.empty((n, 3)), E=np.empty(n),
+                   w=np.empty(n), tag=np.empty(n, dtype=np.int32))
+        if n:
+            _dll.openmc_rmc_bank_get(c_int32(self.handle), _dp(out['r']), _dp(out['u']),
+                                     _dp(out['E']), _dp(out['w']),
+                                     out['tag'].ctypes.data_as(POINTER(c_int)))
+        return out
+
+    def free(self):
+        if self.handle is not None:
+            _dll.openmc_rmc_bank_free(c_int32(self.handle))
+            self.handle = None
+
+
+def propagate(bank, n, k, seed=1, out=None, tally_materials=None, tally_edges=None):
+    """n forward flights from bank; children are appended to out (a new Bank
+    by default). Returns (out, stats, flux): stats is a dict of the flight
+    counts and W_abs; flux, with tally_materials (IDs) and tally_edges, the
+    signed track length [material, energy bin]."""
+    if out is None:
+        out = Bank()
+    mats = np.ascontiguousarray(tally_materials or [], dtype=np.int32)
+    edges = np.ascontiguousarray([] if tally_edges is None else tally_edges, dtype=float)
+    flux = np.zeros(max(len(mats) * max(len(edges) - 1, 0), 1))
+    stats = np.zeros(6)
+    _dll.openmc_rmc_propagate(c_int32(bank.handle), c_int64(int(n)), c_double(k),
+                              c_uint64(int(seed)), c_int32(out.handle),
+                              c_int(len(mats)), mats.ctypes.data_as(POINTER(c_int32)),
+                              c_int(len(edges)), _dp(edges), _dp(flux), _dp(stats))
+    names = ('flights', 'leaked', 'captured', 'scattered', 'fissions', 'W_abs')
+    st = dict(zip(names, stats))
+    if len(mats) and len(edges) > 1:
+        return out, st, flux[:len(mats) * (len(edges) - 1)].reshape(len(mats), -1)
+    return out, st, None

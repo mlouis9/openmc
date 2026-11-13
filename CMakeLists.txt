@@ -392,11 +392,13 @@ list(APPEND libopenmc_SOURCES
   src/rmc/backward_capi.cpp
   src/rmc/capi.cpp
   src/rmc/field.cpp
+  src/rmc/flight.cpp
   src/rmc/kinematics.cpp
   src/rmc/mg_tables.cpp
   src/rmc/production.cpp
   src/rmc/production_capi.cpp
   src/rmc/random_ray_capi.cpp
+  src/rmc/bank_capi.cpp
   src/rmc/channels.cpp
   src/rmc/mg_control.cpp
   src/rmc/mg_control_capi.cpp

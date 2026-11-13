@@ -203,6 +203,22 @@ int openmc_rmc_sweep_field(int64_t batch, int64_t* n_records);
 //! null, only n and rho are set.
 int openmc_rmc_sweep_field_region(int64_t region, double* rho, int64_t* n,
   double* u, double* length, double* psi_s, double* psi_f);
+
+//! Signed banks by handle, and forward flights (src/rmc/bank_capi.cpp).
+//! Arrays: r, u [n][3]; E, w, tag [n] (tag 0 = s, 1 = f).
+int openmc_rmc_bank_create(int64_t n, const double* r, const double* u,
+  const double* E, const double* w, const int* tag, int32_t* handle);
+int openmc_rmc_bank_size(int32_t handle, int64_t* n);
+int openmc_rmc_bank_get(
+  int32_t handle, double* r, double* u, double* E, double* w, int* tag);
+int openmc_rmc_bank_free(int32_t handle);
+//! n flights from bank in, children appended to bank out. With materials
+//! and energy edges, flux [n_materials][n_edges - 1] receives the flights'
+//! signed track length. stats [6]: flights, leaked, captured, scattered,
+//! fissions, W_abs.
+int openmc_rmc_propagate(int32_t in, int64_t n, double k, uint64_t seed,
+  int32_t out, int n_materials, const int32_t* material_ids, int n_edges,
+  const double* E_edges, double* flux, double* stats);
 }
 
 #endif // OPENMC_RMC_CAPI_H
