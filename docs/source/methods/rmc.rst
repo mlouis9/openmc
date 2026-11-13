@@ -295,6 +295,95 @@ with :math:`p_{lab}` from eq. :eq:`rmc-p-lab`. The azimuth adds a factor
 :math:`A > 1`, no resonance scattering, and :math:`E'` at or above
 ``free_gas_threshold`` times :math:`kT`.
 
+.. _methods_rmc_channels:
+
+---------------------
+Channels and Routes
+---------------------
+
+Every reaction with a neutron product is a *channel* of one nuclide in one
+material, with a tag: elastic scattering (without its
+S(:math:`\alpha,\beta`) part), the S(:math:`\alpha,\beta`) part of elastic
+scattering, every other non-fission reaction with a neutron product
+(inelastic levels and continuum, :math:`(n,xn)`), with its yield
+:math:`\bar\nu_x`, all tag :math:`s`; and fission, tag :math:`f`. Capture
+belongs to no channel but stays in :math:`\Sigma_t`. The production of a
+channel is :math:`N_i\,\bar\nu_x(E')\,\sigma_x(E')`; for fission it is
+OpenMC's tabulated :math:`\nu\sigma_f`, which is interpolated as a product
+on the energy grid and is what ``create_fission_sites`` uses.
+
+Each channel's production at a common output is estimated on one of two
+*routes*, decided per incident energy:
+
+- **Evaluator route:** its density at :math:`(E, \mathbf{\Omega})` is
+  evaluated (eqs. :eq:`rmc-fission-chi` and :eq:`rmc-elastic-image`).
+  Fission always; elastic scattering where OpenMC uses a stationary target
+  (:math:`A > 1`, not a resonant scatterer,
+  :math:`E' \ge` ``free_gas_threshold`` :math:`kT`, inside the data range).
+- **Sampler route:** at an incident energy :math:`E'` drawn with density
+  :math:`g(E')`, one sampler-route channel is chosen with probability
+  proportional to its production, OpenMC's own routine for it
+  (``elastic_scatter`` with a moving target, ``sab_scatter``,
+  ``inelastic_scatter``) is applied to a scratch particle, and the
+  outgoing state is banked as a positive particle with weight
+
+  .. math::
+      :label: rmc-sampler-weight
+
+      \omega_j\, \frac{\Sigma^{samp}_{\mathcal{P}}(E')\,
+      \psi(\mathbf{r}, E', \mathbf{\Omega}'_j)}{g(E')},
+
+  where :math:`\Sigma^{samp}_{\mathcal{P}}` is the summed production of the
+  sampler-route channels. The yields are in :math:`\Sigma^{samp}_{\mathcal{P}}`,
+  so the routine's own weight change and secondaries are discarded.
+
+The routes partition the production exactly: at every energy, evaluator plus
+sampler production equals the tag's total, and their sum over tags equals
+the material's neutron production.
+
+.. _methods_rmc_mg_control:
+
+------------------------
+The Multigroup Control
+------------------------
+
+Along the same backward path as the CE integral, the multigroup angular flux
+of each group follows from the MG total cross sections of the segments and
+the field's group emission:
+
+.. math::
+    :label: rmc-mg-psi
+
+    \psi^{MG}_{g'} = \sum_k e^{-\tau_{k,g'}}\, \frac{Q_{k,g'}}{4\pi}\,
+    \Lambda\big(\Sigma^{MG}_{t,k,g'}, \ell_k\big),
+
+with each group carrying its own transmission and tail decisions. The MG
+production at the common output, for the destination's material :math:`m`
+and region :math:`R`, is
+
+.. math::
+    :label: rmc-mg-production
+
+    q^{MG}_t(E) = \frac{h_{t,R}(E)}{4\pi} \sum_{g'} K^t_m\big(g' \to g(E)\big)\,
+    \psi^{MG}_{g'}, \qquad
+    K^s = \nu\Sigma_s, \quad K^f = \chi\,\nu\Sigma_f,
+
+the same production the field was computed with, so that at
+:math:`a = (1,1)` and :math:`k = k_{MG}` a converged field reproduces itself
+on average. For fission there is a second form that shares the CE estimate's
+incident energy: with :math:`E'` drawn with density :math:`g(E')`,
+
+.. math::
+    :label: rmc-mg-same-energy
+
+    q^{MG}_f(E) \approx \frac{h_{f,R}(E)}{4\pi}\, \chi_{g(E)}\,
+    \nu\Sigma_{f,g(E')}\, \psi^{MG}_{g(E')}\, \frac{h^{\phi}_R(E')}{g(E')},
+
+whose mean over :math:`E'` is eq. :eq:`rmc-mg-production`, with
+:math:`h^\phi` the within-group flux shape. The CE and MG fission estimates
+of one direction then vary together with :math:`E'`, and their difference is
+small where the CE and MG cross sections agree.
+
 .. _methods_rmc_residual:
 
 -----------------
@@ -302,13 +391,13 @@ Residual Samples
 -----------------
 
 The residual of the field for tag :math:`t \in \{s, f\}` is the CE production
-of that tag from the field's flux, minus the field itself:
+of that tag from the field's flux, minus the field candidate:
 
 .. math::
     :label: rmc-residual
 
     R_t(\mathbf{r}, E, \mathbf{\Omega}) = \frac{1}{k^{[t=f]}}\,
-    C_t(\mathbf{r}, E, \mathbf{\Omega}) - b_t\, Q^{MG}_t(\mathbf{r}, E, \mathbf{\Omega}),
+    C_t(\mathbf{r}, E, \mathbf{\Omega}) - F_t(\mathbf{r}, E, \mathbf{\Omega}),
     \qquad
     C_t = \int_{4\pi} d\mathbf{\Omega}' \int dE'\;
     K_t(E', \mathbf{\Omega}' \to E, \mathbf{\Omega})\,
@@ -320,45 +409,140 @@ eq. :eq:`rmc-backward-psi` for the field
 :math:`a_s Q^{MG}_s + a_f Q^{MG}_f`. Because :math:`\psi` is linear in the
 field, :math:`C_t = a_s C_{t,s} + a_f C_{t,f}`, with :math:`C_{t,s}` and
 :math:`C_{t,f}` the production from :math:`\psi` of :math:`Q^{MG}_s` and of
-:math:`Q^{MG}_f` alone. The amplitudes :math:`a, b` and the eigenvalue
-:math:`k` are scalars that change between generations.
+:math:`Q^{MG}_f` alone. The frozen field candidate is
+:math:`F_t = b_t\,Q^{MG}_t`; the swept candidates are below. The amplitudes
+:math:`a, b` and the eigenvalue :math:`k` are scalars that change between
+generations.
 
-**Records with deferred weights.** A sample draws a destination
-:math:`\mathbf{r}` uniformly in the field's ray source box of volume
-:math:`V`, an energy log-uniformly on :math:`[E_{min}, E_{max}]`, and an
-isotropic direction, with joint density
+.. _methods_rmc_residual_proposals:
+
+Proposals
+---------
+
+A sample draws a destination, an outgoing state, and, on each incident
+direction, the incident energies it needs.
+
+- **Destination.** Uniform in the field's ray source box (density
+  :math:`1/V_{box}`), or a region :math:`R` drawn with probability
+  :math:`\pi_R` and then a point uniform in it (density
+  :math:`\pi_R/V_R`). :math:`\pi_R` is proportional to the region volume, to
+  the volume of fissionable regions only, or to given weights; a point
+  uniform in a region is drawn uniformly in its mesh element (or the box)
+  and kept if it is located in the region.
+- **Outgoing state.** An isotropic direction, and an energy from the mixture
+
+  .. math::
+      :label: rmc-residual-outgoing
+
+      p^t(E \mid R) = (1-\beta)\,\frac{Q_{t,R,g(E)}\,h_{t,R}(E)}
+      {\sum_g Q_{t,R,g}} + \beta\,\frac{1}{E\ln(E_{max}/E_{min})},
+
+  the region's emission spectrum and a log-uniform component. The residual
+  contains :math:`-F_t` and the CE emission, so :math:`\beta > 0` and a range
+  covering both lifts and CE emission keep the proposal positive wherever the
+  residual can be non-zero.
+- **Incident energy** (fission evaluator and sampler route). Log-uniform, or
+  a mixture led by the direction's own MG flux: a group :math:`g'` with
+  probability proportional to :math:`\nu\Sigma_{f,g'}\psi^{MG}_{g'}`
+  (fission) or :math:`\psi^{MG}_{g'}` (sampler route), :math:`E'` from the
+  flux shape :math:`h^\phi_R` in it, and a log-uniform component of weight
+  :math:`\beta'`.
+
+No proposal uses :math:`a`, :math:`b`, or :math:`k` (the flux-led ones use
+:math:`\psi^{MG}` of :math:`Q^{MG}_s + Q^{MG}_f`), which keeps the weights
+deferrable. Every proposal returns its value with the density it was drawn
+from, and weights use only that density.
+
+.. _methods_rmc_residual_family:
+
+Directions and the estimator family
+-----------------------------------
+
+The direction integral in :math:`C_t` uses one of two direction sources.
+
+- **Isotropic.** :math:`J` spherical Fibonacci points (cosines stratified on
+  :math:`[-1, 1]`, azimuths at the golden angle) under a uniformly random
+  rotation, with :math:`\omega_j = 4\pi/J`. Each rotated point is marginally
+  uniform on the sphere, so the estimate is unbiased for any integrand.
+- **Sweep.** One random ray transport sweep from :math:`Q^{MG}_s` and one
+  from :math:`Q^{MG}_f`, with the same rays, give the segments crossing each
+  region, with direction :math:`\mathbf{\Omega}'_j`, chord length
+  :math:`\ell_j`, and chord-averaged MG angular fluxes, and weights
+  :math:`\omega_j` of eq. :eq:`rmc-sweep-weight` with the field's region
+  volumes. The CE
+  integral uses every segment of the destination's region, or :math:`J` of
+  them drawn with probability proportional to :math:`\omega_j`, each with
+  weight :math:`\sum_j\omega_j/J`. The CE trace follows a new characteristic
+  parallel to the segment, from the destination.
+
+On each direction the MG control :math:`q^{MG}_j` is evaluated on the same
+footing: from the MG flux on the same backward path (isotropic directions),
+or from the segment's chord-averaged flux (sweep directions). With control
+coefficient :math:`c` and mixing :math:`\lambda`,
 
 .. math::
-    :label: rmc-residual-proposal
+    :label: rmc-residual-family
 
-    p(\mathbf{r}, E, \mathbf{\Omega}) = \frac{1}{V}\,
-    \frac{1}{E \ln(E_{max}/E_{min})}\, \frac{1}{4\pi}.
+    \Delta_t = \sum_j \omega_j \Big[\hat q^{CE}_j - c\, q^{MG}_j\Big]
+    + c\,\hat R_t - b_t\Big[(1-\lambda)\, Q^{MG}_t + \lambda\, \hat Q_t\Big],
 
-It stores :math:`(\mathbf{r}, E, \mathbf{\Omega}, p, t)` and estimates of
-:math:`C_{t,s}`, :math:`C_{t,f}`, and :math:`U = Q^{MG}_t(\mathbf{r}, E, \mathbf{\Omega})`, the field per unit solid angle.
-The weight of a record, for :math:`N` samples of its tag, is
+where :math:`\hat R_t` restores the control's mean: for isotropic directions,
+:math:`L` further MG-only directions with the same MG estimator,
+:math:`\hat R_t = \sum_{l=1}^{L} (4\pi/L)\, q^{MG}_l`; for sweep directions,
+the sweep's region emission
+
+.. math::
+    :label: rmc-sweep-emission
+
+    \hat Q_t(E) = \sum_{j \in R} \omega_j\, q^{MG}_j(E),
+
+the multigroup update of the field from this sweep (with :math:`1/k` for
+fission). :math:`\lambda` is used only with sweep directions. Every member is
+unbiased for :math:`R_t` with :math:`F_t = b_t[(1-\lambda)Q^{MG}_t +
+\lambda\hat Q_t]`: the control term and its restored mean have the same
+expectation, so :math:`c` and :math:`\lambda` move noise between the field
+and the residual but never the mean. Named members:
+
+- *frozen, uncontrolled*: :math:`c = 0`, :math:`\lambda = 0`;
+- *frozen, same-path control*: isotropic directions, :math:`c = b`,
+  :math:`L \ge 1`;
+- *frozen, sweep control*: sweep directions, :math:`c = b`,
+  :math:`\lambda = 0`;
+- *tandem*: sweep directions, :math:`c = b`, :math:`\lambda = 1`. With
+  every segment of the region as a direction, :math:`\sum_j\omega_j
+  q^{MG}_j = \hat Q_t` exactly and the bracket vanishes record by record:
+  the sweep's noise stays in the field and only the CE minus MG difference
+  per direction remains;
+- *partial*: :math:`c = \lambda b`.
+
+**Records with deferred weights.** Each sample stores its state, the density
+:math:`\varrho` of its whole draw, and per source tag :math:`y \in \{s, f\}`
+the CE term :math:`C_y`, the control on its directions :math:`M_y`, and the
+restored mean :math:`R_y` (each from :math:`\psi` of :math:`Q^{MG}_y` alone),
+and :math:`U = Q^{MG}_t` at its state. The weight, for :math:`N` samples of
+its tag, is
 
 .. math::
     :label: rmc-residual-weight
 
-    w = \frac{(a_s C_{t,s} + a_f C_{t,f})/k^{[t=f]} - b_t U}{N\,p},
+    w = \frac{1}{N\varrho}\Big\{\frac{\sum_y a_y\,(C_y - c\,M_y + c\,R_y)}
+    {k^{[t=f]}} - b_t\Big[(1-\lambda)\,U +
+    \lambda\,\frac{\sum_y a_y\,R_y}{k^{[t=f]}}\Big]\Big\},
 
-so that :math:`\sum w\, \delta(\cdot - \text{record})` is an unbiased
-estimate of :math:`R_t`. The records do not depend on :math:`a, b, k`, so one
-set of records serves every value of them; only eq.
-:eq:`rmc-residual-weight` is repeated.
+and a sampler-route particle (density :math:`\varrho`, the destination's)
+has :math:`w = \sum_y a_y C_y / (k^{[t=f]} N \varrho)` with :math:`C_y` from
+eq. :eq:`rmc-sampler-weight`. The records do not depend on :math:`a, b, k,
+c, \lambda`, so one set serves every value of them, and the members of the
+family can be compared on the same samples.
 
-**Incident directions.** The direction integral in :math:`C_t` uses
-:math:`J` spherical Fibonacci points (cosines stratified on :math:`[-1, 1]`,
-azimuths at the golden angle), rotated as a set by a uniformly random
-rotation, with weights :math:`\omega_j = 4\pi/J`. Each rotated point is
-marginally uniform on the sphere, so the estimate is unbiased for any
-integrand, and the stratification removes most of the variance from smooth
-angular dependence.
+.. _methods_rmc_residual_ce:
 
-**Elastic production** (tag :math:`s`). For each nuclide :math:`i` with
-:math:`A_i > 1`, the incident energy that scatters into :math:`E` at
-:math:`\mu_0 = \mathbf{\Omega}'\cdot\mathbf{\Omega}` is
+CE production on one direction
+------------------------------
+
+**Elastic production** (tag :math:`s`, evaluator route). For each nuclide
+:math:`i` with :math:`A_i > 1`, the incident energy that scatters into
+:math:`E` at :math:`\mu_0 = \mathbf{\Omega}'\cdot\mathbf{\Omega}` is
 :math:`E'_i = E/\gamma_{A_i}(\mu_0)`, so the energy integral collapses
 (eq. :eq:`rmc-elastic-image`):
 
@@ -369,21 +553,22 @@ angular dependence.
     \frac{p_{lab,i}(\mu_0 \mid E'_i)}{2\pi\,\gamma_{A_i}(\mu_0)}\,
     \psi(\mathbf{r}, E'_i, \mathbf{\Omega}').
 
-The :math:`E'_i` of all nuclides are evaluated on one backward path.
+The :math:`E'_i` of all nuclides, and the sampler route's :math:`E'`, are
+evaluated on one backward path.
 
 **Fission production** (tag :math:`f`). Emission is isotropic, and one
-incident energy :math:`E'` is drawn log-uniformly on
-:math:`[E'_{min}, E'_{max}]` with density :math:`g(E')`:
+incident energy :math:`E'` is drawn with density :math:`g(E')`:
 
 .. math::
     :label: rmc-residual-fission
 
     \int dE'\, K^{f}\,\psi \approx \frac{1}{4\pi\, g(E')}
-    \sum_i N_i\, \nu_i(E')\, \sigma_{f,i}(E')\, \chi_i(E \mid E')\,
+    \sum_i N_i\, \nu\sigma_{f,i}(E') \sum_x \frac{\sigma_{x,i}(E')}
+    {\sigma_{f,i}(E')}\, \chi_{x,i}(E \mid E')\,
     \psi(\mathbf{r}, E', \mathbf{\Omega}'),
 
-with :math:`\chi_i` from eq. :eq:`rmc-fission-chi`, summed over partial
-fission reactions where a nuclide has them.
+with :math:`\chi_{x,i}` from eq. :eq:`rmc-fission-chi` and :math:`x` the
+partial fission reactions where a nuclide has them (otherwise one term).
 
 **Means in an infinite medium.** With a flat field in a homogeneous,
 reflective medium, :math:`\psi = Q^{MG}(E')/\Sigma_t(E')`, and the means of
@@ -392,14 +577,32 @@ the record terms reduce to energy integrals:
 .. math::
     :label: rmc-residual-means
 
-    \mathrm{E}\Big[\frac{C_{s,u}}{p}\Big]
+    \mathrm{E}\Big[\frac{C_{s,u}}{\varrho}\Big]
     = 4\pi V \int \Sigma_{el}\, \frac{Q^{MG}_u}{\Sigma_t}\, dE', \quad
-    \mathrm{E}\Big[\frac{C_{f,u}}{p}\Big]
+    \mathrm{E}\Big[\frac{C_{f,u}}{\varrho}\Big]
     = 4\pi V \int \nu\Sigma_f\, \frac{Q^{MG}_u}{\Sigma_t}\, dE', \quad
-    \mathrm{E}\Big[\frac{U}{p}\Big] = 4\pi V \int Q^{MG}_t\, dE,
+    \mathrm{E}\Big[\frac{U}{\varrho}\Big] = 4\pi V \int Q^{MG}_t\, dE,
 
-for :math:`u \in \{s, f\}`, provided the proposal ranges cover the
-integrands. These are the checks of the implementation.
+for :math:`u \in \{s, f\}`, and the sampler-route particles of a sample sum
+on average to :math:`4\pi V\int\Sigma^{samp}_{\mathcal{P}}\,Q^{MG}_s/\Sigma_t\,dE'`,
+provided the proposal ranges cover the integrands.
+
+.. _methods_rmc_first_collision:
+
+The first-collision reference
+-----------------------------
+
+The residual's high term is the first-collision neutron production of the
+field source. It can be computed independently with OpenMC's own transport:
+the field (with amplitudes :math:`a`) is the source of an analog run, an
+energy cutoff above every source energy ends each history at its first
+collision, and ``nu-scatter`` and ``nu-fission`` are tallied with
+``CollisionFilter([1])`` by material and outgoing energy (the fission part
+divided by :math:`k`). The run is one batch of an eigenvalue calculation, so
+that fission neutrons are banked rather than transported: OpenMC starts
+fission secondaries with no collisions, so in a fixed-source run their own
+first collisions would be counted too. The low term is the field (or a
+sweep's emission) integrated exactly over the same bins.
 
 .. _methods_rmc_kinematics:
 

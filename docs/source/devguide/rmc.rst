@@ -560,12 +560,14 @@ Verified by ``tests/rmc/test_production.py``
       incident spectrum, against Gauss-Legendre integrals of the evaluator on
       20 x 20 bins, including the kinematic edge.
 
-Not yet done in Stage 3
-    The channel registry (G3.1), the sampler route for inelastic and
-    :math:`(n,xn)` channels, the multigroup same-path control (G3.6, G3.7),
-    and the first-collision gate G3.5. The registry and the full evaluators
-    need cross sections at arbitrary energies (``XsProbe``) and
-    :math:`\psi` along a backward path (Stage 2, Sections 5.3-5.4).
+Not yet done in Stage 3 (at this commit)
+    The channel registry (G3.1), the sampler route, and the multigroup
+    control (G3.6) were added later in the stage (entries below); G3.5 is
+    covered by the first-collision gate of Stage 4, and G3.7 is a
+    measurement in ``examples/rmc/estimator_study.py``. G3.4 (the evaluator
+    integrated over all outgoing states at one incident direction) is still
+    open; the infinite-medium means of Stage 4 check the same Jacobian chain
+    integrated over directions.
 
 .. _devguide_rmc_backward:
 
@@ -656,6 +658,106 @@ Limitations
     - No evaporation law occurs in the test data, so ``Evaporation`` is
       untested. ``WattEnergy`` (law 11) still stops with an error.
 
+.. _devguide_rmc_channels:
+
+The channel registry and the sampler route
+------------------------------------------
+
+**Commit:** "rmc: channel registry and sampler route". Section 6.1 and 6.4 of
+the implementation guide; gate G3.1.
+
+Added
+    - ``rmc/channels.{h,cpp}``: ``ChannelRegistry`` partitions each
+      material's neutron production into elastic, thermal elastic
+      (S(:math:`\alpha,\beta`)), inelastic (every other non-fission reaction
+      with a neutron product, with its yield), and fission channels, each
+      with a tag and, per incident energy, a route
+      (``methods_rmc_channels``). Elastic is on the evaluator route exactly
+      where ``sample_target_velocity`` uses a target at rest.
+    - ``sample_sampler_route``: chooses a sampler-route channel in proportion
+      to its production and applies OpenMC's ``elastic_scatter``,
+      ``sab_scatter``, or ``inelastic_scatter`` to the probe's particle on
+      the caller's random number stream; secondaries and weight changes are
+      discarded.
+    - Fission production is OpenMC's tabulated :math:`\nu\sigma_f`, which is
+      interpolated as a product on the energy grid. The residual's fission
+      evaluator now uses it too (it used :math:`\nu(E)\sigma_f(E)`, which
+      differs from it by up to :math:`7\times10^{-4}` between grid points).
+    - ``XsProbe`` remembers the state of its last lookup and exposes its
+      particle to OpenMC's collision routines.
+    - C API ``openmc_rmc_channel_production``,
+      ``openmc_rmc_sample_sampler_route``; bindings.
+
+Verified by ``tests/rmc/test_channels.py``
+    - **G3.1.** For both pincell materials on 4,001 energies, the summed
+      scattering production equals an independent sum from ``openmc.data``
+      (elastic, every non-redundant reaction with a neutron product times its
+      yield) to :math:`10^{-10}`, and fission equals
+      :math:`\nu\sigma_f` interpolated on each nuclide's grid exactly. Fission
+      equals OpenMC's macroscopic nu-fission exactly; evaluator plus sampler
+      equals the total per tag and energy; graphite elastic is entirely on the
+      evaluator route with ``free_gas_threshold = 1e-6``.
+    - Sampler route: in the fuel above the U-238 inelastic threshold every
+      draw is an inelastic channel and carries the registry's sampler
+      production.
+
+Bugs found
+    - The first reference sum disagreed by 4 % near 5.45 eV: U-236 has only
+      partial fission reactions (MT 19-21, 38), and OpenMC gives all of them
+      the :math:`\nu` of the first. Then by :math:`2\times10^{-7}`: OpenMC's
+      :math:`\nu` is the ``total_nu`` data, not the sum of the products'
+      yields. Both were errors of the reference, now documented in the test.
+    - A fresh ``Particle``'s stream index is not initialized; the sampler
+      route sets it before using the particle's seeds.
+
+Limitations
+    No S(:math:`\alpha,\beta`) or free-gas case occurs in the verification
+    problems (graphite without thermal data, ``free_gas_threshold = 1e-6``),
+    so those sampler-route paths are only exercised through OpenMC's own
+    routines, not by a test here.
+
+.. _devguide_rmc_mg_control:
+
+The multigroup control
+----------------------
+
+**Commit:** "rmc: multigroup control on backward paths". Section 6.5 of the
+implementation guide; gate G3.6.
+
+Added
+    - ``rmc/mg_control.{h,cpp}``: ``MGTables`` (the field file's MG tables in
+      the field's ascending group order, through ``load_mg_tables``) and
+      ``MGControl`` (eqs. ``rmc-mg-production`` and
+      ``rmc-mg-same-energy``).
+    - ``BackwardFlux::evaluate_all``: the MG fluxes of :math:`Q_s` and
+      :math:`Q_f` (eq. ``rmc-mg-psi``) on the same path as the CE energies,
+      each group with its own transmission and tail; with no CE energies it
+      is an MG-only path. MG cross sections are scaled by the cell instance's
+      density multiplier, as random ray does.
+    - ``FrozenField``: group structure, group emission, the shapes (now also
+      the flux shape :math:`h^\phi` from the lift file), a sampler for them,
+      region volumes, materials, and keys.
+    - C API for the field's groups, emission and shapes, and
+      ``openmc_rmc_mg_control``; bindings.
+
+Verified by
+    - ``tests/rmc/test_mg_control_infinite.py`` (G3.6, deterministic): in the
+      infinite medium with a converged field (600 batches), the MG flux times
+      :math:`4\pi\Sigma_t` from the field file equals :math:`Q_g` to
+      :math:`10^{-10}` (which fixes the group order) and the MG production of
+      one direction equals :math:`Q_{t,g}` to :math:`10^{-4}` for both tags.
+    - ``tests/rmc/test_mg_control_pincell.py`` (G3.6, statistical): in a
+      fuel and a moderator region of the pincell, the production averaged
+      over 400 points and directions equals the field within 2 % (the random
+      ray solution's own error).
+
+Bug found
+    The first infinite-medium check was off by a factor of 13 at first, and
+    by exactly :math:`4\pi` once the field was converged: the per-direction
+    production must be multiplied by the direction's weight :math:`4\pi` before
+    it is compared with a group emission. The code was right; the test was
+    fixed.
+
 -----------------------------------------
 Stage 4: Residual samples
 -----------------------------------------
@@ -677,7 +779,7 @@ Added
       - ``Draw<T>``, a value with the density it was drawn from; weights are
         formed only from that density.
       - ``OutgoingProposal``: log-uniform energy, isotropic direction
-        (eq. ``rmc-residual-proposal`` without the :math:`1/V`).
+        (log-uniform energy, isotropic direction).
       - ``stratified_directions(J, seed, out)``: spherical Fibonacci points
         under a uniformly random rotation (Arvo's method), so each is
         marginally uniform.
@@ -714,7 +816,8 @@ Added
 
 Verified by ``tests/rmc/test_residual.py`` (infinite medium, roulette tail)
     - **G4.3.** Every record's density equals eq.
-      ``rmc-residual-proposal`` to :math:`10^{-12}`; energies, direction
+      ``rmc-residual-proposal`` (box destinations, log-uniform energies) to
+      :math:`10^{-12}`; energies, direction
       cosines, and positions pass :math:`\chi^2` tests of uniformity in the
       proposal's variables.
     - **Elastic production.** The mean of :math:`C_{s,s}/p` over 40,000
@@ -733,7 +836,7 @@ Verified by ``tests/rmc/test_residual.py`` (infinite medium, roulette tail)
     - **Weights.** ``weight_records`` equals the formula in NumPy to
       :math:`10^{-13}` and is linear in :math:`(a, b)`.
 
-Limitations of this first cut
+Limitations of this first cut (removed by the later Stage 3 and 4 entries)
     - **Evaluator route only.** Tag :math:`s` records hold elastic
       production only. Inelastic scattering, :math:`(n,xn)`, and hydrogen
       (and other targets that OpenMC treats with free gas or
@@ -760,3 +863,145 @@ Planned gates (not yet run)
       space, and the noise of the records about that baseline should be
       measured. This takes long runs and is deferred until the sampler route
       and the multigroup control are in place, since both change the noise.
+
+.. _devguide_rmc_family:
+
+The estimator family
+--------------------
+
+**Commit:** "rmc: residual estimator family: proposals, control, sampler
+route, sweeps". Sections 2.9, 2.10, and 7.1-7.2 of the implementation guide.
+
+Added
+    - ``ResidualSampler`` takes ``ResidualOptions``, with every option of the
+      guide as configuration (``methods_rmc_residual_proposals``,
+      ``methods_rmc_residual_family``):
+
+      - destinations (``VoxelProposal``): box, volume, fissionable volume,
+        tabulated weights;
+      - outgoing energies (``OutgoingProposal``): mixture of the region's
+        emission spectrum and log-uniform, weight :math:`\beta`;
+      - incident energies: log-uniform, or led by the direction's own MG
+        flux (path or segment) and the flux shape;
+      - directions: isotropic (:math:`J`) or the field sweep's segments (all,
+        or :math:`J` subsampled in proportion to :math:`\omega_j`);
+      - the MG control on every direction (same path or segment), for fission
+        exact or at the CE estimate's own incident energy, restored by
+        :math:`L` MG-only directions or the sweep's region emission;
+      - sampler-route particles, one per direction.
+
+    - ``ResidualRecords`` keep :math:`C_y, M_y, R_y` per source tag and
+      :math:`U`; ``weight_records`` takes :math:`a, b, k, c, \lambda`
+      (eq. ``rmc-residual-weight``), so frozen, tandem, and partial
+      estimators share records.
+    - ``openmc_rmc_sweep_field``: one random ray transport sweep from
+      :math:`Q_s` and one from :math:`Q_f` of the loaded field with the rays of
+      a chosen batch, every segment recorded and indexed by field region
+      (``SweepRecords``). The solve's flux iterate is untouched; its volume
+      accumulators are not.
+    - C API with a configuration structure (``openmc_rmc_residual_config``),
+      records and per-direction diagnostics; bindings
+      ``residual_sample(**options)``, ``residual_weights``, ``sweep_field``,
+      ``sweep_field_region``; ``pipeline.sweep_session``.
+
+Verified by
+    - ``tests/rmc/test_residual.py`` (infinite medium): sampler-route
+      particles have the sampler-route production as their mean with both
+      incident proposals; the same-path control and its restored mean have
+      equal expectations for both tags; the weight formula equals NumPy for
+      several :math:`(a, b, k, c, \lambda)` including a transient
+      :math:`a_f = 0.96` and is linear in :math:`(a, b)` (G4.7 in miniature).
+    - ``tests/rmc/test_residual_sweep.py`` (pincell): records cover every
+      region and their lengths add up to the sweep's track length; the
+      sweep's emission matches the field (totals within 1 %); every
+      record's :math:`R` equals a Python :math:`\hat Q` to :math:`10^{-9}`;
+      **tandem identity:** with every segment as a direction :math:`M = R`
+      record by record to :math:`10^{-10}`; with subsampling, the mean of
+      :math:`M - R` is zero for both tags and both fission controls; the CE
+      production has the same mean with sweep and isotropic directions
+      (G4.2 for the direction source).
+    - ``tests/rmc/test_residual_proposals.py`` (G4.3): densities of the
+      volume, fissionable, and tabulated destinations and of the mixture
+      energy proposal equal formulas written out in Python, and the draws
+      follow them (:math:`\chi^2`).
+
+Bugs found
+    - The lowest group starts at 0 eV, below the lift grid (1e-5 eV); the
+      shape sampler now starts it at the grid's first bin.
+    - The compiled field source (``examples/rmc/field_source``) is built
+      against the installed headers. After ``FrozenField`` gained members,
+      the old plugin corrupted the heap at exit ("double free"). Rebuild the
+      plugin after any change to ``include/openmc/rmc``.
+
+.. _devguide_rmc_first_collision:
+
+The residual against first-collision tallies
+--------------------------------------------
+
+**Commit:** "rmc: residual against first-collision tallies; estimator study
+harness". Gates G4.1, G4.2, and G4.4 on the graphite pincell; G3.5 through
+them.
+
+Added
+    - ``examples/rmc/residual_gates.py``: the reference of
+      ``methods_rmc_first_collision`` (one-batch eigenvalue runs with the
+      compiled field source and an energy cutoff, ``CollisionFilter([1])``),
+      the field or a sweep's emission integrated over the same bins, and
+      binned residual records with per-sample standard errors.
+    - ``examples/rmc/estimator_study.py``: G3.7, G4.5, G4.6 measurements
+      (below).
+
+Verified by ``tests/rmc/test_residual_first_collision.py``
+    By material and 10 outgoing-energy bins, with :math:`a = b = (1,1)` and
+    :math:`k = k_{MG}`, against 6 reference runs of 300,000 particles:
+
+    - **High term alone** (G4.1/G4.4): records with :math:`b = 0` equal the
+      first-collision production for both tags;
+    - **Low term alone** (G4.4): records with :math:`a = 0` equal minus the
+      field;
+    - **Whole residual, six estimators** (G4.1/G4.2): frozen uncontrolled,
+      frozen same-path control, frozen sweep control, tandem, partial
+      (:math:`\lambda = 0.5`), and region destinations with mixture
+      proposals and the same-energy fission control, each against the
+      reference minus its own field candidate.
+
+    Pass: :math:`\chi^2` within 5 sigma of its degrees of freedom and no
+    bin beyond 5 standard errors. **Mutation check (done by hand):** without
+    sampler-route particles the scattering residual fails
+    (:math:`\chi^2 = 142` for 20 bins).
+
+Bug found (in the reference)
+    The first reference was a fixed-source run, and its fast scattering
+    production was 1.1 % above the closed form
+    :math:`4\pi V\int\Sigma_{s}Q/\Sigma_t\,dE'` in the infinite medium (8
+    standard errors), concentrated above 100 keV. An independent forward
+    calculation with OpenMC's samplers in Python agreed with the residual,
+    not with the reference. The cause: in fixed-source mode
+    ``create_fission_sites`` puts fission neutrons in the secondary bank with
+    no collisions counted, so their first collisions passed the
+    ``CollisionFilter``. The reference is now one eigenvalue batch per run.
+
+First measurements (smoke run, 400 samples per variant; not conclusive)
+    - **G3.7:** with isotropic directions, the per-direction correlation of
+      the CE and MG scattering estimates is 0.63 below 1 eV, 0.25 in the
+      epithermal range, and 0.02 above 100 keV, where elastic scattering is
+      anisotropic and the P0 MG kernel cannot follow it. The P\ :sub:`0`
+      control removes 40 % of the thermal directional variance and almost
+      none of the fast.
+    - **G4.6:** for fission, the tandem estimator with the same-energy control
+      and flux-led proposals has 20 times less variance than the other
+      controlled variants and 65 times less than the uncontrolled one at
+      similar cost; for scattering the controlled variants are not better
+      than the uncontrolled one at this sample size.
+
+Not yet done in Stage 4
+    - The full G4.6 study (``estimator_study.py`` with tens of thousands of
+      samples and several numbers of rays per sweep), and the full-iteration
+      runs of the tandem and partial variants at fixed CE work (Stage 6).
+    - **Residual against an oracle reference** (planned, as in the earlier
+      entry): the residual's shape in energy and space and the noise of the
+      records about an independently built baseline, as in the oracle
+      ceiling study. ``residual_gates.py`` provides the first-collision
+      baseline for it.
+    - A P\ :sub:`N` MG kernel for the scattering control, if G3.7 confirms that
+      the P\ :sub:`0` control is ineffective above the thermal range.

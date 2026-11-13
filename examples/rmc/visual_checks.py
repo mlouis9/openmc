@@ -76,6 +76,16 @@ class Work:
         sp = sorted((w / 'rr').glob('statepoint.*.h5'))[-1]
         return None, sp, w / 'rr' / 'mgxs.h5', m
 
+    def volumes(self):
+        """Region volumes of the pincell's field (C++ point location)."""
+        P = self.pincell()
+        vol = Path(P['work']) / 'rmc_volumes.h5'
+        if not vol.exists():
+            with pipeline.ce_session(self.model, self.mesh, Path(P['work']) / 'ce_volumes'):
+                pipeline.build_volumes(P['field'], P['lifts'], self.mesh, vol,
+                                       n_per_voxel=2000)
+        return vol
+
     def split(self):
         """Field of the split-mesh pincell (short run; geometry only)."""
         model, pairs = problems.graphite_pincell_split_meshes()
@@ -456,10 +466,12 @@ def fig_backward_tails(work, out):
 
 def fig_residual(work, out, n=20_000):
     """Residual records in the graphite pincell, binned in energy."""
+    import residual_gates as gates
     P = work.pincell()
     k = openmc.StatePoint(P['statepoint']).keff.n
     edges = np.geomspace(1e-5, 2e7, 61)
     du = np.diff(np.log(edges))
+    one = lambda r: np.zeros(len(r), dtype=int)
     with pipeline.ce_session(work.model, work.mesh, P['work'] / 'ce'):
         rmc.field_load(P['field'], P['lifts'])
         recs = {t: rmc.residual_sample(t, n, seed=5, n_directions=8,
@@ -469,35 +481,122 @@ def fig_residual(work, out, n=20_000):
     fig, axes = plt.subplots(2, 2, figsize=(12, 7), sharex=True,
                              gridspec_kw=dict(height_ratios=[2, 1]))
     for j, (t, rec) in enumerate(recs.items()):
-        kt = k if t == 'f' else 1.0
         # High and low terms separately: b = 0, then a = 0
         terms = {'CE production from the field': rmc.residual_weights(rec, n, (1, 1), (0, 0), k),
                  r'field $Q^{MG}_' + t + '$': -rmc.residual_weights(rec, n, (0, 0), (1, 1), k)}
         for i, (label, w) in enumerate(terms.items()):
-            h, _ = np.histogram(rec['E'], edges, weights=w)
-            axes[0, j].stairs(h / du, edges, color=f'C{i}', label=label)
+            h, _ = gates.residual_histogram(rec, w, one, edges, 1)
+            axes[0, j].stairs(h[0] / du, edges, color=f'C{i}', label=label)
         w = rmc.residual_weights(rec, n, (1, 1), (1, 1), k)
-        h, _ = np.histogram(rec['E'], edges, weights=w)
-        h2, _ = np.histogram(rec['E'], edges, weights=w**2)
-        err = np.sqrt(np.maximum(h2 - h**2 / n, 0.0))  # per bin, n samples
-        axes[1, j].stairs(h / du, edges, color='C3')
-        axes[1, j].errorbar(np.sqrt(edges[1:] * edges[:-1]), h / du, err / du, fmt='none',
-                            color='C3', lw=0.8)
+        h, err = gates.residual_histogram(rec, w, one, edges, 1)
+        axes[1, j].stairs(h[0] / du, edges, color='C3')
+        axes[1, j].errorbar(np.sqrt(edges[1:] * edges[:-1]), h[0] / du, err[0] / du,
+                            fmt='none', color='C3', lw=0.8)
         axes[1, j].axhline(0, color='k', lw=0.8)
         axes[0, j].set(xscale='log', ylabel='per unit lethargy',
-                       title=('scattering (tag s, elastic only)' if t == 's' else
+                       title=('scattering (tag s)' if t == 's' else
                               f'fission (tag f, k = {k:.4f})'))
         axes[0, j].legend(fontsize=8)
         axes[1, j].set(xlabel='E [eV]', ylabel='residual')
     fig.suptitle(f'Residual records in the graphite pincell, {n} per tag, '
-                 'a = b = 1, roulette tail')
+                 'a = b = 1, uncontrolled, roulette tail')
     _save(fig, out, 'residual.png')
+
+
+def fig_first_collision(work, out, n=6000):
+    """The residual of several estimators against the first-collision
+    reference, by material and outgoing energy."""
+    import residual_gates as gates
+    P = work.pincell()
+    vol = work.volumes()
+    files = dict(field=P['field'], lifts=P['lifts'], volumes=vol)
+    k = openmc.StatePoint(P['statepoint']).keff.n
+    edges = np.array([1e-5, 0.1, 1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6, 3e6, 2e7])
+    mats = [problems.MAT_FUEL, problems.MAT_MOD]
+    with h5py.File(P['field']) as f:
+        mat_id = f['regions/material_id'][()]
+    regions = [np.flatnonzero(mat_id == m) for m in mats]
+    ref = gates.first_collision_reference(
+        work.model, work.mesh, files, (work.mesh.lower_left, work.mesh.upper_right),
+        P['work'] / 'first_collision', edges, mats, particles=300_000, runs=6, k=k)
+    variants = {
+        'frozen, uncontrolled': (dict(directions='isotropic', n_directions=8), 0.0, 0.0),
+        'frozen, same-path control': (dict(directions='isotropic', n_directions=4,
+                                           control=True, n_control_directions=4), 1.0, 0.0),
+        'tandem': (dict(directions='sweep', n_directions=8, control=True), 1.0, 1.0),
+    }
+    mat_of = lambda r: np.where(np.hypot(r[:, 0], r[:, 1]) < problems.R_FUEL, 0, 1)
+    res = {}
+    with pipeline.sweep_session(work.model, work.mesh, P['mgxs'], P['field'],
+                                P['work'] / 'first_collision_ce', rays=500):
+        rmc.field_load(P['field'], P['lifts'], vol)
+        rmc.sweep_init()
+        rmc.sweep_iterate(3)
+        rmc.sweep_field(batch=4)
+        F = {t: gates.field_integral(rmc, files, regions, edges, t) for t in 'sf'}
+        for name, (opts, c, lam) in variants.items():
+            for t in 'sf':
+                rec = rmc.residual_sample(t, n, seed=101, E_range=(1e-5, 2e7),
+                                          tail='roulette', cutoff=math.exp(-4), **opts)
+                w = rmc.residual_weights(rec, n, (1, 1), (1, 1), k, c, lam)
+                res[(name, t)] = gates.residual_histogram(rec, w, mat_of, edges, 2)
+        # The tandem field candidate is the sweep's emission
+        with h5py.File(P['field']) as h:
+            G = int(h.attrs['n_groups'])
+            ids = list(h['materials/material_id'][()])
+            M = len(ids)
+            nss = h['materials/sigma_s'][()].reshape(M, G, G)
+            nsf = h['materials/nu_sigma_f'][()].reshape(M, G)
+            chi = h['materials/chi'][()].reshape(M, G)
+        with h5py.File(vol) as h:
+            V = h['V_A'][()]
+
+        def qhat(t):
+            def em(r):
+                seg = rmc.sweep_field_region(r)
+                wj = 4 * math.pi * seg['length'] / (seg['rho'] * V[r])
+                phi = (wj[:, None] * (seg['psi_s'] + seg['psi_f'])).sum(axis=0)
+                m = ids.index(int(mat_id[r]))
+                return phi @ nss[m] if t == 's' else chi[m] * (nsf[m] @ phi) / k
+            return em
+        Qhat = {t: gates.field_integral(rmc, files, regions, edges, t, emission=qhat(t))
+                for t in 'sf'}
+        rmc.sweep_finalize()
+        rmc.field_free()
+
+    du = np.diff(np.log(edges))
+    x = np.sqrt(edges[1:] * edges[:-1])
+    fig, axes = plt.subplots(2, 2, figsize=(13, 7), sharex=True)
+    for j, t in enumerate('sf'):
+        for i, mname in enumerate(('fuel', 'graphite')):
+            ax = axes[i, j]
+            fc, fc_std = ref[t][0][i], ref[t][1][i]
+            for v, name in enumerate(variants):
+                lam = variants[name][2]
+                est, sem = res[(name, t)]
+                Fc = (1 - lam) * F[t][i] + lam * Qhat[t][i]
+                ax.errorbar(x * (1 + 0.08 * (v - 1)), est[i] / du, sem[i] / du, fmt='o',
+                            ms=3, color=f'C{v}', label=f'{name}: records')
+                ax.stairs((fc - Fc) / du, edges, color=f'C{v}', lw=1, alpha=0.8,
+                          label=f'{name}: reference')
+            ax.axhline(0, color='k', lw=0.6)
+            ax.set(xscale='log', ylabel='residual per unit lethargy',
+                   title=f"{'scattering' if t == 's' else 'fission'} residual in the {mname}")
+            if t == 'f' and mname == 'graphite':
+                ax.text(0.5, 0.5, 'no fission in graphite', transform=ax.transAxes,
+                        ha='center')
+        axes[1, j].set(xlabel='outgoing E [eV]')
+    axes[0, 0].legend(fontsize=7, ncol=2)
+    fig.suptitle(f'Residual of three estimators (points, {n} samples per tag) against '
+                 'first-collision tallies minus their own field candidate (lines)')
+    _save(fig, out, 'first_collision.png')
 
 
 FIGURES = {'lifts': fig_lifts, 'field_maps': fig_field_maps,
            'split_meshes': fig_split_meshes, 'ce_vs_mg': fig_ce_vs_mg,
            'segments': fig_segments, 'tracer': fig_tracer,
-           'backward_tails': fig_backward_tails, 'residual': fig_residual}
+           'backward_tails': fig_backward_tails, 'residual': fig_residual,
+           'first_collision': fig_first_collision}
 
 
 def main():

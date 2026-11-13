@@ -222,11 +222,12 @@ Residual records
     :width: 100%
 
     Records of the graphite pincell, 20,000 per tag, binned in energy per
-    unit lethargy. Top: the high term (CE production from the field, the sum
-    of :math:`(C_{t,s} + C_{t,f})/k^{[t=f]}/(Np)`) and the low term (the
-    field, :math:`U/(Np)`), with :math:`a = b = 1` and :math:`k` of the
+    unit lethargy. Top: the high term (CE production from the field, the
+    density branch and, for scattering, the sampler-route particles) and the
+    low term (the field), with :math:`a = b = 1` and :math:`k` of the
     multigroup solve. Bottom: their difference, the residual, with one
-    standard error per bin.
+    standard error per bin (each sample, with its sampler-route particles,
+    one independent draw).
 
 What to look for:
 
@@ -234,19 +235,45 @@ What to look for:
   sections collapsed from this problem, so its CE production differs from it
   only by the energy and angle structure the groups do not capture. The
   residual is a few percent of each term.
-- **Fission:** the residual is within noise of zero, as expected for a
-  converged field whose fission spectrum is close to the CE one.
-- **Scattering: a deficit from 100 keV to 2 MeV.** This is the limitation
-  of the first cut: tag :math:`s` records hold elastic production only, while
-  the field's :math:`Q^{MG}_s` also contains U-238 inelastic scattering
-  (threshold 45 keV) and :math:`(n,2n)`. It is a missing channel, not a
-  physics result, and it disappears with the sampler route.
-- Between about 50 eV and 1 keV a few bins are positive by more than their
-  errors: in the resolved resonance range the CE production inside a group
-  differs from the lifts. Whether this is that physics or noise will be
-  settled by the planned comparison with an oracle residual (see the
-  Stage 4 entry of :ref:`devguide_rmc`).
+- **No systematic deficit above 100 keV.** An earlier version of this
+  figure, made before the sampler route existed, showed the scattering
+  residual 6 % low from 100 keV to 2 MeV: U-238 inelastic scattering and
+  :math:`(n,2n)` were missing from the records. With the sampler route the
+  residual is consistent with zero there.
+- The residual left is small and noisy; whether its structure is physics or
+  noise is decided by the first-collision comparison below, not by eye.
 
 .. literalinclude:: ../../../examples/rmc/visual_checks.py
     :language: python
     :pyobject: fig_residual
+
+The residual against first-collision tallies
+--------------------------------------------
+
+.. figure:: rmc_figures/first_collision.png
+    :width: 100%
+
+    The residual by material and outgoing energy for three estimators
+    (points with one standard error, 6,000 samples per tag), and the
+    first-collision production of the field from OpenMC's own transport
+    minus each estimator's field candidate (lines; the frozen and the
+    same-path lines coincide because they share the candidate).
+
+What to look for:
+
+- **Each estimator's points follow its own line.** The frozen estimators
+  compare CE production with the frozen field; the tandem estimator with
+  the sweep's emission :math:`\hat Q`, so its line differs where one random
+  ray sweep differs from the converged field (for example between 1 keV and
+  100 keV in the graphite).
+- **Error bars differ by estimator.** At this sample size the same-path
+  control does not reduce the scattering noise much; for fission the
+  difference between estimators is in the fast bins, where all of the fission
+  residual is. ``examples/rmc/estimator_study.py`` measures this properly
+  (G4.6).
+- The pass/fail version of this comparison, with six estimators and a
+  :math:`\chi^2` per tag, is ``tests/rmc/test_residual_first_collision.py``.
+
+.. literalinclude:: ../../../examples/rmc/visual_checks.py
+    :language: python
+    :pyobject: fig_first_collision
