@@ -171,6 +171,9 @@ struct ResidualRecords {
                           //!< backward path, 2 region term of the flux-
                           //!< difference control
   vector<int> channel;    //!< [n] ChannelKind of a sampled particle, or -1
+  vector<double> E_in;    //!< [n] incident energy of a sampled particle's
+                          //!< collision [eV], or 0
+  vector<int> nuclide;    //!< [n] its nuclide (data::nuclides), or -1
   vector<double> C_s, C_f, M_s, M_f, R_s, R_f, U;
   vector<double> Z; //!< [n] amplitude-free part of a sampled
                     //!< particle's weight (the flux-difference control)
@@ -270,6 +273,8 @@ private:
     double C[2] {0.0, 0.0};
     double Z {0.0};
     int channel {-1};
+    double E_in {0.0}; //!< incident energy of the sampled collision [eV]
+    int nuclide {-1};  //!< nuclide of the sampled collision
   };
 
   //! Terms of one direction (per source tag y = s, f)

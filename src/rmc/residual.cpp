@@ -258,6 +258,8 @@ void ResidualRecords::clear()
   kind.clear();
   channel.clear();
   Z.clear();
+  E_in.clear();
+  nuclide.clear();
 }
 
 void weight_records(const ResidualRecords& rec, int64_t N,
@@ -563,6 +565,8 @@ void ResidualSampler::direction(Tag t, const Destination& d, Direction omega_in,
       if (region)
         q.Z = -f * region_flux(d.region, e.value) / (4.0 * PI);
       q.channel = static_cast<int>(smp.kind);
+      q.E_in = e.value;
+      q.nuclide = smp.i_nuclide;
       candidates_.push_back(q);
     }
     if (opt_.sampler.common_numbers)
@@ -590,6 +594,8 @@ void ResidualSampler::direction(Tag t, const Destination& d, Direction omega_in,
       }
       net.state = candidates_[pick].state;
       net.channel = candidates_[pick].channel;
+      net.E_in = candidates_[pick].E_in;
+      net.nuclide = candidates_[pick].nuclide;
       out.sampled.push_back(net);
     } else {
       for (const auto& q : candidates_)
@@ -652,6 +658,8 @@ void ResidualSampler::region_term(
     // Omega' density 1 / 4 pi cancels the 1 / 4 pi of the lifted flux
     p.Z = smp.production * region_flux(d.region, E) / q / M;
     p.channel = static_cast<int>(smp.kind);
+    p.E_in = E;
+    p.nuclide = smp.i_nuclide;
     out.push_back(p);
   }
 }
@@ -690,6 +698,8 @@ void ResidualSampler::push_sampled(ResidualRecords& out, Position r,
   out.sampler.push_back(1);
   out.kind.push_back(kind);
   out.channel.push_back(q.channel);
+  out.E_in.push_back(q.E_in);
+  out.nuclide.push_back(q.nuclide);
   out.C_s.push_back(omega * q.C[0]);
   out.C_f.push_back(omega * q.C[1]);
   out.Z.push_back(omega * q.Z);
@@ -834,6 +844,8 @@ void ResidualSampler::sample(
     out.sampler.push_back(0);
     out.kind.push_back(0);
     out.channel.push_back(-1);
+    out.E_in.push_back(0.0);
+    out.nuclide.push_back(-1);
     out.Z.push_back(0.0);
     out.C_s.push_back(C[0]);
     out.C_f.push_back(C[1]);

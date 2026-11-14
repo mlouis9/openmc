@@ -22,6 +22,10 @@ for _name, _args in [
     ('openmc_rmc_field_n_regions', [POINTER(c_int64)]),
     ('openmc_rmc_field_locate', [c_int64, _f64p, _i64p]),
     ('openmc_rmc_field_evaluate', [c_int64, _i64p, _f64p, c_int, _f64p]),
+    ('openmc_rmc_field_tally', [c_int64, c_int, c_int, c_double, c_uint64, _f64p,
+                                _f64p, _f64p, c_int, _f64p, _f64p]),
+    ('openmc_rmc_fission_chi', [c_int32, c_int, c_double, c_int64, _f64p, _f64p]),
+    ('openmc_rmc_near_kernel', [c_int64, _f64p, _f64p, _f64p, c_double, _f64p]),
     ('openmc_rmc_field_mass', [c_int, POINTER(c_double)]),
     ('openmc_rmc_field_region_volumes', [c_int64, c_int64, c_uint64, _f64p, _i64p]),
     ('openmc_rmc_run_random_ray', []),
@@ -68,7 +72,8 @@ for _name in ('openmc_rmc_field_groups', 'openmc_rmc_residual_sample',
               'openmc_rmc_residual_weights', 'openmc_rmc_sweep_field',
               'openmc_rmc_sweep_field_region', 'openmc_rmc_bank_create',
               'openmc_rmc_bank_size', 'openmc_rmc_bank_get', 'openmc_rmc_bank_free',
-              'openmc_rmc_propagate'):
+              'openmc_rmc_propagate', 'openmc_rmc_residual_records_aux',
+              'openmc_rmc_flight_children', 'openmc_rmc_propagate_aux'):
     _fn = getattr(_dll, _name)
     _fn.restype, _fn.errcheck = c_int, _error_handler
 
@@ -432,6 +437,10 @@ def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
                                      p(terms))
     out['r'] = out['r'].reshape(m, 3)
     out['u'] = out['u'].reshape(m, 3)
+    out['E_in'] = np.empty(m)
+    out['nuclide'] = np.empty(m, dtype=np.int32)
+    _dll.openmc_rmc_residual_records_aux(p(out['E_in']),
+                                         out['nuclide'].ctypes.data_as(POINTER(c_int)))
     for i, name in enumerate(TERMS):
         out[name] = terms[i * m:(i + 1) * m].copy()
     if keep_directions:
@@ -654,3 +663,75 @@ def propagate(bank, n, k, seed=1, out=None, tally_materials=None, tally_edges=No
     if len(mats) and len(edges) > 1:
         return out, st, flux[:len(mats) * (len(edges) - 1)].reshape(len(mats), -1)
     return out, st, None
+
+
+# ---------------------------------------------------------------------------
+# Correction tallies and exact cancellation
+# ---------------------------------------------------------------------------
+
+def field_tally(n_points, n_E=4, tail='roulette', cutoff=math.exp(-8.0), seed=1, mg=False):
+    """The field's CE fission and nu-fission rates by field region and
+    source tag ([R, 2]; columns s, f; a = 1, no 1/k), from backward traces
+    at n_points uniform points (only those in fissionable material score).
+    Returns (fission, nu_fission, fission_sq), fission_sq the sum of squared
+    per-point scores (variance of the mean: (sq / n - mean^2) / n). With mg,
+    also (nu_fission_mg, diff_sq): the MG nu-fission rate of the MG flux on
+    the same paths, and the sum of squares of the per-point difference
+    (needs the MG tables, i.e. a field with exported tables)."""
+    R = field_n_regions()
+    f, nf, sq = np.empty(2 * R), np.empty(2 * R), np.empty(2 * R)
+    nm, dq = np.empty(2 * R), np.empty(2 * R)
+    _dll.openmc_rmc_field_tally(int(n_points), int(n_E), TAILS[tail], float(cutoff),
+                                int(seed), f, nf, sq, int(bool(mg)), nm, dq)
+    out = (f.reshape(R, 2), nf.reshape(R, 2), sq.reshape(R, 2))
+    if mg:
+        out = out + (nm.reshape(R, 2), dq.reshape(R, 2))
+    return out
+
+
+def fission_chi(material_id, nuclide, E_in, E_out):
+    """chi(E_out | E_in) [1/eV] of one fission neutron of a nuclide (name or
+    data::nuclides index), partial reactions weighted by cross section."""
+    E_out = np.ascontiguousarray(E_out, dtype=float)
+    out = np.empty_like(E_out)
+    _dll.openmc_rmc_fission_chi(int(material_id), _nuclide_index(nuclide), float(E_in),
+                                E_out.size, E_out, out)
+    return out
+
+
+def near_kernel(x, xp, E, d_max):
+    """Near point kernel of an isotropic parent at xp [n, 3] with energy E
+    [n] at x [n, 3], paths shorter than d_max (rmc::near_kernel)."""
+    x = np.ascontiguousarray(x, dtype=float).reshape(-1, 3)
+    xp = np.ascontiguousarray(xp, dtype=float).reshape(-1, 3)
+    E = np.ascontiguousarray(np.broadcast_to(E, len(x)), dtype=float)
+    out = np.empty(len(x))
+    _dll.openmc_rmc_near_kernel(len(x), x, xp, E, float(d_max), out)
+    return out
+
+
+def propagate_aux(bank, n, k, seed=1, out=None, children=True, region_tally=True):
+    """Flights as propagate(), also returning a dict with the children's
+    parent index, path length, and nuclide (if children), and the collision
+    estimates of the fission and nu-fission rates by field region [R]."""
+    if out is None:
+        out = Bank()
+    R = field_n_regions()
+    rf, rnf = np.zeros(max(R, 1)), np.zeros(max(R, 1))
+    stats = np.zeros(6)
+    nc = c_int64()
+    _dll.openmc_rmc_propagate_aux(c_int32(bank.handle), c_int64(int(n)), c_double(k),
+                                  c_uint64(int(seed)), c_int32(out.handle),
+                                  int(bool(children)), int(bool(region_tally)),
+                                  byref(nc), _dp(rf), _dp(rnf), _dp(stats))
+    m = nc.value
+    aux = dict(parent=np.empty(m, dtype=np.int64), path=np.empty(m),
+               nuclide=np.empty(m, dtype=np.int32))
+    if children:
+        _dll.openmc_rmc_flight_children(aux['parent'].ctypes.data_as(POINTER(c_int64)),
+                                        _dp(aux['path']),
+                                        aux['nuclide'].ctypes.data_as(POINTER(c_int)))
+    aux['region_fission'] = rf[:R]
+    aux['region_nu_fission'] = rnf[:R]
+    names = ('flights', 'leaked', 'captured', 'scattered', 'fissions', 'W_abs')
+    return out, dict(zip(names, stats)), aux

@@ -28,6 +28,12 @@ rmc::SignedBank* get(int32_t h)
 
 } // namespace
 
+namespace openmc {
+namespace rmc {
+SignedBank* bank_of(int32_t handle) { return get(handle); }
+} // namespace rmc
+} // namespace openmc
+
 extern "C" int openmc_rmc_bank_create(int64_t n, const double* r,
   const double* u, const double* E, const double* w, const int* tag,
   int32_t* handle)

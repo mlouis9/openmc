@@ -113,6 +113,13 @@ def generation(state, backend, cfg):
     cand = backend.concat(cand, children)
     t2 = time.perf_counter()
 
+    # Sign cancellation (Stage 8), if the backend has one: it acts on the
+    # unnormalized candidate, before f is formed from its tag sums
+    cancel_info = None
+    if hasattr(backend, 'cancel'):
+        cand, cancel_info = backend.cancel(cand, b, seed_of(cfg.seed, n, 'cancel'))
+    t3 = time.perf_counter()
+
     # Fission production, eigenvalue, normalization (never clipped)
     field_f = b[1] * backend.field_mass('f')
     f = k * (field_f + backend.tag_sum(cand, 'f'))
@@ -128,7 +135,12 @@ def generation(state, backend, cfg):
                 rho=k * (field_f + residual_f) / f,
                 W_abs=backend.abs_weight(cand), sum_s=backend.tag_sum(cand, 's'),
                 sum_f=backend.tag_sum(cand, 'f'), size=backend.size(cand),
-                time_residual=t1 - t0, time_flights=t2 - t1)
+                time_residual=t1 - t0, time_flights=t2 - t1, time_cancel=t3 - t2,
+                cancel=cancel_info)
+    # Correction tally of this generation's flux (field part plus the
+    # flights of the incoming bank), if the backend has one
+    if hasattr(backend, 'tally'):
+        diag['tally'] = backend.tally(state.a, f, seed_of(cfg.seed, n, 'tally'))
     cand = backend.resample(cand, cfg.N_B, seed_of(cfg.seed, n, 'resample'))
     diag['size_resampled'] = backend.size(cand)
     diag['time'] = time.perf_counter() - t0

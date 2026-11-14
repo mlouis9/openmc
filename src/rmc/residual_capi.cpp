@@ -178,3 +178,10 @@ extern "C" int openmc_rmc_residual_weights(int64_t n, const int* tag,
   std::copy(out.begin(), out.end(), w);
   return 0;
 }
+
+extern "C" int openmc_rmc_residual_records_aux(double* E_in, int* nuclide)
+{
+  std::copy(last_records.E_in.begin(), last_records.E_in.end(), E_in);
+  std::copy(last_records.nuclide.begin(), last_records.nuclide.end(), nuclide);
+  return 0;
+}

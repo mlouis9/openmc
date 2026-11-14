@@ -1,4 +1,6 @@
 #include "openmc/rmc/flight.h"
+#include "openmc/rmc/capi.h"
+#include "openmc/rmc/field.h"
 
 #include <algorithm>
 #include <cmath>
@@ -58,6 +60,7 @@ FlightPropagator::Collision FlightPropagator::collide(
 
   // Nuclide by Sigma_t,m / Sigma_t, as sample_nuclide()
   int i_nuc = sample_nuclide(p);
+  c.nuclide = i_nuc;
   const auto& micro = p.neutron_xs(i_nuc);
   const Nuclide& nuc = *data::nuclides[i_nuc];
   double xi = prn(p.current_seed()) * micro.total;
@@ -91,8 +94,11 @@ FlightPropagator::Collision FlightPropagator::collide(
 }
 
 FlightStats FlightPropagator::propagate(const SignedBank& in, int64_t n,
-  double k, uint64_t seed, SignedBank& out, FlightTally* tally)
+  double k, uint64_t seed, SignedBank& out, FlightTally* tally,
+  FlightAux* aux)
 {
+  const bool region_tally =
+    aux && !aux->region_fission.empty() && loaded_field;
   FlightStats st;
   const int64_t m = in.size();
   if (m == 0 || n <= 0)
@@ -148,6 +154,7 @@ FlightStats FlightPropagator::propagate(const SignedBank& in, int64_t n,
 
     // Fly to the sampled optical depth
     double tau = -std::log(prn(&s));
+    double path = 0.0;
     bool collided = false;
     for (int64_t crossings = 0; crossings < 100'000'000; ++crossings) {
       const Cell& cell = *model::cells[g_.lowest_coord().cell()];
@@ -167,6 +174,7 @@ FlightStats FlightPropagator::propagate(const SignedBank& in, int64_t n,
       }
       for (int lev = 0; lev < g_.n_coord(); ++lev)
         g_.coord(lev).r() += d * g_.coord(lev).u();
+      path += d;
       if (hit) {
         collided = true;
         break;
@@ -179,6 +187,17 @@ FlightStats FlightPropagator::propagate(const SignedBank& in, int64_t n,
     if (!collided) {
       ++st.leaked;
       continue;
+    }
+
+    // Collision estimator of the fission rate by field region: the probe
+    // holds the collision cell's cross sections at the parent's energy
+    if (region_tally) {
+      int64_t reg = loaded_field->locate(g_);
+      const auto& xs = probe_.particle().macro_xs();
+      if (reg >= 0 && xs.total > 0.0) {
+        aux->region_fission[reg] += sign * unit * xs.fission / xs.total;
+        aux->region_nu_fission[reg] += sign * unit * xs.nu_fission / xs.total;
+      }
     }
 
     // The collision, at the probe's state (material of the collision cell)
@@ -195,6 +214,11 @@ FlightStats FlightPropagator::propagate(const SignedBank& in, int64_t n,
       continue;
     out.push_back({g_.r(), col.u, col.E, sign * unit * col.factor,
       col.kind == 1 ? Tag::s : Tag::f});
+    if (aux && aux->children) {
+      aux->parent.push_back(i);
+      aux->path.push_back(path);
+      aux->nuclide.push_back(col.nuclide);
+    }
   }
   return st;
 }

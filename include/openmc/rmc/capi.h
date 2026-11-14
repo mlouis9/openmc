@@ -230,6 +230,35 @@ int openmc_rmc_bank_free(int32_t handle);
 int openmc_rmc_propagate(int32_t in, int64_t n, double k, uint64_t seed,
   int32_t out, int n_materials, const int32_t* material_ids, int n_edges,
   const double* E_edges, double* flux, double* stats);
+
+//! Correction tallies and exact cancellation (src/rmc/correction_capi.cpp)
+//! The field's CE fission and nu-fission rates by region and source tag
+//! ([R][2], y = s, f; a = 1, no 1/k) from n_points backward traces with n_E
+//! energies each, and per-point sums of squares of the fission scores.
+//! With use_mg, also the MG nu-fission rate of the MG flux on the same
+//! paths ([R][2]) and the sum of squares of the per-point CE - MG
+//! difference.
+int openmc_rmc_field_tally(int64_t n_points, int n_E, int tail, double cutoff,
+  uint64_t seed, double* fission, double* nu_fission, double* fission_sq,
+  int use_mg, double* nu_fission_mg, double* diff_sq);
+//! Fission emission density chi(E_out | E_in) [1/eV] of a nuclide (index
+//! into data::nuclides) in a material that contains it.
+int openmc_rmc_fission_chi(int32_t material_id, int i_nuclide, double E_in,
+  int64_t n, const double* E_out, double* chi);
+//! Near point kernel of an isotropic parent's next collision (correction.h)
+int openmc_rmc_near_kernel(int64_t n, const double* x, const double* xp,
+  const double* E, double d_max, double* out);
+//! Flights as openmc_rmc_propagate, optionally recording each child's
+//! parent, path length, and nuclide (read with openmc_rmc_flight_children)
+//! and a collision estimate of the fission and nu-fission rates by field
+//! region ([R] each).
+int openmc_rmc_propagate_aux(int32_t in, int64_t n, double k, uint64_t seed,
+  int32_t out, int children, int region_tally, int64_t* n_children,
+  double* region_fission, double* region_nu_fission, double* stats);
+int openmc_rmc_flight_children(int64_t* parent, double* path, int* nuclide);
+//! Incident energy and nuclide of the sampled particles of the last
+//! openmc_rmc_residual_sample call (0 and -1 on density records)
+int openmc_rmc_residual_records_aux(double* E_in, int* nuclide);
 }
 
 #endif // OPENMC_RMC_CAPI_H

@@ -792,6 +792,103 @@ Without cancellation the bank's absolute weight grows roughly linearly with
 the generation, since every generation adds the residual's absolute weight
 and flights in a multiplying medium carry most of it on.
 
+.. _methods_rmc_tallies:
+
+----------------------
+The correction tally
+----------------------
+
+Generation :math:`n` reports the reaction rate of the flux its own source
+produces, normalized with the same :math:`f_n` as the source:
+
+.. math::
+    :label: rmc-tally
+
+    T_{R,n} = \frac{1}{f_n}\Big(a_{s,n} X_{s,R} + a_{f,n} X_{f,R}
+    + \big\langle \Sigma_f \mathbf 1_R,\ \mathcal G\,\delta Q_n\big\rangle\Big),
+    \qquad X_{y,R} = \big\langle \Sigma_f \mathbf 1_R,\ \mathcal G\,Q^{MG}_y\big\rangle .
+
+**Field part.** :math:`X_{y,R}` is estimated fresh each generation from
+backward CE traces: points uniform in the field's box, one isotropic direction
+each, and :math:`n_E` incident energies from the region's lifted MG flux
+:math:`\phi_{R,g}h^\phi`. A point in fissionable material scores
+:math:`V_{box}\,4\pi\,\Sigma_f(E')\,\psi_y(E',\mathbf\Omega')/(n_E\,p(E'))`
+to its region. The estimate is unbiased for any proposal that covers the
+integrand; fresh points each generation keep its error out of the average.
+
+**Bank part.** During the flights of :math:`\delta Q_n`, every collision
+scores the flight's signed unit weight times :math:`\Sigma_f/\Sigma_t` at
+the parent's energy to the field region of the collision site: a collision
+estimator of :math:`\langle\Sigma_f\mathbf 1_R,\mathcal G\delta Q_n\rangle`.
+
+.. _methods_rmc_cancellation:
+
+-----------------
+Sign cancellation
+-----------------
+
+Every canceller below replaces part of the candidate bank by particles with
+the same expectation and smaller absolute weight. Two are exact, two are
+approximate.
+
+**The pooling identity.** Let a particle of weight :math:`w` be drawn at
+:math:`y \sim p`, with :math:`w` independent of :math:`y`, and let
+:math:`q` be any density with :math:`p > 0` wherever :math:`q > 0`. Then
+
+.. math::
+    :label: rmc-pooling
+
+    \mathrm E\big[w\,\delta_y\big]
+    = \mathrm E\Big[w\Big(1 - \frac{q(y)}{p(y)}\Big)\delta_y\Big]
+    + \mathrm E\Big[w\,\frac{q(y)}{p(y)}\Big]\, q ,
+
+so the particle may be replaced by a *kept* particle at :math:`y` with
+weight :math:`w(1-q/p)` and a *pooled* weight :math:`w\,q(y)/p(y)` assigned
+to a fresh draw from :math:`q`. Pooled weights of many particles that share
+:math:`q` add before any draw, and opposite signs cancel exactly. Scaling
+:math:`q/p` by a constant :math:`s` per particle keeps the identity; any
+constant factor of :math:`p` cancels when :math:`s` is chosen in units of
+:math:`p`. If :math:`q/p \approx 1` the kept weights are small.
+
+**Destination pooling (exact).** With every channel of the fission residual
+on the sampler route, the low-term record and the sampled fission particles
+of one destination share its position, and their directions are isotropic.
+The low term's target density, :math:`-b_f Q_f(\mathbf r^\star, E)`, is
+known, so its whole mass :math:`-b_f Q_{f,R} V_{box}/N` goes to the pool. A
+sampled fission particle at :math:`E` has
+:math:`p = \chi_m(E\mid E')`, the emission density of its nuclide at its
+incident energy, and is pooled into :math:`q_R`, the region's lifted fission
+spectrum. One pooled particle per destination carries the net.
+
+**Regional cancellation (exact).** A fission child of an isotropic tag-f
+parent at :math:`\mathbf x_p` with energy :math:`E_p` and nuclide :math:`m`,
+whose flight was shorter than :math:`d_{max}`, has the sub-density
+
+.. math::
+
+    p(\mathbf x, E) \propto K(\mathbf x\mid\mathbf x_p, E_p)\,
+    \chi_m(E\mid E_p),
+    \qquad K = \sum_{\text{images } \mathbf x'_p,\ d < d_{max}}
+    \frac{e^{-\tau(\mathbf x, \mathbf x'_p; E_p)}}{4\pi d^2},
+
+summed over the images of the parent in the reflective faces (each image is
+reached by the reflected straight path of the same length). Its weight
+depends only on the parent and nuclide. The children are pooled into
+:math:`q` = uniform over the fuel pin times a reference fission spectrum,
+with :math:`s = V_{pin}\min K\,\min_E \chi_m/q_E`, the R7/R8 construction.
+The child's direction is isotropic, so it plays no part.
+
+**Binned netting (approximate).** Bins :math:`b = (t, Z, g, d)`: tag,
+a zone (material times a coarse grid of the source-region mesh), group, and
+for tag :math:`s` a direction bin. The net :math:`m_b = \sum_{i\in b} w_i`
+is re-sampled as :math:`n_b` particles with :math:`\mathrm E[n_b] =
+N|m_b|/\sum|m|` and weight :math:`m_b/\mathrm E[n_b]`: region within the
+zone with probability :math:`V_R Q_{t,R,g}`, uniform in the region, the lift
+in energy, uniform in the direction bin. With *exact low term*, the
+records of a tag carry no low term and each bin receives
+:math:`-b_t\sum_{R\in Z} V_R Q_{t,R,g}/D` in closed form. The bias is the
+within-bin shape.
+
 .. _methods_rmc_kinematics:
 
 -------------------------------------

@@ -29,6 +29,20 @@ struct FlightTally {
   void reset();
 };
 
+//! Optional per-child and per-region outputs of propagate(), for exact
+//! cancellation (which needs each child's parent, path length, and
+//! nuclide) and for the correction tally (a collision estimator of the
+//! fission rate by field region)
+struct FlightAux {
+  bool children {false};       //!< record the per-child arrays
+  vector<int64_t> parent;      //!< [children] index of the parent in the bank
+  vector<double> path;         //!< [children] flight path length [cm]
+  vector<int> nuclide;         //!< [children] index into data::nuclides
+  vector<double> region_fission; //!< [R] signed sum of w Sigma_f / Sigma_t
+                                 //!< at collisions (if sized to R)
+  vector<double> region_nu_fission; //!< [R] the same with nu Sigma_f
+};
+
 //! Diagnostics of one propagate() call
 struct FlightStats {
   int64_t flights {0};
@@ -70,12 +84,14 @@ public:
   //! \param out      Children are appended
   //! \param tally    Optional track-length tally (accumulated)
   FlightStats propagate(const SignedBank& in, int64_t n, double k,
-    uint64_t seed, SignedBank& out, FlightTally* tally = nullptr);
+    uint64_t seed, SignedBank& out, FlightTally* tally = nullptr,
+    FlightAux* aux = nullptr);
 
 private:
   //! Outcome of the collision at the probe's state, for direction u
   struct Collision {
     int kind {0}; //!< 0 capture, 1 scatter, 2 fission
+    int nuclide {-1};
     double factor {0.0};
     double E {0.0};
     Direction u;

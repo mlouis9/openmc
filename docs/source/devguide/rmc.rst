@@ -1220,3 +1220,73 @@ Not done
       per control direction).
     - Problems with S(:math:`\alpha,\beta`) data and a less accurate field
       (larger residual).
+
+
+-----------------------------------------------------
+Stage 8: Sign cancellation and correction tallies
+-----------------------------------------------------
+
+.. _devguide_rmc_stage8:
+
+Cancellation, tallies, and the first end-to-end measurement
+-----------------------------------------------------------
+
+**Commit:** "rmc: sign cancellation, correction tallies, and the first
+end-to-end measurement". Theory: ``methods_rmc_cancellation`` and
+``methods_rmc_tallies``. The full write-up, with the measurement, is the
+report in ``docs/report`` (``latexmk -pdf rmc_method.tex``).
+
+Added
+    - ``correction.h/.cpp``, ``correction_capi.cpp``: the field tally of a
+      reaction rate by region from backward CE points, with an optional MG
+      control (``openmc_rmc_field_tally``); the fission spectrum of a
+      nuclide at an incident energy (``openmc_rmc_fission_chi``); the near
+      point kernel over reflective images (``openmc_rmc_near_kernel``); and
+      flights that report their children's parents, path lengths, and
+      collision nuclides, and tally fission by region
+      (``openmc_rmc_propagate_aux``).
+    - Residual records carry the parent energy and collision nuclide.
+    - ``examples/rmc/cancellation.py``: the netting representation (tag,
+      zone, energy bin, direction bin), binned netting with an optional
+      closed-form low term per bin, destination pooling of the fission
+      residual, regional point-kernel cancellation of fission children, and
+      the correction tally.
+    - ``driver.generation`` calls a backend's ``cancel`` after the children
+      are merged and its ``tally`` after the amplitudes are updated.
+    - ``examples/rmc/stage8.py`` and ``stage8_analysis.py``: variants, the CE
+      eigenvalue reference in replicas with active time, bias and figures of
+      merit with batch-means and replica errors, and a per-kernel projection.
+    - The tracer's mesh-coverage check tolerates round-off gaps.
+    - ``tests/rmc/test_cancellation.py``: the near kernel against flights,
+      exactness of regional cancellation and destination pooling, binned
+      netting's per-bin expectation, and the field tally against flights.
+
+Findings (graphite pincell, 3 replicas per variant)
+    - Without cancellation, and with the exact methods alone, the bank's
+      absolute weight grows geometrically and the fission production turns
+      negative within 30 generations. Every variant with netting is stable,
+      with :math:`W_{abs}` between 4 and 10.
+    - Destination pooling cuts the fission residual's absolute weight by a
+      factor of about 4. The regional kernel is eligible for about 20 of
+      1300 fission children per generation: in graphite they come from
+      thermal tag-s parents.
+    - :math:`k` is 860-1450 pcm high in every variant (1.4-3.3 replica
+      standard errors each, consistent in sign). Leading hypothesis: the
+      eigenvalue bias of a noisy source iteration, with per-generation noise
+      set by :math:`W_{abs}`.
+    - The CE correction tally reproduces the fuel fission shape
+      (:math:`\chi^2 = 66/60`). The MG-controlled tally shows a -5% deficit
+      in the outermost fuel regions: its one-off low tally is frozen Monte
+      Carlo error. Its low term should be the closed-form MG rate.
+    - Replica spread is 2-3 times the batch-means error (slow scattering
+      modes).
+    - :math:`k` figure of merit relative to OpenMC: 0.0015 (replica errors)
+      to 0.02 (batch means); shape 0.001. Projected after the engineering of
+      the report's performance section (3.3 times): 0.005-0.07.
+
+Not done
+    - Scans in :math:`N` and :math:`N_\delta` to resolve the eigenvalue bias.
+    - The closed-form MG low term of the correction tally.
+    - Cancellation of the scattering residual beyond netting.
+    - Performance work (cross-section lookups on backward segments, C++
+      cancellation).

@@ -74,9 +74,18 @@ void CharacteristicTracer::step()
         field_.region(cell.id_, inst, bins_[b]));
       covered += fractions_[b];
     }
-    if (std::abs(covered - 1.0) > 1e-9) {
-      fatal_error("RMC tracer: a source-region mesh does not cover the cell it "
-                  "is applied to.");
+    // Round-off in the mesh crossing (very short or grazing segments): give
+    // the missing length to the bin of the segment's midpoint. A gap larger
+    // than round-off means the mesh does not cover the cell.
+    double gap = 1.0 - covered;
+    if (gap > 1e-9) {
+      if (std::abs(gap) * d > 1e-6 && std::abs(gap) > 1e-3) {
+        fatal_error("RMC tracer: a source-region mesh does not cover the cell "
+                    "it is applied to.");
+      }
+      int bin = model::meshes[mesh_idx]->get_bin(start + 0.5 * d * p_.u());
+      pending_.push_back(d * gap, material, sqrtkT, dm,
+        bin >= 0 ? field_.region(cell.id_, inst, bin) : -1);
     }
   }
 
