@@ -1,0 +1,377 @@
+% Stage 8: the first end-to-end measurement. Numbers from
+% examples/rmc/stage8_analysis.py on the runs in examples/rmc/results/stage8.
+
+\input{figures/stage8_numbers.tex}
+
+This section reports the first run of the whole method: the MG field, the residual for both tags, the
+cancellers of Section~\ref{sec:cancellation}, the flights, and the correction tally. All of it ran
+together on the graphite pincell and was compared with OpenMC's continuous-energy eigenvalue
+calculation of the same model. The question is whether the method works at all: whether it is
+unbiased, how its variance per particle and per second compares with analog Monte Carlo, and what
+engineering could recover. It is not yet the question of whether it wins.
+
+\subsection{Setup}
+
+\paragraph{Problem.} The graphite-moderated UO$_2$ pincell of Section~\ref{sec:res:setup} has fuel
+pin, gap and graphite block, reflective on every face, at 294~K with ENDF/B-VIII.0 data. Its
+infinite-lattice multiplication factor is $k\approx0.642$. It is far from critical because the
+moderator-to-fuel ratio is far from optimal: thermal absorption in the large graphite block competes
+with the fuel.
+
+The spectrum is strongly thermal. Fission neutrons born near 2~MeV need about 115 collisions with
+carbon ($\xi\approx0.158$) to reach thermal energies. Most of those collisions happen in the
+graphite, far from the pin, so the slowing-down source near the fuel is close to the
+$1/E$ asymptotic form, apart from the dips at the $^{238}$U resonances. This has two consequences.
+\begin{itemize}
+\item Most fissions are induced by thermal neutrons that entered the pin from the moderator. The
+  fission source is peaked at the pin surface and depressed at its centre: the thermal flux dips
+  inside the absorbing pin.
+\item The scattering ratio $c$ is close to one almost everywhere. That makes the emission-source
+  iteration of Section~\ref{sec:convergence} slow and its generations strongly correlated.
+\end{itemize}
+
+\paragraph{Field.} The MG field is the 8-group flat-source random-ray solution, with prescribed
+(exact) region volumes. It has 172 regions: the cells cut by the $12\times12$ source-region mesh. Of
+these, 60 are fuel regions. The field eigenvalue is $k_{MG}=0.64257$, already within $55$~pcm of
+the CE reference. The MG answer is close, and the correction only has to supply the fine-energy and
+angular structure that 8 groups cannot represent.
+
+\paragraph{Reference.} OpenMC eigenvalue runs, single-threaded:
+\begin{itemize}
+\item 4 independent replicas;
+\item each with $2\times10^4$ particles per batch, 20 inactive and 50 active batches ($10^6$ active histories);
+\item fission and $\nu$-fission tallied on the same fuel regions.
+\end{itemize}
+The results:
+\begin{itemize}
+\item $k=\refk\pm\refksd$ (the spread of the replicas; each replica's own batch estimate is $0.00058$);
+\item $\refT$~s of active time per replica.
+\end{itemize}
+
+\paragraph{RMC runs.} \code{examples/rmc/stage8.py} runs each variant in 3 independent replicas. Two
+campaigns were run:
+\begin{itemize}
+\item \textbf{First campaign.} 5 inactive and 30 active generations, $N_s=N_f=2000$ residual samples,
+  a bank resampled to $N_\delta=2\times10^4$, $N_B=2\times10^4$ netting particles, and a CE
+  correction tally with $2\times10^4$ backward points per generation.
+\item \textbf{Tuned campaign} (combined variants only). 40 inactive and 60 active generations,
+  $N_\delta=2\times10^5$, $N_B=4\times10^4$, and a correction tally with $10^4$ points plus the MG
+  control (a one-off low tally of $4\times10^5$ points, Section~\ref{sec:tallies}). This campaign
+  tallies $\nu$-fission.
+\end{itemize}
+Every replica is single-threaded. The figures of merit use active time only, on both sides.
+
+\paragraph{Variants.} These are the classes of Section~\ref{sec:cancellation}:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+variant & residual routes & cancellation \\
+\midrule
+none & density route, both tags & none \\
+binned netting & density route, both tags & netting (zones $3\times3$ per material, group bins) \\
+binned, exact low (f) & s density, f sampler & netting, fission low term in closed form per bin\\
+exact only & s density, f sampler & destination pooling + regional point kernel \\
+exact + binned netting & s density, f sampler & pooling + regional + netting \\
+exact + finer netting & as above & netting with $12\times12$ zones and 4 sub-bins per group \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Stability: the absolute weight of the bank}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/stage8_wabs_k.pdf}
+\caption{Left: absolute weight $\Wabs$ of the candidate bank (after cancellation) against generation,
+for every variant and replica. A cross marks an estimator failure: the fission production $f$ turned
+negative and the eigenvalue update became undefined. Right: the generation estimate $k_n$ over the
+active generations of the variants that ran to completion, against the CE reference (black line).}
+\label{fig:s8:wabs}
+\end{figure}
+
+Figure~\ref{fig:s8:wabs} answers the first question: without cancellation the method does not run.
+\begin{itemize}
+\item \textbf{No cancellation.} $\Wabs$ grows geometrically, by about $30\%$ per generation. Generation
+  27 fails with $\Wabs\approx735$: the signed bank's noise exceeded the production it corrects and
+  $f<0$. This is the instability of Section~\ref{sec:wabs}: with $\kappa\eta>1$ no stationary $\Wabs$
+  exists.
+\item \textbf{Exact methods alone.} Destination pooling and the regional kernel do not stop the
+  growth. Pooling cancels the fission residual very well: $\Wabs$ of the fission records falls from
+  $2.8$ to $0.75$ per generation. But scattering carries most of the absolute weight, and only
+  netting touches it. One replica failed at generation 28, the other reached $\Wabs\approx1360$.
+\item \textbf{Netting.} Every variant with netting is stable, with $\Wabs$ between 4 and 10:
+  \begin{itemize}
+  \item the coarse representation ($3\times3$ zones) holds $\Wabs\approx4$--$8$;
+  \item adding the exact fission methods lowers it to $\approx4.4$;
+  \item the finer representation, counter-intuitively, raises it to $\approx10$. More bins means
+    fewer particles of opposite sign per bin, so there is less to cancel. This is the trade-off of
+    Section~\ref{sec:netting-bias}: a finer representation has less bias but cancels less.
+  \end{itemize}
+\end{itemize}
+In the tuned combined run, one typical generation looks like this:
+\begin{itemize}
+\item netting reduces $\Wabs$ from $11.2$ to $4.8$ over 645 occupied bins;
+\item pooling moves $\approx700$ fission records into the pools and cuts their absolute weight by a
+  factor $3.8$;
+\item the regional kernel is eligible for only $\approx20$ of $\approx1300$ fission children.
+\end{itemize}
+The regional kernel acts so rarely because fission children come almost entirely from tag-s parents.
+These are thermal neutrons arriving from the graphite, not the tag-f parents near the pin that the
+kernel requires. In this problem it is inert, and its cost buys nothing.
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/stage8_diagnostics.pdf}
+\caption{One replica of the tuned combined variant, generation by generation. Left: absolute weight
+before and after netting (whole candidate bank), and of the fission residual before and after
+destination pooling. Right: the production $f_n$ and the amplitudes $a_s$, $a_f$. Netting removes
+about half of the bank's absolute weight every generation; pooling removes three quarters of the
+fission residual's. The production fluctuates by about 4\% and the fission amplitude by about 8\%:
+this noise, fed back through the iteration, is the leading candidate for the eigenvalue bias.}
+\label{fig:s8:diag}
+\end{figure}
+
+Figure~\ref{fig:s8:diag} shows the stationary state. What remains after netting is about four times
+the absolute weight of the fission residual after pooling. The scattering residual and its children,
+which only netting touches, carry the variance.
+
+\subsection{Bias}
+
+\begin{table}[t]\centering\small
+\caption{End-to-end results against the CE reference ($k=\refk$). The columns are:
+$\Delta k$, the bias in pcm; $z_{bm}$ and $z_{rep}$, the bias in units of its standard error from
+5-generation batch means and from the spread of the 3 replicas; $\overline{\Wabs}$, over active
+generations; $T$, the active time per replica in seconds; the $k$ figure-of-merit ratio
+(RMC/reference) with each error estimate; the fuel-region shape FOM ratio; and the projected
+speedup $s$ of Section~\ref{sec:s8:projection}. The first two rows are the first campaign (30 active
+generations, $N_\delta=2\times10^4$); the last two are the tuned campaign (60 active,
+$N_\delta=2\times10^5$, MG-controlled $\nu$-fission tally).}\label{tab:s8}
+\setlength{\tabcolsep}{3.5pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrrrrrr@{}}
+\toprule
+variant & $k$ & $\Delta k$ & $z_{bm}$ & $z_{rep}$ & $\overline{\Wabs}$ & $T$ &
+FOM$_k$ (bm) & FOM$_k$ (rep) & FOM$_{shape}$ & $s$\\
+\midrule
+\csname @@input\endcsname figures/stage8_table.tex
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\paragraph{The eigenvalue is biased high.} Every completed variant overestimates $k$ by
+$860$--$1450$~pcm (Table~\ref{tab:s8}). Taken one at a time, the replica-based significance is
+modest, between $1.4\sigma$ and $3.3\sigma$. But all four variants agree in sign and size, so the
+bias is real.
+
+Its size does not depend on how the cancellation is done:
+\begin{itemize}
+\item it is $+1286$~pcm with coarse netting and the low term carried in the records;
+\item it is $+860$~pcm with the low term in closed form;
+\item it is $+1376$ and $+1454$~pcm with the exact methods added, with coarse and fine representations.
+\end{itemize}
+Netting is biased per generation (Section~\ref{sec:netting-bias}), but a netting bias would change
+with the representation, and here it does not. Nor is the residual estimator the cause:
+\begin{itemize}
+\item the controlled study (Section~\ref{sec:res:controlled}) found every route of the residual
+  unbiased in isolation;
+\item here, the pooled fission residual sums to $-0.0002\pm0.0073$ per generation against
+  $-0.0018$ expected.
+\end{itemize}
+
+The leading hypothesis is the \emph{eigenvalue bias of a noisy source iteration}. In analog
+eigenvalue Monte Carlo, normalizing a stochastic source by its own estimate of $k$ biases $k$ by an
+amount proportional to the variance of the source per generation, $\mathcal O(1/N)$. Here the noise
+of each generation is not set by $N$ histories but by the bank's absolute weight. Two measurements
+show how large it is:
+\begin{itemize}
+\item the production $f$ fluctuates by $4.2\%$ per generation, and the fission amplitude $a_f$ by
+  $8.5\%$;
+\item a batch of $2\times10^4$ analog histories fluctuates by $0.6\%$.
+\end{itemize}
+A per-generation variance some $40$ times that of the reference's batches, fed back
+through the amplitudes and $k_n=k_{n-1}f_n$, gives a bias of order $10^2$--$10^3$~pcm. That matches
+what is observed.
+
+The hypothesis predicts that the bias falls as $1/N_\delta$ at fixed $\Wabs$, and as $\Wabs^2$ at
+fixed $N_\delta$. There is a hint in the data: the first campaign has $10\times$ fewer flights than
+the tuned campaign, but its bias is similar. This argues against the simple $1/N_\delta$ law, unless
+the noise is dominated by the residual samples ($N=2000$ per tag in both campaigns) rather than the
+flights. The discriminating runs are a scan in $N$ and a scan in $N_\delta$; they are the first item
+of the next stage. Two other explanations are not yet excluded:
+\begin{itemize}
+\item the slow scattering-mode transient of Section~\ref{sec:convergence}: the $k_n$ traces in
+  Figure~\ref{fig:s8:wabs} show excursions lasting tens of generations;
+\item an error in how the amplitudes are updated.
+\end{itemize}
+
+\paragraph{Batch means underestimate the error.} The replica spread of $k$ is $2$--$3$ times the
+batch-means estimate. Within a replica, the estimated autocorrelation time is only $\tau\approx2$--$5$
+generations. The long excursions of Figure~\ref{fig:s8:wabs} explain the gap: they are the slow
+scattering modes, with $\tau\sim(1+c)/(1-c)\sim10^2$. A lag-window estimate over 60 generations
+cannot see them. So the honest error is the replica one, and the $z_{bm}$ column overstates
+significance.
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/stage8_shape.pdf}
+\caption{Fission (or $\nu$-fission) rate by fuel region, normalized to unit sum. Left: mean relative
+deviation from the reference against the region's distance from the pin centre. Right: histogram of
+standardized differences (batch-means errors), against the standard normal density.}
+\label{fig:s8:shape}
+\end{figure}
+
+\paragraph{The fission-rate shape.} With the CE correction tally (the first campaign), the fuel-region
+shape agrees with the reference: $\chi^2=66$ for 60 regions, and no radial trend
+(Figure~\ref{fig:s8:shape}). The $\pm1\%$ pattern that both binned variants share is the reference's
+own noise, which both comparisons inherit.
+
+The MG-controlled tally of the tuned campaign shows a $-5\%$ deficit in the outermost fuel regions,
+and $\chi^2\approx255$. The pattern is the same for the coarse and fine netting, which share nothing
+except the one-off MG low tally. That points to the low tally: its $4\times10^5$ backward points are
+drawn once with a fixed seed and reused in every generation. Their sampling error is therefore
+\emph{frozen}: it acts as a bias of the run rather than averaging away. It is largest in the small
+partial regions cut by the pin surface, which receive the fewest uniform points.
+
+This is a design error, not a property of the estimator. The low term of the MG control is the MG
+reaction rate $V_R\sum_g\nu\Sigma_{f,g}\phi_{R,g}$, known in closed form from the field. It should be
+computed that way, or at least redrawn every generation.
+
+\subsection{Variance per particle and figure of merit}
+
+\paragraph{Per particle.} The variance of $k$ per unit of work compares as follows:
+\begin{itemize}
+\item \textbf{RMC, tuned combined variant.} A generation processes $4\times10^3$ residual samples
+  and $4\times10^4$ flights. The per-generation $k_n$ scatters by $0.021$, so the variance per
+  particle-generation is $0.021^2\times4.4\times10^4\approx19$.
+\item \textbf{Reference.} The batch-to-batch scatter of $k$ is $0.0041$ at $2\times10^4$ histories, so
+  the variance per history is $0.34$.
+\end{itemize}
+Measured per particle and ignoring correlation, the method is $\approx60$ times worse. Counting the
+correlation between generations, as the replica spread does (on both sides), it is $\approx1500$
+times worse.
+
+The per-particle variance is not small because of the residual's quality. It is small only where the
+residual is small, and the bank's absolute weight undoes that. With $\Wabs\approx4.4$, every unit of
+correction carries about four units of noise of either sign. The method's premise, variance
+proportional to the residual, holds per sample (Section~\ref{sec:res:controlled}) but not per
+generation.
+
+\paragraph{Per second.} The figure of merit $1/(\sigma^2T)$ of $k$ for the tuned combined variant,
+relative to the reference, is:
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+ & batch-means $\sigma$ & replica $\sigma$\\
+\midrule
+measured & $0.020$ & $0.0015$\\
+projected (Section~\ref{sec:s8:projection}) & $0.068$ & $0.0049$\\
+\bottomrule
+\end{tabular}
+\end{center}
+The batch-means figure is optimistic and the replica figure, from only three replicas, is uncertain
+by about a factor of two. The truth is nearer the replica figure.
+
+The best measured $k$ figure of merit belongs to the low term in closed form (binned, exact low):
+$0.043$ with batch means. It also has the smallest bias.
+
+The shape figure of merit, the mean relative variance over the 60 fuel regions, is $10^{-3}$ of the
+reference for every variant. The correction tally is dominated by its backward points and the bank's
+collision estimator, and both carry the bank's full absolute weight into every region.
+
+\subsection{What optimization could recover}\label{sec:s8:projection}
+
+\begin{table}[t]\centering\small
+\caption{Time per generation of the tuned combined variant (single thread), and the projected
+speedup of each kernel.}\label{tab:impl:time}
+\begin{tabular}{@{}lrrrl@{}}
+\toprule
+kernel & s/gen & share & projected $\times$ & reason\\
+\midrule
+residual sampling & 1.55 & 49\% & 4 & total-only lookups, per-path XS cache, channel sampling\\
+flights & 0.52 & 16\% & 1.5 & already OpenMC's own collision physics; bank I/O only\\
+cancellation & 0.32 & 10\% & 5 & Python loops and \code{numpy} netting moved to C++\\
+tallies and bookkeeping & 0.78 & 25\% & 5 & closed-form MG low, C++ bank handling\\
+\midrule
+total & 3.17 & & 3.3 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Engineering.} Table~\ref{tab:impl:time} splits a generation by kernel.
+
+Residual sampling dominates, and within it the cross-section lookups on backward segments
+(Section~\ref{sec:impl:projection}). Each lookup is a full \code{Material::calculate\_xs}, while the
+backward flux needs only $\Sigma_t$. A total-only lookup with a per-path cache would remove most of
+that cost.
+
+The Python-side cancellation and tally costs are pure overhead.
+
+The flights are OpenMC's own transport and gain little. With the per-kernel factors of the table, a
+generation becomes $3.3$ times faster. The $k$ figure of merit would then be $0.07$ (batch means) or
+$0.005$ (replicas) of the reference: still at least $15$ times worse than analog Monte Carlo.
+
+\paragraph{Algorithm.} Engineering cannot close that gap, so the remaining factors must come from
+the algorithm. In order of expected size:
+\begin{enumerate}
+\item \textbf{Lower $\Wabs$.} The figure of merit scales as $\Wabs^{-2}$ at fixed cost. Halving
+  $\Wabs$ is worth a factor of $4$. The candidates are:
+  \begin{itemize}
+  \item netting bins matched to the residual's own structure, by group and by angle, with the low
+    term in closed form;
+  \item destination pooling extended to scattering, by pooling elastic children against a
+    regional slowing-down density;
+  \item fewer flights per unit of correction, by pooling at birth rather than after a generation.
+  \end{itemize}
+\item \textbf{Shorter correlation.} The slow scattering modes inflate the error of the mean by
+  $\sqrt{\tau_{rep}/\tau_{bm}}\approx2$--$3$ (a factor of $4$--$10$ in figure of merit). Accelerating
+  them, for instance by feeding the bank's collision tally back into the field as a coarse-mesh
+  correction, recovers it.
+\item \textbf{Fewer generations per answer.} The 40 inactive generations needed here cost as much as
+  the reference's whole inactive phase. A field that already contains the correction from the
+  previous run would remove them.
+\end{enumerate}
+Together these are worth one to two orders of magnitude, if they work as estimated.
+
+\paragraph{Projection to a light-water pincell.} The answer above is for graphite. For a typical PWR
+pincell (UO$_2$, water, pitch 1.26~cm), the changes are as follows.
+\begin{itemize}
+\item \textbf{Reference cost.} A history takes $\approx20$ collisions to thermalize in hydrogen
+  ($\xi\approx0.93$), against $\approx115$ in carbon. The reference therefore runs $\approx4$--$5$
+  times faster per history.
+\item \textbf{RMC cost.} The RMC generation is one collision generation, so its cost per generation
+  is unchanged.
+\item \textbf{Correlation.} The scattering modes decay as $c^n$ with $c$ lower in a hydrogenous
+  pincell (more absorption per collision near the fuel), so the correlation time shortens by a
+  similar factor.
+\item \textbf{Residual.} The MG field is a worse approximation in an LWR: harder spectrum, stronger
+  $^{238}$U self-shielding, more epithermal fission. This raises $V_{res}$ and $\Wabs$.
+\end{itemize}
+The net is roughly neutral to unfavourable. The LWR figure of merit ratio should be no better than
+the graphite one, and plausibly 2--3 times worse unless the MG field carries self-shielded
+cross sections.
+
+\subsection{Verdict}
+
+The method runs. It is stable only with netting, and its pieces behave as designed:
+\begin{itemize}
+\item pooling cancels the fission residual exactly;
+\item netting holds $\Wabs$ at a stationary value;
+\item the correction tally with CE points reproduces the fission shape.
+\end{itemize}
+
+It is not yet competitive. At base level, measured honestly with independent replicas:
+\begin{itemize}
+\item it is $\approx700$ times worse than analog Monte Carlo in the $k$ figure of merit, and
+  $\approx50$ times worse with batch means;
+\item it is $\approx1000$ times worse in the fission-shape figure of merit;
+\item it carries a $\approx+1000$~pcm eigenvalue bias that must be explained before anything else.
+\end{itemize}
+After the engineering of Table~\ref{tab:impl:time} it would still be $15$--$200$ times worse.
+
+Feasibility therefore rests on the algorithmic factors. They all attack the same quantity: the
+bank's absolute weight per unit of correction. That quantity, not the residual, now sets the
+variance. The next stage should:
+\begin{enumerate}
+\item resolve the bias with scans in $N$ and $N_\delta$;
+\item make the MG low term closed-form;
+\item measure how far scattering-aware cancellation can push $\Wabs$ below one.
+\end{enumerate}
+If $\Wabs$ cannot be brought near or below one at a cost comparable to a flight, the method cannot
+beat analog Monte Carlo on this class of problem.

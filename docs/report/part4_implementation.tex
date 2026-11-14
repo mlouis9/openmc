@@ -1,0 +1,212 @@
+\part{Implementation}\label{part:impl}
+
+\section{Overview and key design decisions}\label{sec:impl:overview}
+
+\subsection{Where the code lives and how it meets OpenMC}
+
+\begin{figure}[t]\centering
+\begin{tikzpicture}[node distance=4mm and 6mm, every node/.style={font=\footnotesize}]
+\node[box,minimum width=118mm,fill=headblue!10] (py) {\textbf{Python driver} (\code{examples/rmc}): \code{driver.generation}, backends, amplitudes,
+cancellation (\code{cancellation.py}), campaigns (\code{stage8.py}), studies};
+\node[box,below=5mm of py,minimum width=118mm] (capi) {\textbf{C API} (\code{include/openmc/rmc/capi.h}) and ctypes bindings (\code{openmc/lib/rmc.py}): handles, arrays in and out};
+\node[box,below=6mm of capi,xshift=-44mm,minimum width=28mm] (field) {\code{FrozenField}\\ locate, evaluate,\\ lifts, volumes, flux};
+\node[box,right=4mm of field,minimum width=28mm] (back) {\code{CharacteristicTracer}\\ \code{BackwardFlux}\\ \code{XsProbe}};
+\node[box,right=4mm of back,minimum width=28mm] (res) {\code{ResidualSampler}\\ proposals, directions,\\ records, weights};
+\node[box,right=4mm of res,minimum width=26mm] (fl) {\code{FlightPropagator}\\ \code{SignedBank}};
+\node[box,below=5mm of back,minimum width=28mm] (chan) {\code{ChannelRegistry}\\ sampler route};
+\node[box,below=5mm of res,minimum width=28mm] (prod) {evaluators\\ \code{production.cpp}};
+\node[box,below=5mm of field,minimum width=28mm] (mg) {\code{MGTables}\\ \code{MGControl}};
+\node[box,below=5mm of fl,minimum width=26mm] (corr) {\code{correction.cpp}\\ tallies, kernels};
+\node[box,below=8mm of prod,xshift=-20mm,minimum width=118mm,fill=accorange!10] (omc) {\textbf{OpenMC}: geometry (\code{distance\_to\_boundary}, \code{event\_cross\_surface}, boundary conditions),
+\code{Material::calculate\_xs}, nuclides and reactions, \code{scatter}, \code{sample\_fission\_neutron},
+\code{AngleDistribution::evaluate}, meshes, RNG streams};
+\node[box,below=4mm of omc,minimum width=118mm,fill=accgreen!10] (rr) {\textbf{OpenMC random ray} (edited): MG data provider \code{RandomRayMGData}, prescribed volumes,
+per-batch sweeps, segment records, field export};
+\draw[arr] (py)--(capi);
+\foreach \n in {field,back,res,fl} \draw[arr] (capi.south) -- (\n.north);
+\end{tikzpicture}
+\caption{Module map. Python owns the outer loop; C++ owns every kernel that touches particles, and
+reaches OpenMC's physics and geometry directly. The random-ray solver runs inside the same CE
+process through a multigroup data provider.}\label{fig:impl:modules}
+\end{figure}
+
+Figure~\ref{fig:impl:modules} shows the structure. The decisions behind it:
+
+\begin{enumerate}
+\item \textbf{One CE process, with OpenMC's random ray as the MG sweep.} OpenMC loads either CE or MG
+  data, never both. Random ray needs MG data only through a few small tables, so they were routed
+  through a provider (\code{RandomRayMGData}) that is filled from the MG library in ordinary random ray
+  and from the field file's exported tables in RMC. The random-ray paths do not compute CE cross
+  sections, so they run unchanged in a CE process. Reuse buys ray sampling, segment attenuation, mesh
+  subdivision, region lookup and threading; the regression tests guard the refactor (bitwise).
+\item \textbf{OpenMC never sees a signed weight.} Every OpenMC routine receives a positive scratch
+  particle of unit weight; signs, tags and yields live in \code{SignedBank} and the records. OpenMC's
+  weight cutoff, roulette and \code{create\_fission\_sites} would all misbehave with negative weights.
+\item \textbf{Python owns the loop, C++ the kernels.} Every kernel has a C entry point that pytest
+  can call with chosen inputs; that is the seam for the gates. The cost is a copy of the bank across
+  the boundary each generation, measured below.
+\item \textbf{Records with deferred weights.} Residual generation returns scalar-free records; a
+  separate step forms weights from $(a,b,k,c,\lambda)$. Pre-generated and run-time residuals are the
+  same code; estimator variants are compared on identical samples.
+\item \textbf{One random stream per sample and purpose.} Every sample and flight derives its seed from
+  (base, generation, purpose, index) with OpenMC's skip-ahead LCG, so results do not depend on order
+  or thread count, and replicas are just different base seeds.
+\item \textbf{Every channel on exactly one route.} The registry partitions production by energy, so
+  adding an evaluator for a reaction moves it across without touching the estimator.
+\end{enumerate}
+
+\section{Components, data containers and algorithms}\label{sec:impl:components}
+
+\subsection{The field}
+
+\code{FrozenField} reads the field file (regions keyed by cell, instance and mesh bin; group values;
+group edges; MG tables), the lift file (fine grid and per-material histograms) and the volume file.
+Lookups are flat arrays indexed \code{[(t*R + r)*G + g]}. \code{locate()} mirrors random ray's region
+key (lowest cell, instance, mesh bin of the global position), so the CE process finds the same
+regions. \code{evaluate()} is a bin search on the fine grid and two loads. Everything is
+\code{const} after construction, so threads can share it.
+
+\subsection{Tracing and the backward flux}
+
+\code{CharacteristicTracer} owns a scratch \code{Particle} and moves it with
+\code{distance\_to\_boundary()} and \code{event\_cross\_surface()} (which applies reflective and
+periodic conditions), splitting each cell crossing at source-region mesh crossings exactly as
+\code{RandomRay::attenuate\_flux()} does. It is resumable: \code{begin(r,u)} then \code{extend(n)}
+returns segments in chunks. \code{SegmentList} is a structure of arrays reused across calls (no
+allocation in steady state). \code{BackwardFlux::evaluate\_all} walks one path for a list of energies,
+with per-energy roulette, and optionally MG accumulators for the control on the same segments.
+
+\begin{algorithm}[h]
+\caption{Backward $\psi$ for several energies on one path}\label{alg:psi}
+\DontPrintSemicolon
+\KwIn{$\vr^\star$, $\vO'$, energies $E'_1..E'_n$, tail options}
+tracer.begin($\vr^\star$, $-\vO'$); $T_e\gets1$, $\psi_e\gets0$, alive$_e\gets$ true for all $e$\;
+\While{some energy alive}{
+  segs $\gets$ tracer.extend(32)\;
+  \ForEach{segment $k$ in segs}{
+    \ForEach{alive energy $e$}{
+      $\Sigma\gets$ \code{XsProbe.total}(mat$_k$, $E'_e$)\tcp*{the hot spot}
+      $\psi_e \mathrel{+}= T_e\,Q^F(R_k,E'_e)\,(1-e^{-\Sigma\ell_k})/\Sigma$;\quad $T_e\mathrel{*}=e^{-\Sigma\ell_k}$\;
+      \lIf{$T_e<T_c$}{survive with prob.\ $T_e/T_c$ and set $T_e\gets T_c$, else alive$_e\gets$ false}
+    }
+  }
+  \lIf{path ended in vacuum}{stop}
+}
+\end{algorithm}
+
+\code{XsProbe} wraps \code{Material::calculate\_xs} on a scratch particle: the lookup runs OpenMC's
+own code (energy grid search on the logarithmic hash grid, interpolation, per-nuclide loop), and
+leaves every microscopic cross section in the particle's cache for the evaluators. It caches the
+last (material, energy) pair, which helps when consecutive segments share both.
+
+\subsection{Residual sampling}
+
+\code{ResidualSampler::sample(tag, N, seed, records)} runs the loop of Section~\ref{sec:residual}.
+Its proposals return \code{Draw<T>\{value, density\}}, so a weight can only be formed from the density
+that was actually sampled. Directions come from a \code{DirectionSource} (isotropic Fibonacci under a
+random rotation, or sweep segments by region). Records are a structure of arrays (\code{r, u, E,
+density, tag, kind, channel, C\_s, C\_f, M\_s, M\_f, R\_s, R\_f, U, Z, E\_in, nuclide}), about 150
+bytes per record.
+
+\begin{algorithm}[h]
+\caption{One residual sample (density route; tag $t$)}\label{alg:sample}
+\DontPrintSemicolon
+draw destination $\vr^\star$, locate region and material; draw $(E,\vO)$ with density $\varrho$\;
+$U\gets\Qmg_t(\vr^\star,E)$\;
+\ForEach{direction $j$ with weight $\omega_j$}{
+  energies $\gets$ elastic images $E/\gamma_{A_i}(\mu_0)$ of each nuclide (tag $s$), a drawn $E'$ (tag $f$),
+  $K$ drawn energies for the sampler route\;
+  $\psi_s,\psi_f \gets$ \code{evaluate\_all}(path, energies) \tcp*{one trace}
+  $C_y\mathrel{+}=\omega_j\,[\text{evaluator production at }(E,\vO)]\,\psi_y$\;
+  \ForEach{sampler energy $E'_k$}{call OpenMC's routine; emit a particle at its outgoing state}
+  $M_y\mathrel{+}=\omega_j\,q^{MG}_j$ (control)\;
+}
+$R_y\gets$ restored control mean ($L$ MG-only directions or sweep)\;
+emit the density record $(\vr^\star,E,\vO,\varrho,C,M,R,U)$\;
+\end{algorithm}
+
+\subsection{Flights}
+
+\code{FlightPropagator::propagate(bank, N, k, seed, out, tally, aux)} selects parents from a
+cumulative $|w|$ array (binary search), flies a geometry particle to the sampled optical depth, and
+collides with OpenMC's routines (Section~\ref{sec:flights}). The optional \code{FlightAux} records each
+child's parent, path length and nuclide (for regional cancellation) and accumulates the collision
+estimator of the fission rate by field region (for the correction tally).
+
+\subsection{Cancellation and tallies}
+
+Cancellation lives in Python (\code{cancellation.py}) with C++ kernels for the expensive parts:
+\code{near\_kernel} (image enumeration and optical depth along each reflected straight path) and
+\code{fission\_chi} (the fission emission density of a nuclide at an incident energy, partial
+reactions weighted by cross section). Binned netting is a \code{bincount} over bin keys and a
+vectorized re-sampler (rejection in the region's voxel). The correction tally's field part is
+\code{field\_reaction\_tally} in C++; the bank part comes from the flights.
+
+\begin{algorithm}[h]
+\caption{Binned netting with an exact low term}\label{alg:netting}
+\DontPrintSemicolon
+key$_i\gets$ (tag, zone(region($\vr_i$)), group($E_i$), dirbin($\vO_i$))\;
+$m_b\gets\sum_{\text{key}_i=b}w_i$ \;
+\lIf{exact low}{$m_b\mathrel{-}=b_t\sum_{R\in Z}V_RQ_{t,R,g}/D$}
+$e_b\gets N|m_b|/\sum|m|$;\quad $n_b\gets\lfloor e_b+\xi_b\rfloor$\tcp*{stochastic rounding}
+\ForEach{bin $b$ with $n_b>0$}{draw $n_b$ states: region $\propto V_RQ_{t,R,g}$, uniform in it, lift in $E$, uniform in the direction bin; weight $m_b/e_b$}
+\end{algorithm}
+
+\subsection{Data containers}
+
+\begin{table}[h]\centering\small
+\begin{tabularx}{\textwidth}{>{\raggedright}p{3.2cm}>{\raggedright}p{4.6cm}X}
+\toprule
+Container & Layout & Why\\
+\midrule
+\code{FrozenField} & flat \code{vector<double>} \code{[2][R][G]}, lifts \code{[2][M][F]}, hash map key$\to$region & cache-friendly, \code{const}, shared by threads\\
+\code{SegmentList} & structure of arrays (length, material, $\sqrt{kT}$, density multiplier, region) & reused per thread, no allocation in steady state\\
+\code{ResidualRecords} & structure of arrays, one entry per record; 16 columns & deferred weights: amplitudes enter only at weighting\\
+\code{SignedBank} & structure of arrays (\code{x,y,z,ux,uy,uz,E,w,tag}) & selection by $|w|$ and tag sums touch one or two arrays\\
+\code{FlightAux} & per child (parent, path, nuclide); per region tallies & exact cancellation and the correction tally\\
+Python banks & dicts of \code{numpy} arrays & vectorized netting and resampling; copied into C++ for flights\\
+\bottomrule
+\end{tabularx}
+\caption{Data containers.}\label{tab:impl:containers}
+\end{table}
+
+\subsection{Determinism, threads and tests}
+
+Every sample and flight derives its random stream from its index with OpenMC's skip-ahead
+(\code{future\_seed}), so a kernel's output is a function of its inputs and seed alone, regardless of
+order. The kernels are not threaded yet; with thread-local scratch (\code{XsProbe}, \code{SegmentList},
+\code{Particle}) and outputs merged in index order they become bitwise reproducible for any thread count.
+The test suite (\code{tests/rmc}, 170 tests, about 15 minutes on two cores) runs every gate of
+Appendix~\ref{app:gates} through the C API with chosen inputs; each statistical gate has a deliberate
+mutation that makes it fail.
+
+\section{Performance}\label{sec:impl:performance}
+
+\subsection{Where the time goes now}
+
+Table~\ref{tab:impl:time} (from the Stage 8 runs, Section~\ref{sec:res:stage8}) splits a generation
+into its kernels. Residual sampling dominates; within it, the cross-section lookups on backward
+segments (\code{calculate\_xs} per segment and energy) are the hot spot, as the cost model predicts.
+
+\subsection{What each design choice costs, and what optimization can recover}\label{sec:impl:projection}
+
+\begin{itemize}
+\item \textbf{Cross sections per segment and energy.} Each lookup is a full
+  \code{Material::calculate\_xs}: a grid search per nuclide, interpolation of every reaction, and
+  S($\alpha,\beta$) and probability-table logic. The backward flux needs only $\Sigma_t$ (and a few
+  production cross sections at the collision energies). A total-only lookup on a material-union grid
+  with a per-path (material, energy) cache would cut this by an estimated 3--6 times; images of the
+  same nuclide set repeat energies across directions.
+\item \textbf{One trace per direction, many energies.} Already exploited; the elastic images add one
+  energy per nuclide per direction. Sampling one nuclide per direction (channel sampling) would cut
+  $n_E$ from the number of nuclides to one, at a small variance cost.
+\item \textbf{Python orchestration.} Bank copies across the C API, per-particle Python loops in
+  pooling and regional cancellation, and \code{numpy} netting cost 5--15\% of a generation at these
+  sizes and grow linearly; moving them to C++ removes most of it.
+\item \textbf{Threads.} Every kernel is embarrassingly parallel over samples and flights with
+  per-sample seeds. The measurements here are single-threaded, as is the reference, so the comparison
+  is fair; threading scales both.
+\item \textbf{Algorithmic, not engineering.} The residual's per-sample variance (Section
+  \ref{sec:res:controlled}) and the bank's stationary $\Wabs$ set the floor; better evaluators (free gas,
+  inelastic levels), better controls (P$_N$), and cancellation tuned to the representation move it.
+\end{itemize}

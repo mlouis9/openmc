@@ -1,0 +1,73 @@
+\section{Notation}\label{app:notation}
+
+\begin{longtable}{>{\raggedright}p{3.2cm}p{11cm}}
+\toprule
+Symbol & Meaning\\
+\midrule
+$\vr,E,\vO$ & position, energy, direction; $x=(\vr,E,\vO)$ a point of phase space\\
+$\psi,\phi$ & angular and scalar flux\\
+$\Sigma_x,\sigma_x$ & macroscopic and microscopic cross section of reaction $x$\\
+$Q_s,Q_f$ & emission density by scattering-type and fission reactions (tags $s$, $f$)\\
+$\G,\mathcal P,\B$ & flight operator, collision operator, one generation $\B=\mathcal P\G$\\
+$\K_t$ & CE production of tag $t$ from an emission density: $\mathcal P_t\G$\\
+$k$, $k^{\mathrm{MG}}$ & eigenvalue estimate; the random-ray eigenvalue\\
+$R$, $g$, $m$ & source region, energy group, material\\
+$Q_{t,R,g}$ & MG emission per unit volume, integrated over angle and group\\
+$h_{t,m,g}(E)$, $h^\phi$ & lifts: within-group emission and flux shapes\\
+$\Qmg_t$ & the lifted field, eq.~\eqref{eq:field}; $Q^F=a_s\Qmg_s+a_f\Qmg_f$\\
+$a,b$ & amplitudes of the field acting as source and of the field candidate kept\\
+$\delta Q$ & the bank: signed CE particles\\
+$\Wabs$ & absolute weight of a bank, $\sum_i|w_i|$\\
+$\vr^\star,\varrho$ & residual destination; density of a record's state\\
+$J,\omega_j$ & incident directions per destination and their weights\\
+$K$, $g(E')$ & incident energies per direction on the sampler route; incident proposal\\
+$C_y,M_y,R_y,U,Z$ & record terms: CE production from source tag $y$, MG control, its mean, field value, sampler control\\
+$c,\lambda,L$ & control coefficient, mixing with the sweep emission, MG-only directions\\
+$M_{II}$ & forward samples of the flux-difference region term\\
+$N,N_\delta,N_B$ & residual samples per tag, flights, bank size after resampling\\
+$f_n$ & fission production of generation $n$; $k_{n+1}=k_nf_n$\\
+$K(\mathbf x\mid\mathbf x_p,E)$ & near point kernel of an isotropic parent\\
+$\chi_m(E\mid E')$ & fission emission density of nuclide $m$\\
+\bottomrule
+\end{longtable}
+
+\section{Gates and tests}\label{app:gates}
+
+\begin{longtable}{>{\raggedright}p{1.4cm}>{\raggedright}p{6.2cm}p{6.6cm}}
+\toprule
+Gate & Quantity & Reference\\
+\midrule
+G0.1 & stationary-target kinematics & closed forms; mutation (Jacobian)\\
+G1.0--G1.6 & field export, emission, lifts, locator, volumes, C++ field, field source & random-ray tallies; independent numpy recomputation; Python reference\\
+G2.1--G2.6 & tracer, backward $\psi$, roulette, random ray in CE, segment records & analytic unfolded paths; infinite-medium closed form; MG process\\
+G3.1--G3.3, G3.6 & channel partition; fission and elastic densities; MG control & total production; OpenMC samplers histogrammed; random-ray emission\\
+G4.1--G4.4, G4.7 & residual mean (every estimator), proposal densities, linearity, deferred weights & OpenMC first-collision tallies with \code{CollisionFilter([1])}\\
+G5.1--G5.4 & flights & homogeneous expectations; OpenMC with the bank as source\\
+G6.1--G6.2 & iteration & deterministic toy to $10^{-12}$; one generation against OpenMC\\
+G8.0 & near kernel & histogram of fission children of a point parent\\
+G8.1 & regional cancellation is exact & binned means with and without, independent flights\\
+G8.2 & destination pooling is exact & binned means with and without\\
+G8.3 & binned netting & bin totals plus the closed-form low term\\
+G8.4 & field part of the correction tally & collision estimator of forward flights of the field\\
+\bottomrule
+\end{longtable}
+
+\section{Glossary}
+
+\begin{description}[style=nextline,leftmargin=2.2cm,font=\normalfont\bfseries]
+\item[bank] signed CE particles carrying the correction $\delta Q$
+\item[channel] one reaction of one nuclide with outgoing neutrons, with its tag and route
+\item[destination] the point where a residual sample is evaluated
+\item[evaluator] a density of a production kernel at a chosen outgoing state
+\item[field] the multigroup emission lifted to continuous energy
+\item[flight] one forward CE flight of a bank particle to its next collision
+\item[image] the incident energy that elastic (or two-body) kinematics map to a given output
+\item[lift] a within-group energy shape tallied from CE
+\item[netting] summing signed weights per bin and re-sampling the net
+\item[pooling] moving a known part of a particle's density into a shared distribution where signs cancel exactly
+\item[record] a residual sample stored without amplitudes, weighted later
+\item[residual] $\B Q^F-F$: the field's one-generation CE emission minus what is kept
+\item[roulette] unbiased termination of a backward path's tail
+\item[route] evaluator (density) or sampler (OpenMC's routine) for a channel
+\item[tag] $s$ (scattering-born) or $f$ (fission-born) emission
+\end{description}

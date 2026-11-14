@@ -1,0 +1,228 @@
+\part{Results}\label{part:results}
+
+\section{Verification problems and references}\label{sec:res:setup}
+
+\textbf{Problems.} All results use two problems built in \code{examples/rmc/problems.py}, both with
+\emph{matched physics} (no unresolved-resonance probability tables, stationary target for every
+nuclide with $A>1$ above $10^{-6}kT$, nearest-temperature data at 294 K), so that the elastic
+evaluator is exact and the reference Monte Carlo has the same physics:
+\begin{itemize}
+\item \textbf{Infinite medium}: 3.1\%-enriched UO$_2$ and graphite homogenized in a reflective box,
+  one source region. It has no spatial residual at all, so it isolates spectral and kinematic
+  effects, and its backward flux has the closed form $q(E')/\Sigma_t(E')$.
+\item \textbf{Graphite pincell}: a UO$_2$ pin (radius 0.4096 cm) in graphite, pitch 1.26 cm, height
+  2 cm, reflective on every face; a $12\times12$ source-region mesh gives 172 regions. CASMO-8 groups;
+  random ray with 500 rays per batch and 500 batches (300 inactive); $k^{\mathrm{MG}}=0.64257$.
+  Graphite without S($\alpha,\beta$) is unphysical but a consistent CE model for both methods.
+\end{itemize}
+The pincell is strongly under-moderated (the pin occupies a third of the cell, and graphite needs
+about 115 collisions to thermalize a neutron), so its spectrum is hard: the flux per unit lethargy
+peaks near 1 MeV, fast fission in U-238 matters, and $k\approx0.64$.
+
+\textbf{References.} Every layer is compared with something stock OpenMC computes independently: the
+uncollided flux of the field as a fixed source (\code{CollisionFilter([0])}), first-collision
+production (\code{CollisionFilter([1])} in one-batch eigenvalue runs, so that fission neutrons are
+banked rather than transported), flights from the field's own weighted sample, and finally OpenMC's
+eigenvalue calculation. Appendix~\ref{app:gates} lists the gates.
+
+\section{Components}\label{sec:res:components}
+
+\subsection{The field and the backward flux}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/field_maps.png}
+\caption{The pincell's field: MG emission by region for both tags and a few groups. Fission emission is
+confined to the fuel; scattering emission is largest in the graphite at low energy and in the fuel at
+high energy.}\label{fig:res:field}
+\end{figure}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/ce_vs_mg.png}
+\caption{CE against MG backward flux on identical paths. The two agree where the MG cross sections
+represent the CE ones (smooth ranges) and differ inside resonance groups, where one MG $\Sigma_t$
+averages a factor of $10^3$ of variation: this difference is what the MG control cannot remove.}\label{fig:res:cevsmg}
+\end{figure}
+
+Figure~\ref{fig:res:cevsmg} is the key picture for the control variate. Along a single path the MG
+and CE fluxes share the geometry and the source, and differ only through the cross sections. In
+groups where the CE cross section varies little the two fluxes are almost identical, so the MG flux
+removes the path's directional noise. In the resonance group (4 eV to 5.53 keV) the CE flux depends
+on the exact energy relative to the U-238 resonances, and no single group constant follows it.
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/tracer.png}
+\caption{Backward traces through the pincell's source-region mesh and reflective faces, coloured by
+region, against the analytic unfolded paths (G2.1): the tracer reproduces lengths, materials and
+regions to $10^{-10}$ cm.}\label{fig:res:tracer}
+\end{figure}
+
+\subsection{Residual against first-collision tallies}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/first_collision.png}
+\caption{The residual of the pincell's field by material and outgoing energy: OpenMC's first-collision
+production minus the field integrated exactly (black) against several estimators (G4.1, G4.2). All
+agree within statistics; their error bars differ by orders of magnitude.}\label{fig:res:fc}
+\end{figure}
+
+The residual is small: a few per cent of the production in any bin, largest in the fuel's epithermal
+range (resonances) and in the fission spectrum (Figure~\ref{fig:res:fc}). Every estimator of
+Table~\ref{tab:family} passes this gate, as do the density-free variants.
+
+\section{The controlled residual study}\label{sec:res:controlled}
+
+\subsection{Setup}
+
+On the pincell with prescribed exact volumes, ten variants (Section~\ref{sec:classes}) were run with
+$N=40{,}000$ samples per tag and compared, bin by bin, with a reference residual built from
+$2.4\times10^7$ forward flights of each field component (a uniform point, a group in proportion to
+the region's emission, a log-uniform energy within the group, weighted by $4\pi V\,q/p$), minus the
+field integrated exactly. Three binnings: 36 logarithmic outgoing-energy bins per material; the 172
+regions; and the radial cosine $\mu_\rho=\vO\cdot\mathbf e_\rho$ of the outgoing direction in each
+material and energy range. Scans of $K$, common numbers, $J$, $M_{II}$ and the roulette cutoff used
+$N=10{,}000$. All variants share their destination stream.
+
+\subsection{The residual in energy, space and angle}
+
+\begin{figure}[p]\centering
+\includegraphics[width=\textwidth]{figures/controlled_energy.png}
+\includegraphics[width=\textwidth]{figures/controlled_space.png}
+\caption{Top: residual per unit lethargy. Bottom: residual by region relative to the field there, against
+the region's centroid radius.}\label{fig:res:energy}
+\end{figure}
+
+\textbf{Energy} (Figure~\ref{fig:res:energy}, top). In the fuel the scattering residual is negative
+just below 4 eV and changes sign through the resonance group: the 8-group field spreads emission
+uniformly in lethargy within a group as weighted by an infinite-medium-like spectrum, while the true
+emission in the pin dips at every U-238 resonance (fewer neutrons there to scatter) and rises
+between them. The fission residual lives between 100 keV and 10 MeV, where it reflects the difference
+between the CE fission spectrum of the actual incident spectrum and the one group-collapsed $\chi$
+of the MG data.
+
+\textbf{Space} (Figure~\ref{fig:res:energy}, bottom). The reference residual is within $\pm3$\% of the
+field everywhere except the small regions cut by the pin surface, where it reaches $\pm15$\%: the
+field is flat within a region while the true emission has a gradient across the fuel--moderator
+interface. The density route resolves these; the density-free estimators do not at this sample
+size.
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/controlled_angle.png}
+\caption{Scattering residual against the radial cosine of the outgoing direction.}\label{fig:res:angle}
+\end{figure}
+
+\textbf{Angle} (Figure~\ref{fig:res:angle}). The field is isotropic; any angular residual comes from the
+anisotropy of real scattering (forward-peaked in the lab, especially in graphite at MeV energies) and
+of the flux near the pin surface. At this resolution the reference resolves no angular structure, so
+this binning tests the estimators' directional noise.
+
+\subsection{Where the variance comes from}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/controlled_low_term.png}
+\caption{Per-sample variance of the residual (solid) and of the high term alone (hatched), per
+binning.}\label{fig:res:lowterm}
+\end{figure}
+
+\begin{table}[t]\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+Variant & $s$: residual & $s$: high only & $f$: residual & $f$: high only\\
+\midrule
+density route, uncontrolled & \textbf{130} & 19{,}900 & \textbf{24.7} & 93.7\\
+density route, MG control & 238 & 20{,}000 & 52.1 & 117\\
+density route, tandem + flux difference & 308 & 20{,}100 & 27.9 & 95.8\\
+density free, uncontrolled, $K=1$ & 22{,}800 & 2{,}840 & 72.0 & 4.86\\
+density free, $K=4$ & 21{,}500 & 1{,}560 & 69.7 & 3.00\\
+density free, flux difference, $K=1$ & 35{,}900 & 16{,}000 & 73.7 & 7.07\\
+density free, flux difference, $K=4$ c.n. & 30{,}100 & 10{,}100 & 73.6 & 6.92\\
+\bottomrule
+\end{tabular}
+\caption{Per-sample variance summed over the 72 energy bins.}\label{tab:res:var}
+\end{table}
+
+Three findings (Figure~\ref{fig:res:lowterm}, Table~\ref{tab:res:var}):
+\begin{enumerate}
+\item \textbf{Pointwise cancellation is the density route's whole advantage.} Its high term alone is
+  the noisiest of all ($2\times10^4$ for scattering): the elastic image densities are large when the
+  image falls on a resonance or the laboratory Jacobian is large. At the destination's state the low
+  term removes 99.3\% of it.
+\item \textbf{The density-free residual is dominated by the low term}: $2.05\times10^4$ of the
+  scattering variance and 69 of the fission variance are the field's own integral estimated by Monte
+  Carlo.
+\item \textbf{The sampled high term is good}: 7 (scattering) to 19 (fission) times quieter than the
+  evaluators' at $K=1$, 33 to 56 times at $K=16$.
+\end{enumerate}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/controlled_decomposition.png}
+\caption{Variance of the records of each kind (density branch, sampler particles on a path, region-term
+particles) and channel. In every density-free variant the density branch, which then carries only the
+low term, dominates; among scattering channels elastic carries almost all of the sampled variance.}\label{fig:res:decomp}
+\end{figure}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/controlled_relative_noise.png}
+\caption{Per-sample standard deviation over $|r|$ per energy bin. The dotted line is the ratio of the
+production to the residual: an estimator with production-scale noise sits on or above it. The density
+route sits a factor of 3--30 below it, the density-free route on it.}\label{fig:res:relnoise}
+\end{figure}
+
+\subsection{Parameters}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/controlled_scans.png}
+\caption{Density-free scans: variance of the residual (circles) and of the high term alone (squares)
+against $K$, $J$, $M_{II}$ and the roulette cutoff; crosses: high term $\times$ time.}\label{fig:res:scans}
+\end{figure}
+
+Figure~\ref{fig:res:scans}: more incident energies help roughly as $K^{-0.8}$, but each costs a
+collision sample, so variance $\times$ time is flat; more directions help with diminishing returns;
+the region term of the flux-difference control falls as $1/M_{II}$ to a floor set by term I; the
+roulette cutoff hardly matters. For fission the flux-difference control works (high-term variance 1.8
+at $M_{II}=128$ against 8.4 uncontrolled): the fission spectrum barely depends on $E'$, so the region's
+isotropic MG flux captures the incident integral. For scattering it hurts: the isotropic,
+region-averaged lifted flux is a poor match to $\psi(E')$ on a path through the pin's resonances.
+
+\subsection{Does the noise scale with the residual?}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/controlled_noise_scaling.png}
+\caption{Left, centre: per-sample standard deviation per bin against the reference residual and the
+production. Right: the same records reweighted for other amplitudes, where the residual's norm grows
+10 to 400 times.}\label{fig:res:scaling}
+\end{figure}
+
+Fitting $\log\sigma=\alpha+\beta_r\log|r|+\beta_h\log h$ over resolved scattering bins, the density
+route has $\beta_r\approx0.5$--$0.8$ through its pointwise cancellation while every uncontrolled
+density-free variant has $\beta_r\approx0$, $\beta_h\approx0.9$: production-scale noise. The amplitude
+scan (Figure~\ref{fig:res:scaling}, right) asks the sharper question: when the residual grows 10 to
+400 times, the noise of every estimator changes by at most 3 times, in proportion to the high term.
+At the converged field no member of the family has noise that falls with the residual; what remains
+is the integration noise of the high term over $\vO'$ and $E'$.
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/controlled_channels.png}
+\caption{Per-channel noise relative to the channel's own production on the sampler route: elastic about
+3--4 per sample per bin, inelastic 10--100 (its production is small and sharply thresholded). The
+flux-difference control lowers the elastic noise above 100 keV, where the flux is nearly isotropic and
+smooth, and raises it in the resonance range.}\label{fig:res:channels}
+\end{figure}
+
+\begin{figure}[t]\centering
+\includegraphics[width=0.85\textwidth]{figures/controlled_z.png}
+\caption{Bias check: standardized differences from the reference over every resolved bin of the three
+binnings and both tags. Unbiased variants follow the normal density; the net assignment (biased by
+construction) is wider.}\label{fig:res:z}
+\end{figure}
+
+\subsection{The low term made exact}
+
+With the low term exact (in a tally, or in netting bins), the efficiency (variance $\times$ time,
+energy binning) is: scattering, density route 90 against 680--880 density-free; fission, density route
+2.0 against 0.19--0.36 density-free. Each route should be used for what it is good at: the density
+route for channels with an evaluator and pointwise cancellation, the sampler route with an exact low
+term for fission and for channels without densities.
+
+\section{The first end-to-end measurement}\label{sec:res:stage8}
+
+\input{stage8_results}
