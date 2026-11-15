@@ -1290,3 +1290,51 @@ Not done
     - Cancellation of the scattering residual beyond netting.
     - Performance work (cross-section lookups on backward segments, C++
       cancellation).
+
+Follow-up: the bias, the amplitudes, and history-based flights
+--------------------------------------------------------------
+
+**Commit:** "rmc: history-based flights, following amplitudes, and the
+Stage 8 follow-up". Written up in the report's section "Follow-up: the bias,
+the amplitudes, and history-based flights".
+
+Added
+    - ``FlightPropagator::propagate(..., history)``: a flight continues
+      through its scatterings until capture, fission, or leakage and banks
+      only fission children; ``FlightStats::collisions``. C API:
+      ``openmc_rmc_propagate_aux(..., history, ...)`` with a seventh stats
+      entry; binding ``propagate_aux(history=)``.
+    - ``driver.FollowAmplitudes`` (:math:`b = a`) and ``Config.damping``
+      (normalization by :math:`f^\lambda`; the generation estimate divides by
+      the incoming state's production).
+    - ``stage8.py``: variant ``history``; ``--amplitudes``, ``--damping``,
+      ``--fine-groups`` (every fine lift bin of the listed groups is its own
+      netting energy bin), ``--seed-base``, ``--run-name``.
+    - ``stage8_followup_analysis.py``; runs in
+      ``examples/rmc/results/stage8_followup``.
+    - ``tests/rmc/test_cancellation.py``: history flights bank only fission
+      children, and their fission weight equals that of collision flights
+      summed over generations.
+
+Findings
+    - Replicas of different variants with the same seed share their residual
+      samples, so the Stage 8 variants were paired, not independent. Nine
+      independent baseline replicas: :math:`\Delta k = +1050 \pm 360` pcm;
+      :math:`\tau = 21` collision generations (about half a 37-collision
+      lifetime).
+    - :math:`N = 16000`: :math:`\Delta k = +600 \pm 280` pcm, per-generation
+      spread 3.2 times lower, :math:`W_{abs}` 1.8, figure of merit about
+      twice the baseline's. Between a :math:`1/N` and an
+      :math:`N`-independent bias.
+    - Resonance-resolved netting: paired :math:`+260 \pm 120` pcm,
+      :math:`W_{abs}` 12.8. Damping 0.25: :math:`-230 \pm 220` pcm.
+    - With fixed :math:`b`, the residual contains
+      :math:`(a - b) K \phi^{MG}`; the candidate's scattering mass follows
+      :math:`a_s - b_s` with slope 42.7 (correlation 0.69). :math:`b = a`
+      lowers :math:`W_{abs}` from 4.4 to 3.5; :math:`k`'s noise is unchanged.
+    - History flights fail within a few generations with fixed :math:`b`
+      (also damped); with :math:`b = a` they are stable only at about 30
+      times the residual samples (:math:`N = 64000`), with a figure of merit
+      9 times below the collision iteration's.
+    - The residual estimator's integration noise sets the variance; the
+      iteration's structure does not.

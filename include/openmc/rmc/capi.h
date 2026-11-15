@@ -251,10 +251,13 @@ int openmc_rmc_near_kernel(int64_t n, const double* x, const double* xp,
 //! Flights as openmc_rmc_propagate, optionally recording each child's
 //! parent, path length, and nuclide (read with openmc_rmc_flight_children)
 //! and a collision estimate of the fission and nu-fission rates by field
-//! region ([R] each).
+//! region ([R] each). With history nonzero a flight continues through its
+//! scatterings and only fission children are banked. stats[7]: flights,
+//! leaked, captured, scattered, fissions, W_abs of the parents, collisions.
 int openmc_rmc_propagate_aux(int32_t in, int64_t n, double k, uint64_t seed,
-  int32_t out, int children, int region_tally, int64_t* n_children,
-  double* region_fission, double* region_nu_fission, double* stats);
+  int32_t out, int children, int region_tally, int history,
+  int64_t* n_children, double* region_fission, double* region_nu_fission,
+  double* stats);
 int openmc_rmc_flight_children(int64_t* parent, double* path, int* nuclide);
 //! Incident energy and nuclide of the sampled particles of the last
 //! openmc_rmc_residual_sample call (0 and -1 on density records)

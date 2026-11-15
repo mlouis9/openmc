@@ -710,20 +710,23 @@ def near_kernel(x, xp, E, d_max):
     return out
 
 
-def propagate_aux(bank, n, k, seed=1, out=None, children=True, region_tally=True):
+def propagate_aux(bank, n, k, seed=1, out=None, children=True, region_tally=True,
+                  history=False):
     """Flights as propagate(), also returning a dict with the children's
     parent index, path length, and nuclide (if children), and the collision
-    estimates of the fission and nu-fission rates by field region [R]."""
+    estimates of the fission and nu-fission rates by field region [R]. With
+    history, each flight continues through its scatterings until capture,
+    fission, or leakage, and only fission children are returned."""
     if out is None:
         out = Bank()
     R = field_n_regions()
     rf, rnf = np.zeros(max(R, 1)), np.zeros(max(R, 1))
-    stats = np.zeros(6)
+    stats = np.zeros(7)
     nc = c_int64()
     _dll.openmc_rmc_propagate_aux(c_int32(bank.handle), c_int64(int(n)), c_double(k),
                                   c_uint64(int(seed)), c_int32(out.handle),
                                   int(bool(children)), int(bool(region_tally)),
-                                  byref(nc), _dp(rf), _dp(rnf), _dp(stats))
+                                  int(bool(history)), byref(nc), _dp(rf), _dp(rnf), _dp(stats))
     m = nc.value
     aux = dict(parent=np.empty(m, dtype=np.int64), path=np.empty(m),
                nuclide=np.empty(m, dtype=np.int32))
@@ -733,5 +736,6 @@ def propagate_aux(bank, n, k, seed=1, out=None, children=True, region_tally=True
                                         aux['nuclide'].ctypes.data_as(POINTER(c_int)))
     aux['region_fission'] = rf[:R]
     aux['region_nu_fission'] = rnf[:R]
-    names = ('flights', 'leaked', 'captured', 'scattered', 'fissions', 'W_abs')
+    names = ('flights', 'leaked', 'captured', 'scattered', 'fissions', 'W_abs',
+             'collisions')
     return out, dict(zip(names, stats)), aux

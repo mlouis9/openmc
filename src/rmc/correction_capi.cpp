@@ -89,7 +89,7 @@ extern "C" int openmc_rmc_near_kernel(int64_t n, const double* x,
 }
 
 extern "C" int openmc_rmc_propagate_aux(int32_t in, int64_t n, double k,
-  uint64_t seed, int32_t out, int children, int region_tally,
+  uint64_t seed, int32_t out, int children, int region_tally, int history,
   int64_t* n_children, double* region_fission, double* region_nu_fission,
   double* stats);
 
@@ -110,7 +110,7 @@ SignedBank* bank_of(int32_t handle);
 } // namespace openmc
 
 extern "C" int openmc_rmc_propagate_aux(int32_t in, int64_t n, double k,
-  uint64_t seed, int32_t out, int children, int region_tally,
+  uint64_t seed, int32_t out, int children, int region_tally, int history,
   int64_t* n_children, double* region_fission, double* region_nu_fission,
   double* stats)
 {
@@ -128,7 +128,8 @@ extern "C" int openmc_rmc_propagate_aux(int32_t in, int64_t n, double k,
     last_aux.region_nu_fission.assign(R, 0.0);
   }
   rmc::FlightPropagator prop;
-  auto st = prop.propagate(*bi, n, k, seed, *bo, nullptr, &last_aux);
+  auto st =
+    prop.propagate(*bi, n, k, seed, *bo, nullptr, &last_aux, history != 0);
   *n_children = static_cast<int64_t>(last_aux.parent.size());
   if (region_tally) {
     std::copy(last_aux.region_fission.begin(), last_aux.region_fission.end(),
@@ -142,6 +143,7 @@ extern "C" int openmc_rmc_propagate_aux(int32_t in, int64_t n, double k,
   stats[3] = st.scattered;
   stats[4] = st.fissions;
   stats[5] = st.W_abs;
+  stats[6] = st.collisions;
   return 0;
 }
 

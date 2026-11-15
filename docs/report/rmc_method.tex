@@ -101,22 +101,30 @@ implementation has the following components:
 Each piece is checked against stock OpenMC in isolation; see Appendix~\ref{app:gates} for the gates.
 
 \paragraph{What was measured.} The first end-to-end run is on a graphite pincell against OpenMC's CE
-eigenvalue calculation (Section~\ref{sec:res:stage8}). Four results stand out.
+eigenvalue calculation (Sections~\ref{sec:res:stage8} and~\ref{sec:res:followup}).
 \begin{itemize}
 \item \textbf{Stability.} The method is stable only with binned netting. Without it the bank's
   absolute weight grows geometrically and the run fails within 30 generations.
 \item \textbf{Shape.} The fission-rate shape is unbiased with the CE correction tally.
-\item \textbf{Eigenvalue bias.} The eigenvalue is about $+1000$~pcm high in every variant, most
-  likely the bias of a noisy source iteration.
-\item \textbf{Figure of merit.} Relative to OpenMC it is 0.0015--0.02 for $k$ (replica and
-  batch-means errors) and 0.001 for the fission shape. After the engineering of
-  Part~\ref{part:impl} the projection is 0.005--0.07.
+\item \textbf{Eigenvalue bias.} Nine independent replicas give $+1050\pm360$~pcm at $N=2000$ residual
+  samples per tag, and $N=16000$ gives $+600\pm280$~pcm. Neither a pure $1/N$ normalization bias nor
+  netting's within-group smearing in the resonance range explains it alone.
+\item \textbf{Figure of merit.} Relative to OpenMC it is $0.0018$ for $k$ ($0.0033$ at $N=16000$)
+  and about $0.001$ for the fission shape. After the engineering of Part~\ref{part:impl} the
+  projection is about $0.01$.
+\item \textbf{Where the noise comes from.} The residual estimator dominates the noise. The
+  scattering residual injects about 7 units of absolute weight per unit of fission production every
+  generation. Part of that is an amplitude term that following amplitudes ($b=a$) remove; the rest is
+  the high term's integration noise.
+\item \textbf{History-based flights.} Making generations fission-to-fission is stable only with
+  $b=a$ and about 30 times more residual samples per generation, and its figure of merit is 9 times
+  lower. Measured in neutron lifetimes, the collision iteration's correlation is already short.
 \end{itemize}
 
-\paragraph{Verdict.} Optimization alone will not make the method competitive. The variance is set by
-the bank's absolute weight per unit of correction, about 4, and not by the residual. Feasibility
-depends on bringing that weight near one by cancelling the scattering residual. The next stage must
-also resolve the eigenvalue bias and make the MG low term of the tally closed-form.
+\paragraph{Verdict.} Optimization alone will not make the method competitive. Neither the iteration's
+structure nor its normalization changes that. Feasibility depends on making each residual sample
+about two orders of magnitude quieter per unit cost, for example with stratified incident directions
+and a CE/MG control on shared incident energies. The bias must also be settled.
 \clearpage
 
 \input{part1_method}

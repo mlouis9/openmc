@@ -19,6 +19,10 @@
 - G8.4 (field part of the correction tally): the field's CE fission rate by
   fuel region from backward traces equals the collision estimate from
   forward flights of a weighted sample of the field.
+- G8.5 (history flights): a flight that continues through its scatterings
+  ends in capture, fission, or leakage and banks only fission children;
+  their total weight equals the fission weight that collision-by-collision
+  flights of the same parents produce over all generations.
 """
 import math
 
@@ -220,3 +224,47 @@ def test_field_tally_matches_flights(lib, field_files):
     z = (X[fuel] - mean[fuel]) / np.sqrt(var[fuel] + sem[fuel]**2)
     assert np.all(np.abs(z) < 5), z
     assert abs(X.sum() / mean.sum() - 1) < 0.02
+
+
+@pytest.mark.slow
+def test_history_flights_match_collision_generations(lib):
+    rmc, _ = lib
+    n, k = 20_000, 0.65
+    parents = _fuel_parents(np.random.default_rng(11), 2000, 1.0e6)
+
+    def fission_weight(arr):
+        return float(arr['w'][arr['tag'] == 1].sum())
+
+    hist, coll = [], []
+    for rep in range(4):
+        # History flights: one generation, fission children only
+        b = rmc.Bank(**parents)
+        out, st, _ = rmc.propagate_aux(b, n, k, seed=100 + rep, children=False,
+                                       region_tally=False, history=True)
+        arr = out.arrays()
+        out.free()
+        b.free()
+        assert np.all(arr['tag'] == 1)
+        assert st['captured'] + st['fissions'] + st['leaked'] == st['flights'] == n
+        assert st['collisions'] > 10 * n
+        hist.append(fission_weight(arr))
+
+        # Collision flights: fission children summed over generations, the
+        # scattering children carried on until their weight is negligible
+        bank, total = parents, 0.0
+        for g in range(2000):
+            b = rmc.Bank(**bank)
+            out, st, _ = rmc.propagate_aux(b, n, k, seed=10_000 * rep + g,
+                                           children=False, region_tally=False)
+            arr = out.arrays()
+            out.free()
+            b.free()
+            total += fission_weight(arr)
+            s_ = arr['tag'] == 0
+            if arr['w'][s_].sum() < 1e-4 * len(parents['w']):
+                break
+            bank = {key: v[s_] for key, v in arr.items()}
+        coll.append(total)
+    hist, coll = np.array(hist), np.array(coll)
+    sem = math.hypot(hist.std(ddof=1), coll.std(ddof=1)) / 2
+    assert abs(hist.mean() - coll.mean()) < 5 * sem, (hist, coll)

@@ -87,14 +87,17 @@ class Representation:
         self.Z = len(mats) * coarsen[0] * coarsen[1]
         self.regions_of = [np.flatnonzero(self.zone == z) for z in range(self.Z)]
         # Energy bins: each group split into n_sub contiguous runs of fine
-        # bins (n_sub = 1: the groups)
+        # bins (n_sub = 1: the groups). n_sub may be one number or one per
+        # group (ascending energy); a value at least the group's number of
+        # fine bins gives every fine bin of the group its own energy bin.
         mid = 0.5 * (self.fine[:-1] + self.fine[1:])
         g_of = np.clip(np.searchsorted(self.groups, mid, side='right') - 1, 0, self.G - 1)
         self.fine2e = np.empty(len(mid), dtype=np.int64)
+        n_sub_g = np.broadcast_to(np.asarray(n_sub, dtype=np.int64), (self.G,))
         e2g = []
         for g in range(self.G):
             idx = np.flatnonzero(g_of == g)
-            parts = np.array_split(idx, min(n_sub, max(len(idx), 1)))
+            parts = np.array_split(idx, min(int(n_sub_g[g]), max(len(idx), 1)))
             for part in parts:
                 if len(part):
                     self.fine2e[part] = len(e2g)

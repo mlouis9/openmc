@@ -50,6 +50,7 @@ struct FlightStats {
   int64_t captured {0};
   int64_t scattered {0};
   int64_t fissions {0};
+  int64_t collisions {0}; //!< all collisions (more than flights with history)
   double W_abs {0.0}; //!< sum |w| of the parents
 };
 
@@ -83,9 +84,15 @@ public:
   //! \param seed     Base seed; flight j uses its own stream
   //! \param out      Children are appended
   //! \param tally    Optional track-length tally (accumulated)
+  //! \param aux      Optional per-child records and region tallies
+  //! \param history  If true, a flight continues through its scatterings
+  //!                 until it is captured, causes fission, or leaks, so
+  //!                 that only fission children are banked; otherwise it
+  //!                 ends at its first collision and banks the emission
+  //!                 there (scattering or fission)
   FlightStats propagate(const SignedBank& in, int64_t n, double k,
     uint64_t seed, SignedBank& out, FlightTally* tally = nullptr,
-    FlightAux* aux = nullptr);
+    FlightAux* aux = nullptr, bool history = false);
 
 private:
   //! Outcome of the collision at the probe's state, for direction u

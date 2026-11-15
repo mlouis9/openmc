@@ -50,6 +50,11 @@ VARIANTS = {
                   regional=True),
     'combined': dict(opts={'s': DENSITY_ROUTE, 'f': DENSITY_FREE_F}, pooling=True,
                      regional=True, netting=True),
+    # History-based flights: a generation is fission to fission. The regional
+    # kernel needs isotropic tag-f parents of each child, which a history
+    # no longer has, so it is left out.
+    'history': dict(opts={'s': DENSITY_ROUTE, 'f': DENSITY_FREE_F}, pooling=True,
+                    netting=True, history=True),
 }
 
 
@@ -94,7 +99,8 @@ class Stage8Backend(driver.OpenMCBackend):
             return self.empty()
         b = rmc.Bank(**bank)
         out, st, aux = rmc.propagate_aux(b, n, k, seed=seed,
-                                         children=self.regional is not None)
+                                         children=self.regional is not None,
+                                         history=bool(self.v.get('history')))
         arr = out.arrays()
         out.free()
         b.free()
@@ -182,6 +188,15 @@ def main():
     ap.add_argument('--tally-points', type=int, default=20_000)
     ap.add_argument('--n-sub', type=int, default=1,
                     help='energy bins per group of the netting representation')
+    ap.add_argument('--fine-groups', type=int, nargs='*', default=[],
+                    help='groups (ascending index) whose every fine lift bin is '
+                         'its own netting energy bin (resonance-resolved netting)')
+    ap.add_argument('--amplitudes', choices=['fixed', 'follow'], default='fixed',
+                    help='field amplitudes b: fixed (1, 1), or follow a (b = a)')
+    ap.add_argument('--damping', type=float, default=1.0,
+                    help='normalization damping (driver.Config.damping)')
+    ap.add_argument('--seed-base', type=int, default=2000,
+                    help='replica r uses seed seed-base + r')
     ap.add_argument('--coarsen', type=int, nargs=2, default=[3, 3],
                     help='zones per axis of the netting representation')
     ap.add_argument('--tally-mg-points', type=int, default=0,
@@ -191,6 +206,9 @@ def main():
     ap.add_argument('--ref-batches', type=int, default=120)
     ap.add_argument('--ref-inactive', type=int, default=20)
     ap.add_argument('--out', default=None)
+    ap.add_argument('--run-name', default=None,
+                    help='name of the working subdirectory (default: the variant), so '
+                         'that runs of one variant can run at once')
     args = ap.parse_args()
 
     w, files, k_mg = cs.exact_volume_files(args.work)
@@ -203,14 +221,22 @@ def main():
 
     import openmc.lib.rmc as rmc
     results = []
-    with pipeline.ce_session(w.model, w.mesh, files['work'] / f'stage8_{args.variant}'):
+    with pipeline.ce_session(w.model, w.mesh, files['work'] / f'stage8_{args.run_name or args.variant}'):
         rmc.field_load(files['field'], files['lifts'], files['volumes'])
+        n_sub = args.n_sub
+        if args.fine_groups:
+            n_sub = np.full(len(rmc.field_groups()) - 1, args.n_sub)
+            n_sub[args.fine_groups] = 1 << 30
         backend = Stage8Backend(files, w.mesh, VARIANTS[args.variant], args.N_B,
                                 args.tally_points, args.tally_mg_points,
-                                args.n_sub, tuple(args.coarsen))
+                                n_sub, tuple(args.coarsen))
         for rep in range(args.replicas):
             cfg = driver.Config(N={'s': args.N, 'f': args.N}, N_delta=args.N_delta,
-                                N_B=args.N_B, seed=2000 + rep)
+                                N_B=args.N_B, seed=args.seed_base + rep,
+                                damping=args.damping,
+                                amplitudes=(driver.FollowAmplitudes()
+                                            if args.amplitudes == 'follow'
+                                            else driver.FixedAmplitudes()))
             t0 = time.perf_counter()
             rows, failure = [], None
 

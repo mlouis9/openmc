@@ -7,9 +7,10 @@ Each generation (docs/source/methods/rmc.rst, methods_rmc_iteration):
 2. The candidate bank is the residual of the field (records weighted with
    the current a, b, k) plus the children of the current bank's forward
    flights.
-3. f = k (b_f <1, Q^MG_f> + <1, candidate_f>), k_next = k f.
-4. Tag s is scaled by 1/f and tag f by k / (k_next f); the field amplitudes
-   become a_next = (b_s / f, b_f k / (k_next f)).
+3. f = k (b_f <1, Q^MG_f> + <1, candidate_f>), k_next = k g with
+   g = f**damping (g = f by default).
+4. Tag s is scaled by 1/g and tag f by k / (k_next g); the field amplitudes
+   become a_next = (b_s / g, b_f k / (k_next g)).
 5. The bank is compressed to at most N_B sites by unbiased resampling.
 
 The iteration only sees a backend, with the operations below, so the same
@@ -49,6 +50,17 @@ class FixedAmplitudes:
         return self.b
 
 
+class FollowAmplitudes:
+    """b = a: the field emits what its normalized flux produces, so its
+    residual a K phi^MG - a Q^MG carries no part proportional to a - b. With
+    fixed b, a fluctuation of f moves a away from b and adds (a - b) times
+    the field's production, which for scattering is many times f, to the
+    residual of the next generation."""
+
+    def __call__(self, state, backend):
+        return tuple(state.a)
+
+
 class MassMatching:
     """Per-tag mass matching: the field carries each tag's current mass,
     b_t = a_t + <1, dQ_t> / <1, Q^MG_t>, from the bank's exact signed tag
@@ -76,6 +88,13 @@ class Config:
     N_B: int = 10_000            # bank size after resampling
     amplitudes: object = field(default_factory=FixedAmplitudes)
     seed: int = 1
+    # Normalization damping lam in (0, 1]: the bank and field are normalized
+    # by g = f**lam instead of f, and k_{n+1} = k_n g. lam = 1 is the plain
+    # iteration; smaller lam lets a noisy f move the normalization less, at
+    # the price of a slower approach of the fundamental mode. The generation
+    # estimate k_n f / P_n (P_n the production of the incoming state) is
+    # recorded as k_next either way.
+    damping: float = 1.0
 
 
 @dataclass
@@ -85,6 +104,7 @@ class State:
     b: tuple
     bank: object
     n: int = 0
+    P: float = 1.0      # production of this state relative to unit (damping)
 
 
 def seed_of(base, n, label):
@@ -125,12 +145,15 @@ def generation(state, backend, cfg):
     f = k * (field_f + backend.tag_sum(cand, 'f'))
     if not f > 0.0:
         raise EstimatorFailure(f'generation {n}: fission production f = {f}')
-    k_next = k * f
-    s_s, s_f = 1.0 / f, k / (k_next * f)
+    g = f ** cfg.damping
+    k_next = k * g
+    s_s, s_f = 1.0 / g, k / (k_next * g)
     cand = backend.scale(cand, s_s, s_f)
     a_next = (b[0] * s_s, b[1] * s_f)
 
-    diag = dict(n=n, k=k, k_next=k_next, f=f, a_s=state.a[0], a_f=state.a[1],
+    # Generation estimate: production after one generation over production
+    # before it (state.P = 1 without damping)
+    diag = dict(n=n, k=k, k_next=k * f / state.P, f=f, a_s=state.a[0], a_f=state.a[1],
                 b_s=b[0], b_f=b[1],
                 rho=k * (field_f + residual_f) / f,
                 W_abs=backend.abs_weight(cand), sum_s=backend.tag_sum(cand, 's'),
@@ -144,7 +167,7 @@ def generation(state, backend, cfg):
     cand = backend.resample(cand, cfg.N_B, seed_of(cfg.seed, n, 'resample'))
     diag['size_resampled'] = backend.size(cand)
     diag['time'] = time.perf_counter() - t0
-    return State(k=k_next, a=a_next, b=b, bank=cand, n=n + 1), diag
+    return State(k=k_next, a=a_next, b=b, bank=cand, n=n + 1, P=f / g), diag
 
 
 def run(backend, cfg, k0, n_generations, state=None, callback=None):

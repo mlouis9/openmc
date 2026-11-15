@@ -156,58 +156,34 @@ FOM$_k$ (bm) & FOM$_k$ (rep) & FOM$_{shape}$ & $s$\\
 \end{tabular}}
 \end{table}
 
-\paragraph{The eigenvalue is biased high.} Every completed variant overestimates $k$ by
+\paragraph{The eigenvalue is biased high.} Every completed variant overestimates $k$, by
 $860$--$1450$~pcm (Table~\ref{tab:s8}). Taken one at a time, the replica-based significance is
-modest, between $1.4\sigma$ and $3.3\sigma$. But all four variants agree in sign and size, so the
-bias is real.
+modest, between $1.4\sigma$ and $3.3\sigma$.
 
-Its size does not depend on how the cancellation is done:
-\begin{itemize}
-\item it is $+1286$~pcm with coarse netting and the low term carried in the records;
-\item it is $+860$~pcm with the low term in closed form;
-\item it is $+1376$ and $+1454$~pcm with the exact methods added, with coarse and fine representations.
-\end{itemize}
-Netting is biased per generation (Section~\ref{sec:netting-bias}), but a netting bias would change
-with the representation, and here it does not. Nor is the residual estimator the cause:
-\begin{itemize}
-\item the controlled study (Section~\ref{sec:res:controlled}) found every route of the residual
-  unbiased in isolation;
-\item here, the pooled fission residual sums to $-0.0002\pm0.0073$ per generation against
-  $-0.0018$ expected.
-\end{itemize}
+The four variants agree in sign and size, but that is weaker evidence than it looks. Every variant
+used the same three seeds. The residual's random numbers depend only on the seed, the generation
+and the sample index, so the variants share their residual samples replica by replica. The replica
+with seed 2001 is low in every variant, and the others are high in every variant. The variants
+are therefore three paired samples, not twelve independent ones.
 
-The leading hypothesis is the \emph{eigenvalue bias of a noisy source iteration}. In analog
-eigenvalue Monte Carlo, normalizing a stochastic source by its own estimate of $k$ biases $k$ by an
-amount proportional to the variance of the source per generation, $\mathcal O(1/N)$. Here the noise
-of each generation is not set by $N$ histories but by the bank's absolute weight. Two measurements
-show how large it is:
-\begin{itemize}
-\item the production $f$ fluctuates by $4.2\%$ per generation, and the fission amplitude $a_f$ by
-  $8.5\%$;
-\item a batch of $2\times10^4$ analog histories fluctuates by $0.6\%$.
-\end{itemize}
-A per-generation variance some $40$ times that of the reference's batches, fed back
-through the amplitudes and $k_n=k_{n-1}f_n$, gives a bias of order $10^2$--$10^3$~pcm. That matches
-what is observed.
+Section~\ref{sec:res:followup} repeats the baseline with six new seeds and scans $N$. There, a
+positive bias of $+1050\pm360$~pcm survives at $N=2000$.
 
-The hypothesis predicts that the bias falls as $1/N_\delta$ at fixed $\Wabs$, and as $\Wabs^2$ at
-fixed $N_\delta$. There is a hint in the data: the first campaign has $10\times$ fewer flights than
-the tuned campaign, but its bias is similar. This argues against the simple $1/N_\delta$ law, unless
-the noise is dominated by the residual samples ($N=2000$ per tag in both campaigns) rather than the
-flights. The discriminating runs are a scan in $N$ and a scan in $N_\delta$; they are the first item
-of the next stage. Two other explanations are not yet excluded:
-\begin{itemize}
-\item the slow scattering-mode transient of Section~\ref{sec:convergence}: the $k_n$ traces in
-  Figure~\ref{fig:s8:wabs} show excursions lasting tens of generations;
-\item an error in how the amplitudes are updated.
-\end{itemize}
+That section also takes back an argument made here first. This section originally dismissed the
+netting bias because the bias barely moved between the coarse and fine representations. But both
+representations bin by group or quarter-group, which is far wider than a resonance, so neither
+resolves the within-group structure that netting's bias depends on. The deterministic netting bias
+of Section~\ref{sec:iteration} and the noise-driven normalization bias are tested directly in
+Section~\ref{sec:res:followup}.
 
 \paragraph{Batch means underestimate the error.} The replica spread of $k$ is $2$--$3$ times the
 batch-means estimate. Within a replica, the estimated autocorrelation time is only $\tau\approx2$--$5$
 generations. The long excursions of Figure~\ref{fig:s8:wabs} explain the gap: they are the slow
 scattering modes, with $\tau\sim(1+c)/(1-c)\sim10^2$. A lag-window estimate over 60 generations
 cannot see them. So the honest error is the replica one, and the $z_{bm}$ column overstates
-significance.
+significance. The nine independent replicas of Section~\ref{sec:res:followup} give $\tau=21$
+collision generations. That is about half of a neutron lifetime (37 collisions), so the correlation is
+long only in units of collision generations.
 
 \begin{figure}[t]\centering
 \includegraphics[width=\textwidth]{figures/stage8_shape.pdf}
@@ -247,11 +223,19 @@ Measured per particle and ignoring correlation, the method is $\approx60$ times 
 correlation between generations, as the replica spread does (on both sides), it is $\approx1500$
 times worse.
 
-The per-particle variance is not small because of the residual's quality. It is small only where the
-residual is small, and the bank's absolute weight undoes that. With $\Wabs\approx4.4$, every unit of
-correction carries about four units of noise of either sign. The method's premise, variance
-proportional to the residual, holds per sample (Section~\ref{sec:res:controlled}) but not per
-generation.
+The per-particle variance is large because the residual estimate's absolute weight is large. In
+the tuned run each generation's candidate bank holds about 12 units of absolute weight per unit of
+fission production, before netting:
+\begin{itemize}
+\item $6.7$ from the scattering residual records;
+\item $0.8$ from the fission residual after pooling ($3.1$ before);
+\item $4.4$ from the children of the previous bank.
+\end{itemize}
+Netting keeps about $37\%$. The flights and netting only carry and contract what the residual
+injects, so the residual estimator is the noise source. Its noise is not residual-scale: per sample
+it is the integration noise of the high term over $\mathbf\Omega'$ and $E'$
+(Section~\ref{sec:res:controlled}). Part of the scattering residual's signed mass is, in addition,
+the amplitude term of Section~\ref{sec:iteration} (Section~\ref{sec:res:followup}).
 
 \paragraph{Per second.} The figure of merit $1/(\sigma^2T)$ of $k$ for the tuned combined variant,
 relative to the reference, is:
@@ -274,6 +258,148 @@ $0.043$ with batch means. It also has the smallest bias.
 The shape figure of merit, the mean relative variance over the 60 fuel regions, is $10^{-3}$ of the
 reference for every variant. The correction tally is dominated by its backward points and the bank's
 collision estimator, and both carry the bank's full absolute weight into every region.
+
+\subsection{Follow-up: the bias, the amplitudes, and history-based flights}\label{sec:res:followup}
+
+The first measurement left three questions:
+\begin{itemize}
+\item whether the bias is the normalization bias of a noisy iteration or netting's deterministic bias;
+\item where the noise comes from;
+\item whether history-based flights, which make a generation fission-to-fission, shorten the
+  correlation enough to pay for themselves.
+\end{itemize}
+Every run below is the tuned combined variant (40 inactive and 60 active generations, $N_\delta=2\times10^5$,
+$N_B=4\times10^4$) unless stated otherwise. The runs are in
+\code{results/stage8\_followup} under \code{examples/rmc}, and \code{stage8\_followup\_analysis.py}
+analyses them.
+
+\begin{table}[t]\centering\small
+\caption{Follow-up runs. Columns: $n$, the number of replicas; $\Delta k$, the bias against the
+reference with its standard error; paired, the difference from the baseline replica with the same
+seed (same residual samples); $\overline{\Wabs}$, the bank's mean absolute weight; $\sigma_{gen}$, the
+per-generation spread of $k_n$; $T$, the active time per replica in seconds; FOM$_k$, the figure of
+merit relative to the reference. The errors of a replica mean use $\sigma_{gen}\sqrt{\tau/n_{gen}}$
+with $\tau=21$ generations, measured from the nine independent baseline replicas; the first row uses
+their spread directly.}
+\label{tab:fu}
+\setlength{\tabcolsep}{3.5pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+run & $n$ & $\Delta k$ (pcm) & paired (pcm) & $\overline{\Wabs}$ & $\sigma_{gen}$ & $T$ & FOM$_k$\\
+\midrule
+\csname @@input\endcsname figures/followup_table.tex
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/followup_bias.pdf}
+\caption{Left: replica means of $k_n$ for every run, coloured by seed. Replicas with the same seed
+share their residual samples, which is why the seed-2001 replica (orange) is low in every run of the
+first group. The vertical line and band are the reference and its replica spread. Right: the bias
+against $1/N$, with the two simple models.}\label{fig:fu:bias}
+\end{figure}
+
+\paragraph{Independent seeds.} Six new replicas (seeds 3000--3005) give $k$ between $0.631$ and
+$0.665$. With the original three, the nine independent baseline replicas give:
+\begin{itemize}
+\item $\Delta k=+1050\pm360$~pcm, a positive bias at $2.9\sigma$; eight of the nine replicas lie above
+  the reference;
+\item a replica spread of $0.0108$ against a per-generation spread of $0.018$ over 60 generations,
+  which means an integrated autocorrelation time of $\tau=21$ collision generations.
+\end{itemize}
+
+\paragraph{The bias against $N$.} With $N=16000$ residual samples per tag (seeds 2000 and 2001):
+\begin{itemize}
+\item the per-generation spread falls from $0.021$ to $0.0066$, a factor of $3.2$, close to $\sqrt8$;
+\item the bank's absolute weight falls from $4.4$ to $1.8$, because more samples per bin cancel
+  better;
+\item the bias is $+600\pm280$~pcm.
+\end{itemize}
+A bias proportional to $1/N$ would be $130$~pcm here; one independent of $N$ would stay at $1050$.
+The measurement lies between the two and is $1.7\sigma$ from each (Figure~\ref{fig:fu:bias}). The
+normalization bias is therefore at most part of the story, and the data cannot exclude a bias that
+does not fall with $N$. Separating them needs two things: more replicas at large $N$, and a large-$N$
+run whose netting is resolved finely enough that its own bias is negligible.
+
+\paragraph{Resonance-resolved netting.} In this run, every fine bin of the lifts' grid in the three
+groups from $0.625$~eV to $821$~keV is its own netting energy bin ($\approx90$ bins per decade). The
+results:
+\begin{itemize}
+\item $\Wabs$ rises to $12.8$, because the bins are sparser and cancel less;
+\item the paired difference from the baseline is $+260\pm120$~pcm.
+\end{itemize}
+So resolving the resonance range does not remove the bias; if anything it raises $k$ slightly. That
+argues against netting's within-group smearing in that range as the cause. The test is incomplete
+in two ways. The grid is about $0.025$ in lethargy, which does not resolve the narrowest resonances.
+And the spatial and angular parts of the projection are unchanged.
+
+\paragraph{Damped normalization.} Normalizing with $f_n^{0.25}$ instead of $f_n$ weakens the feedback of
+a noisy $f_n$. The paired change is $-230\pm220$~pcm: consistent with a modest reduction, and with none.
+
+\paragraph{Following amplitudes.} With $b=a$ (Section~\ref{sec:iteration}):
+\begin{itemize}
+\item $\Wabs$ falls from $4.4$ to $3.5$;
+\item the paired change in $k$ is $-310\pm240$~pcm;
+\item the figure of merit does not change, because $\sigma_{gen}$ does not.
+\end{itemize}
+The amplitude term is real, as the left of Figure~\ref{fig:fu:amp} shows. In the baseline, the
+candidate's signed scattering mass varies with $a_s-b_s$ with a slope of $42.7$, the field's scattering
+production per unit fission production. The correlation is $0.69$, so the amplitude term accounts for
+about half of the variance of the scattering mass. Removing it lowers the absolute weight. But
+$k_n$'s noise comes from the remaining residual noise, which is unchanged.
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/followup_amplitude_history.pdf}
+\caption{Left: signed tag-$s$ sum of the candidate bank against the field's amplitude offset $a_s-b_s$,
+for every generation of the three baseline replicas. The slope is the field's scattering production
+per unit fission production. Right: the production $f_n$ by fission generation with history-based
+flights. With $b=(1,1)$ the run fails at the second generation; with $b=a$ and $N=2000$ it oscillates
+and fails; with $b=a$ and $N=64000$ it is stable.}\label{fig:fu:amp}
+\end{figure}
+
+\paragraph{History-based flights.} Each flight now continues through its scatterings (37 collisions
+per history on average). With $N_\delta=2\times10^4$ histories per generation, the flights cost about
+1~s per generation.
+
+\emph{Stability.} With $b=(1,1)$ the iteration fails within two or three generations at $N=2000$ and
+at $N=16000$. Damping the normalization ($\lambda=0.1$, $N=4000$) does not save it: all three
+replicas fail within eight generations.
+
+The cause is the amplitude term. A fluctuation of $f_n$ puts $42\,(a_s-b_s)$ of scattering mass into
+the next residual. A history carries that mass to fission within one generation, at about $0.9$
+units of fission production per unit, so the term feeds back on $f$ with a gain of about $40\times0.9$
+per unit change of $1/f$, far above one. In the collision iteration the same mass reaches fission over
+about 40 generations, and netting and normalization act on it in between.
+
+With $b=a$ the amplitude term is gone. What remains is the residual's own sampling noise, now
+delivered to fission in a single generation:
+\begin{itemize}
+\item at $N=2000$, $f_n$ fluctuates by about $30\%$, and the replicas fail after 11, 22 and 60
+  generations;
+\item at $N=64000$ ($32\times$ the samples, about one collision generation's worth per collision of a
+  history), the run is stable, with:
+  \begin{itemize}
+  \item $f_n$ varying by $5\%$;
+  \item $\Wabs=0.77$;
+  \item a lag-1 correlation of $0.50$ ($\tau\approx3$ fission generations);
+  \item $k=0.6512$, $+900\pm1100$~pcm, which is not informative;
+  \item $47$~s per generation, $95\%$ of it residual sampling.
+  \end{itemize}
+\end{itemize}
+
+\emph{Figure of merit.} The figure of merit is $2\times10^{-4}$ of the reference, about 9 times
+below the collision iteration's $1.8\times10^{-3}$. Per generation, $\sigma_{gen}^2\tau$ is $0.0035$
+against $0.0068$. But a generation costs 16 times more, because the residual must be sampled about 30
+times more heavily per generation to keep $f_n$ stable.
+
+\emph{What this says about the correlation.} Measured in neutron lifetimes, the collision iteration's
+correlation is not long. $\tau=21$ collision generations is about half of a 37-collision lifetime,
+while the fission-to-fission iteration has $\tau\approx3$ lifetimes. The apparent long correlation of
+Section~\ref{sec:convergence} is long only in units of collision generations, which are cheap. The
+real figure-of-merit gap is the variance injected per unit of work, and history-based flights do not
+reduce it. They only change when it reaches fission.
 
 \subsection{What optimization could recover}\label{sec:s8:projection}
 
@@ -308,26 +434,27 @@ generation becomes $3.3$ times faster. The $k$ figure of merit would then be $0.
 $0.005$ (replicas) of the reference: still at least $15$ times worse than analog Monte Carlo.
 
 \paragraph{Algorithm.} Engineering cannot close that gap, so the remaining factors must come from
-the algorithm. In order of expected size:
+the algorithm. The follow-up of Section~\ref{sec:res:followup} narrows down which ones matter.
 \begin{enumerate}
-\item \textbf{Lower $\Wabs$.} The figure of merit scales as $\Wabs^{-2}$ at fixed cost. Halving
-  $\Wabs$ is worth a factor of $4$. The candidates are:
+\item \textbf{Less noise per residual sample.} This is the dominant lever. The scattering residual
+  injects about 7 units of absolute weight per generation, almost all of it integration noise of the
+  high term. The candidates are:
   \begin{itemize}
-  \item netting bins matched to the residual's own structure, by group and by angle, with the low
-    term in closed form;
-  \item destination pooling extended to scattering, by pooling elastic children against a
-    regional slowing-down density;
-  \item fewer flights per unit of correction, by pooling at birth rather than after a generation.
+  \item stratified or randomized quasi-Monte Carlo incident directions;
+  \item importance-sampled incident energies;
+  \item a CE/MG control evaluated on the same incident energies, so that the difference is
+    pointwise residual-scale.
   \end{itemize}
-\item \textbf{Shorter correlation.} The slow scattering modes inflate the error of the mean by
-  $\sqrt{\tau_{rep}/\tau_{bm}}\approx2$--$3$ (a factor of $4$--$10$ in figure of merit). Accelerating
-  them, for instance by feeding the bank's collision tally back into the field as a coarse-mesh
-  correction, recovers it.
-\item \textbf{Fewer generations per answer.} The 40 inactive generations needed here cost as much as
-  the reference's whole inactive phase. A field that already contains the correction from the
-  previous run would remove them.
+  More samples per generation help in the same way: at $N=16000$, $\Wabs$ falls to $1.8$ and the
+  figure of merit rises by about two even before optimization (Table~\ref{tab:fu}). Cheaper samples
+  (Table~\ref{tab:impl:time}) therefore pay twice.
+\item \textbf{Lower $\Wabs$ at fixed noise.} Following amplitudes ($b=a$) remove the production-scale
+  amplitude term (21\% lower $\Wabs$). Pooling of scattering children at birth against a shared
+  slowing-down density is the remaining exact option.
+\item \textbf{Not the correlation.} In neutron lifetimes the collision iteration is already less
+  correlated than analog Monte Carlo. Fission-to-fission generations cost more than they save
+  (Section~\ref{sec:res:followup}).
 \end{enumerate}
-Together these are worth one to two orders of magnitude, if they work as estimated.
 
 \paragraph{Projection to a light-water pincell.} The answer above is for graphite. For a typical PWR
 pincell (UO$_2$, water, pitch 1.26~cm), the changes are as follows.
@@ -356,22 +483,27 @@ The method runs. It is stable only with netting, and its pieces behave as design
 \item the correction tally with CE points reproduces the fission shape.
 \end{itemize}
 
-It is not yet competitive. At base level, measured honestly with independent replicas:
+It is not yet competitive. Measured with nine independent replicas:
 \begin{itemize}
-\item it is $\approx700$ times worse than analog Monte Carlo in the $k$ figure of merit, and
-  $\approx50$ times worse with batch means;
-\item it is $\approx1000$ times worse in the fission-shape figure of merit;
-\item it carries a $\approx+1000$~pcm eigenvalue bias that must be explained before anything else.
+\item its $k$ figure of merit is $0.0018$ of analog Monte Carlo's ($0.0033$ with $N=16000$);
+\item its fission-shape figure of merit is $\approx10^{-3}$ of analog's;
+\item it carries an eigenvalue bias of $+1050\pm360$~pcm at $N=2000$ and $+600\pm280$~pcm at
+  $N=16000$.
 \end{itemize}
-After the engineering of Table~\ref{tab:impl:time} it would still be $15$--$200$ times worse.
+After the engineering of Table~\ref{tab:impl:time} the $k$ figure of merit would be about $0.01$ of
+analog's.
 
-Feasibility therefore rests on the algorithmic factors. They all attack the same quantity: the
-bank's absolute weight per unit of correction. That quantity, not the residual, now sets the
-variance. The next stage should:
+What sets the variance is the residual estimator's own noise: production-scale integration noise of
+the high term, plus an amplitude term that $b=a$ removes. The bank's absolute weight, the netting
+and the correlation between generations only carry or reflect it. Feasibility therefore rests on
+making each residual sample quieter and cheaper. Two orders of magnitude are needed, and the
+history-based and damped variants show that neither the iteration's structure nor its normalization
+offers them.
+
+The next stage should:
 \begin{enumerate}
-\item resolve the bias with scans in $N$ and $N_\delta$;
-\item make the MG low term closed-form;
-\item measure how far scattering-aware cancellation can push $\Wabs$ below one.
+\item reduce the high term's integration noise per sample (stratified directions, a same-energy
+  CE/MG control);
+\item settle the bias with independent replicas at large $N$ and with finer netting;
+\item make the MG low term of the tally closed-form.
 \end{enumerate}
-If $\Wabs$ cannot be brought near or below one at a cost comparable to a flight, the method cannot
-beat analog Monte Carlo on this class of problem.

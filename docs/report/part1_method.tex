@@ -675,17 +675,30 @@ weight $\Wabs/N_\delta$ times its factor.}\label{fig:flight}
 OpenMC never sees a signed weight: every routine called receives a positive scratch particle of unit
 weight, and the bookkeeping of signs, tags and yields stays in our code.
 
+\paragraph{History-based flights.} A flight can also continue through its scatterings, with the
+scattering's yield multiplying its weight, until it is captured, causes fission, or leaks; only fission
+children are then banked. A generation becomes fission-to-fission, as in analog eigenvalue Monte Carlo:
+the history applies $(I-\mathcal S)^{-1}$, so the bank $X$ obeys
+\begin{equation}
+X = r + F\,(I-\mathcal S)^{-1} X,\qquad \delta Q = (I-\mathcal S)^{-1}X,
+\end{equation}
+which is the same fixed point as the collision-by-collision iteration
+($\delta Q=r+\mathcal S\,\delta Q+F\,\delta Q$). The correction's flux is tallied along the whole
+history. Section~\ref{sec:res:followup} measures what this does to the noise and the correlation.
+
 \section{The eigenvalue iteration}\label{sec:iteration}
 
 With a frozen field shape a generation is (Figure~\ref{fig:overview}):
 \begin{enumerate}
-\item choose $b$ (fixed, or matched to the bank's per-tag mass);
+\item choose $b$ (fixed, following $a$, or matched to the bank's per-tag mass);
 \item residual records for both tags, weighted with $(a,b,k_n)$; flights of the bank;
 \item cancellation (Section~\ref{sec:cancellation});
 \item fission production $f_n=k_n\big(b_f\langle1,\Qmg_f\rangle+\sum_{\text{tag }f}w\big)$ and
   $k_{n+1}=k_nf_n$; never clipped, and $f\le0$ is reported as a failure of the estimator;
 \item normalization: tag $s$ by $1/f_n$, tag $f$ by $k_n/(k_{n+1}f_n)$, in the bank and the field
-  amplitudes, $a_{n+1}=(b_s/f_n,\;b_fk_n/(k_{n+1}f_n))$;
+  amplitudes, $a_{n+1}=(b_s/f_n,\;b_fk_n/(k_{n+1}f_n))$ (optionally damped: $f_n$ replaced by
+  $f_n^{\lambda}$, $0<\lambda\le1$, in the normalization and in $k_{n+1}$, so that a noisy $f_n$ moves
+  the normalization less);
 \item unbiased systematic resampling of the bank to at most $N_B$ sites.
 \end{enumerate}
 The driver sees its backend only through a dozen operations, so it is tested against a deterministic
@@ -703,12 +716,40 @@ sums, so that the field absorbs the bank's net mass and the bank carries only th
 model it converges to the CE/MG mass ratios. It changes the bank's net weight and hence the variance,
 not the mean.
 
+\emph{Following amplitudes}, $b=a$, make the field emit exactly what its normalized flux produces in
+MG. The choice matters for the noise. With $b$ fixed, the field's residual contains
+\begin{equation}
+(a_t-b_t)\,\mathcal K_t\phi^{\mathrm{MG}},
+\end{equation}
+a copy of the field's whole production of tag $t$ scaled by the amplitude offset. After a noisy
+generation, $a_s=b_s/f_n$ is off by a few percent, and the field's scattering production is about 40
+times its fission production in graphite (the number of collisions in a neutron's life). So a 4\%
+fluctuation of $f_n$ puts about $1.7$ units of production-shaped scattering mass into the next residual.
+This is a real but self-correcting restoring force: it pulls the normalization back. But it is
+production-scale, and it is correlated from generation to generation. With $b=a$ the residual is
+$a_t(\mathcal K_t\phi^{\mathrm{MG}}-\Qmg_t)$, which is residual-shaped.
+
 \subsection{Bias of the eigenvalue estimate}
 
 As in any Monte Carlo power iteration, normalizing each generation by an estimated $f_n$ introduces a
-bias of order $1/N$ per generation in $k$ and in the source shape. It is the same mechanism as the
-population-control bias of analog eigenvalue Monte Carlo and is negligible at the population sizes
-used here; it is distinct from any bias of the estimators, which are unbiased given the normalization.
+bias in $k$ and in the source shape. It is the same mechanism as the population-control bias of analog
+eigenvalue Monte Carlo and is distinct from any bias of the estimators, which are unbiased given the
+normalization.
+
+Its size scales with the variance of $f_n$ per generation. In analog Monte Carlo that variance falls
+as $1/N$ in the number of histories per generation. Here it is set mostly by the residual samples,
+and it is about 40 times the variance of an analog batch of $2\times10^4$ histories. So the usual
+argument that the bias is negligible does not carry over. Section~\ref{sec:res:followup} measures it.
+
+Binned netting adds a second, deterministic bias. In expectation it replaces the bank $x$ by $Px$: each
+bin keeps its mass, and the mass is redistributed within the bin by fixed shapes. The iteration then
+converges to the fixed point of $BP$ instead of $B$:
+\begin{equation}
+\delta_P-\delta=(I-BP)^{-1}B\,(P-I)\,\delta .
+\end{equation}
+This error does not fall with $N$ or $N_\delta$, and it can exceed the correction's own effect on $k$.
+The correction's large positive and negative parts within a group nearly cancel in $k$, and $P$ smears
+exactly that within-group structure.
 
 \section{Sign cancellation}\label{sec:cancellation}
 
@@ -894,7 +935,10 @@ moderator. Two consequences follow, both measured in Section~\ref{sec:res:stage8
 \end{itemize}
 Both are properties of the emission-density formulation, not of the estimators; they argue for
 accelerating the slow scattering modes (e.g.\ by keeping more of each generation in the field, through
-mass matching or a swept field) and for counting generations, not histories, when comparing costs.
+mass matching or a swept field) and for counting generations, not histories, when comparing costs. Measured on the graphite pincell (Section~\ref{sec:res:followup}), the integrated
+autocorrelation time is 21 collision generations, about half of a 37-collision neutron lifetime. So
+per unit of physical time the iteration is no more correlated than analog Monte Carlo, and making
+generations fission-to-fission does not pay.
 
 \subsection{What scales with what}
 

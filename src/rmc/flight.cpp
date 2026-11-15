@@ -95,7 +95,7 @@ FlightPropagator::Collision FlightPropagator::collide(
 
 FlightStats FlightPropagator::propagate(const SignedBank& in, int64_t n,
   double k, uint64_t seed, SignedBank& out, FlightTally* tally,
-  FlightAux* aux)
+  FlightAux* aux, bool history)
 {
   const bool region_tally =
     aux && !aux->region_fission.empty() && loaded_field;
@@ -142,82 +142,108 @@ FlightStats FlightPropagator::propagate(const SignedBank& in, int64_t n,
         par.r.x, par.r.y, par.r.z));
     }
 
-    // Tally bin of the energy (constant during the flight)
-    int e_bin = -1;
-    if (n_E > 0 && par.E >= tally->E_edges.front() &&
-        par.E < tally->E_edges.back()) {
-      e_bin = static_cast<int>(std::upper_bound(tally->E_edges.begin(),
-                                 tally->E_edges.end(), par.E) -
-                               tally->E_edges.begin()) -
-              1;
-    }
-
-    // Fly to the sampled optical depth
-    double tau = -std::log(prn(&s));
-    double path = 0.0;
-    bool collided = false;
-    for (int64_t crossings = 0; crossings < 100'000'000; ++crossings) {
-      const Cell& cell = *model::cells[g_.lowest_coord().cell()];
-      int32_t inst = g_.cell_instance();
-      int32_t mat = cell.material(inst);
-      double sigma =
-        probe_.total(mat, par.E, cell.sqrtkT(inst), cell.density_mult(inst));
-      g_.boundary() = distance_to_boundary(g_);
-      double d_b = g_.boundary().distance();
-      bool hit = sigma * d_b > tau;
-      double d = hit ? tau / sigma : d_b;
-      if (e_bin >= 0) {
-        auto it = std::find(tally->materials.begin(), tally->materials.end(), mat);
-        if (it != tally->materials.end())
-          tally->flux[(it - tally->materials.begin()) * n_E + e_bin] +=
-            sign * unit * d;
+    // State of the flight: energy and signed weight change at scatterings
+    // (history mode); position and direction live in g_
+    double E = par.E;
+    double wgt = sign * unit;
+    for (int64_t n_col = 0;; ++n_col) {
+      if (n_col >= 1'000'000) {
+        fatal_error("RMC flight: more than 10^6 collisions in one history.");
       }
-      for (int lev = 0; lev < g_.n_coord(); ++lev)
-        g_.coord(lev).r() += d * g_.coord(lev).u();
-      path += d;
-      if (hit) {
-        collided = true;
+
+      // Tally bin of the energy (constant during one flight segment)
+      int e_bin = -1;
+      if (n_E > 0 && E >= tally->E_edges.front() && E < tally->E_edges.back()) {
+        e_bin = static_cast<int>(std::upper_bound(tally->E_edges.begin(),
+                                   tally->E_edges.end(), E) -
+                                 tally->E_edges.begin()) -
+                1;
+      }
+
+      // Fly to the sampled optical depth
+      double tau = -std::log(prn(&s));
+      double path = 0.0;
+      bool collided = false;
+      for (int64_t crossings = 0; crossings < 100'000'000; ++crossings) {
+        const Cell& cell = *model::cells[g_.lowest_coord().cell()];
+        int32_t inst = g_.cell_instance();
+        int32_t mat = cell.material(inst);
+        double sigma =
+          probe_.total(mat, E, cell.sqrtkT(inst), cell.density_mult(inst));
+        g_.boundary() = distance_to_boundary(g_);
+        double d_b = g_.boundary().distance();
+        bool hit = sigma * d_b > tau;
+        double d = hit ? tau / sigma : d_b;
+        if (e_bin >= 0) {
+          auto it =
+            std::find(tally->materials.begin(), tally->materials.end(), mat);
+          if (it != tally->materials.end())
+            tally->flux[(it - tally->materials.begin()) * n_E + e_bin] +=
+              wgt * d;
+        }
+        for (int lev = 0; lev < g_.n_coord(); ++lev)
+          g_.coord(lev).r() += d * g_.coord(lev).u();
+        path += d;
+        if (hit) {
+          collided = true;
+          break;
+        }
+        tau -= sigma * d_b;
+        g_.event_cross_surface();
+        if (!g_.alive())
+          break;
+      }
+      if (!collided) {
+        ++st.leaked;
         break;
       }
-      tau -= sigma * d_b;
-      g_.event_cross_surface();
-      if (!g_.alive())
-        break;
-    }
-    if (!collided) {
-      ++st.leaked;
-      continue;
-    }
+      ++st.collisions;
 
-    // Collision estimator of the fission rate by field region: the probe
-    // holds the collision cell's cross sections at the parent's energy
-    if (region_tally) {
-      int64_t reg = loaded_field->locate(g_);
-      const auto& xs = probe_.particle().macro_xs();
-      if (reg >= 0 && xs.total > 0.0) {
-        aux->region_fission[reg] += sign * unit * xs.fission / xs.total;
-        aux->region_nu_fission[reg] += sign * unit * xs.nu_fission / xs.total;
+      // Collision estimator of the fission rate by field region: the probe
+      // holds the collision cell's cross sections at the flight's energy
+      if (region_tally) {
+        int64_t reg = loaded_field->locate(g_);
+        const auto& xs = probe_.particle().macro_xs();
+        if (reg >= 0 && xs.total > 0.0) {
+          aux->region_fission[reg] += wgt * xs.fission / xs.total;
+          aux->region_nu_fission[reg] += wgt * xs.nu_fission / xs.total;
+        }
       }
-    }
 
-    // The collision, at the probe's state (material of the collision cell)
-    Collision col = collide(g_.u(), k, &s);
-    if (col.kind == 0) {
-      ++st.captured;
-      continue;
-    }
-    if (col.kind == 1)
-      ++st.scattered;
-    else
-      ++st.fissions;
-    if (col.factor == 0.0)
-      continue;
-    out.push_back({g_.r(), col.u, col.E, sign * unit * col.factor,
-      col.kind == 1 ? Tag::s : Tag::f});
-    if (aux && aux->children) {
-      aux->parent.push_back(i);
-      aux->path.push_back(path);
-      aux->nuclide.push_back(col.nuclide);
+      // The collision, at the probe's state (material of the collision cell)
+      Collision col = collide(g_.u(), k, &s);
+      if (col.kind == 0) {
+        ++st.captured;
+        break;
+      }
+      if (col.kind == 1)
+        ++st.scattered;
+      else
+        ++st.fissions;
+      if (col.factor == 0.0)
+        break;
+
+      if (history && col.kind == 1) {
+        // Continue the history from the scattering: new energy, direction,
+        // and weight (factor > 1 only for multiplying reactions)
+        E = col.E;
+        wgt *= col.factor;
+        for (int lev = 0; lev < g_.n_coord(); ++lev)
+          g_.coord(lev).u() = col.u;
+        g_.u_last() = col.u;
+        g_.r_last() = g_.r();
+        g_.surface() = SURFACE_NONE;
+        continue;
+      }
+
+      out.push_back({g_.r(), col.u, col.E, wgt * col.factor,
+        col.kind == 1 ? Tag::s : Tag::f});
+      if (aux && aux->children) {
+        aux->parent.push_back(i);
+        aux->path.push_back(path);
+        aux->nuclide.push_back(col.nuclide);
+      }
+      break;
     }
   }
   return st;
