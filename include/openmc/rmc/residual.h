@@ -54,6 +54,18 @@ struct VoxelOptions {
   VoxelMode mode {VoxelMode::box};
   vector<double> weights; //!< [R] for tabulated
   bool weights_per_volume {false};
+  //! Box mode only: a fraction skin_fraction of the destinations is drawn
+  //! near the inside of a z-cylinder (centre skin_x, skin_y, radius
+  //! skin_radius), with depth d below its surface log-uniform on
+  //! [skin_dmin, skin_radius], uniform in angle and in z over the box. For
+  //! features that live in a thin layer at an absorber's surface (resonance
+  //! scattering of the moderator's unshielded flux). The density is the
+  //! mixture with the box, so the estimate stays unbiased.
+  double skin_fraction {0.0};
+  double skin_x {0.0};
+  double skin_y {0.0};
+  double skin_radius {0.0};
+  double skin_dmin {1e-5};
 };
 
 //! Destination proposal; density is per unit volume
@@ -62,8 +74,9 @@ public:
   VoxelProposal(const FrozenField& field, const VoxelOptions& opt);
   //! A destination, its region, and its density [1/cm^3]
   Draw<Position> sample(uint64_t* seed, int64_t& region) const;
-  //! Density at a point in region R
+  //! Density at a point in region R (box mode: at any point r)
   double density(int64_t region) const;
+  double density_at(Position r, int64_t region) const;
   double pi(int64_t region) const { return pi_.empty() ? 0.0 : pi_[region]; }
 
 private:
@@ -79,6 +92,12 @@ struct OutgoingOptions {
                        //!< pure log-uniform proposal
   double E_min {1e-5}; //!< log-uniform range [eV]
   double E_max {2e7};
+  //! Optional tabulated energy proposal, replacing the emission spectrum in
+  //! the (1 - beta) part: per region R, bin e of table_edges has probability
+  //! table[R * n_bins + e] (normalized per region), log-uniform within the
+  //! bin. A region whose row sums to zero uses the log-uniform part only.
+  vector<double> table_edges;
+  vector<double> table;
 };
 
 //! Outgoing-state proposal: direction isotropic; energy from (1 - beta)
@@ -97,6 +116,9 @@ private:
   const FrozenField& field_;
   OutgoingOptions opt_;
   double log_ratio_;
+  int n_tab_ {0};             //!< bins of the tabulated proposal (0: none)
+  vector<double> tab_cdf_;    //!< [R * n_tab] per-region cumulative
+  vector<double> tab_sum_;    //!< [R] row sums (before normalization)
 };
 
 //! Incident-energy proposal of the fission evaluator and the sampler route
@@ -229,6 +251,18 @@ struct ResidualOptions {
   OutgoingOptions outgoing;
   IncidentOptions incident;
   SamplerOptions sampler;
+  //! Forward-cone directions (isotropic direction source only): a fraction
+  //! of the J incident directions is drawn from a von Mises-Fisher density
+  //! about the outgoing direction, with concentration kappa(E) rising
+  //! log-linearly from 0 at cone_E0 to cone_kappa at cone_E1 (outgoing
+  //! energy E), for kernels that are forward-peaked at high energy. Every
+  //! direction is weighted by the balance heuristic over both components,
+  //! 1 / (J_iso / 4 pi + J_cone f(Omega' . Omega)), so the estimate stays
+  //! unbiased for any kappa.
+  double cone_fraction {0.0};
+  double cone_kappa {0.0};
+  double cone_E0 {1e4};
+  double cone_E1 {1e7};
 };
 
 //==============================================================================

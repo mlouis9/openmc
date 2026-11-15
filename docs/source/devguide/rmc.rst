@@ -1338,3 +1338,46 @@ Findings
       9 times below the collision iteration's.
     - The residual estimator's integration noise sets the variance; the
       iteration's structure does not.
+
+Toward a speedup: the residual estimator's efficiency
+-----------------------------------------------------
+
+**Commit:** "rmc: residual efficiency, a faster backward tracer, and the
+speedup study". Written up in the report's section "Toward a speedup".
+
+Added
+    - ``examples/rmc/residual_efficiency.py``: the variance of a generation's
+      residual fission yield (an importance table from history flights times
+      the record weights) per unit sampling time, for configurations named
+      ``key=value+...``; ``speedup_analysis.py``; ``field_variants.py`` (fields
+      with other group structures, MGXS statistics, and meshes).
+    - Backward tracer: a per-path cache of :math:`\Sigma_t` per energy and
+      material state, field energy bins found once per energy, dense region
+      tables per meshed cell instance, an incremental regular-mesh traversal,
+      and one transcendental per segment and energy (3.5 times faster, same
+      results).
+    - Residual options: a tabulated outgoing-energy proposal (``E_table``),
+      skin destinations near a cylinder (``skin``), and forward-cone
+      directions with balance-heuristic weights (``cone``); lift files may give
+      one lift row per region (``region_rows``).
+    - ``driver.Config.field_production`` (the field's fission production
+      estimated directly); ``stage8.py`` options ``--res-beta``, ``--res-cut``,
+      ``--res-nd``, ``--N-f``, ``--placement`` (empirical netting placement),
+      ``--net-every``, ``--field-production``, ``--field-groups``,
+      ``--field-mesh``; ``tally-points 0`` runs the eigenvalue only.
+    - ``tests/rmc/test_residual_importance_options.py`` (G8.6).
+
+Findings
+    - The scattering residual carries 97 % of the eigenvalue noise; it is
+      4.5 % of the scattering emission in absolute value, more than the
+      fission production with 37 collisions per lifetime. 40 groups, five
+      times the MGXS statistics, or a 24x24 mesh do not change it.
+    - :math:`\beta = 0.1` (emission-spectrum outgoing energies) halves its
+      variance and shortens the heavy tail; with it the bias at N = 2000
+      falls from about +1000 to +350 pcm and the autocorrelation time from 21
+      to 3 generations. Skin, tabulated, cone, MG control: no gain.
+    - Figure of merit of k: 0.08-0.17 of OpenMC (from 0.005), about 20 times.
+    - At N = 8000 a bias of +650 to +1000 pcm remains; it builds up as the
+      scattering correction matures. Empirical netting placement lowers it
+      by about 300 pcm; netting less often does not lower it in proportion;
+      without netting the bank's absolute weight grows without bound.

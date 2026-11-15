@@ -8,6 +8,7 @@
 #include "openmc/error.h"
 #include "openmc/geometry.h"
 #include "openmc/material.h"
+#include "openmc/math_functions.h"
 #include "openmc/mesh.h"
 #include "openmc/nuclide.h"
 #include "openmc/random_lcg.h"
@@ -99,6 +100,22 @@ VoxelProposal::VoxelProposal(const FrozenField& field, const VoxelOptions& opt)
   }
 }
 
+double VoxelProposal::density_at(Position r, int64_t region) const
+{
+  if (opt_.mode != VoxelMode::box || opt_.skin_fraction <= 0.0)
+    return density(region);
+  double f = (1.0 - opt_.skin_fraction) / V_box_;
+  const double R = opt_.skin_radius;
+  double rho = std::hypot(r.x - opt_.skin_x, r.y - opt_.skin_y);
+  double d = R - rho;
+  if (d >= opt_.skin_dmin && d <= R && rho > 0.0) {
+    Position w = field_.box_upper_right() - field_.box_lower_left();
+    double q = 1.0 / (d * std::log(R / opt_.skin_dmin)); // per unit depth
+    f += opt_.skin_fraction * q / (2.0 * PI * rho * w.z);
+  }
+  return f;
+}
+
 double VoxelProposal::density(int64_t region) const
 {
   if (opt_.mode == VoxelMode::box)
@@ -115,11 +132,21 @@ Draw<Position> VoxelProposal::sample(uint64_t* seed, int64_t& region) const
   int32_t m;
   double kT, dm;
   if (opt_.mode == VoxelMode::box) {
-    Position r {
-      lo.x + w.x * prn(seed), lo.y + w.y * prn(seed), lo.z + w.z * prn(seed)};
+    Position r;
+    if (opt_.skin_fraction > 0.0 && prn(seed) < opt_.skin_fraction) {
+      const double R = opt_.skin_radius;
+      double d = opt_.skin_dmin * std::pow(R / opt_.skin_dmin, prn(seed));
+      double rho = R - d;
+      double th = 2.0 * PI * prn(seed);
+      r = {opt_.skin_x + rho * std::cos(th), opt_.skin_y + rho * std::sin(th),
+        lo.z + w.z * prn(seed)};
+    } else {
+      r = {lo.x + w.x * prn(seed), lo.y + w.y * prn(seed),
+        lo.z + w.z * prn(seed)};
+    }
     if (!locate(field_, r, region, m, kT, dm))
       fatal_error("RMC residual: destination outside the geometry.");
-    return {r, 1.0 / V_box_};
+    return {r, density_at(r, region)};
   }
 
   // A region, then a point uniform in it by rejection from its mesh element
@@ -153,6 +180,31 @@ OutgoingProposal::OutgoingProposal(
   if (!(opt.beta > 0.0 && opt.beta <= 1.0))
     fatal_error("RMC residual: the log-uniform weight beta must be in (0, 1] "
                 "so that the proposal covers the residual's support.");
+  if (!opt.table.empty()) {
+    n_tab_ = static_cast<int>(opt.table_edges.size()) - 1;
+    const int64_t R = field.n_regions();
+    if (n_tab_ < 1 || static_cast<int64_t>(opt.table.size()) != R * n_tab_)
+      fatal_error("RMC residual: the tabulated energy proposal needs "
+                  "n_regions x (edges - 1) values.");
+    for (int e = 0; e < n_tab_; ++e)
+      if (!(opt.table_edges[e] > 0.0 &&
+            opt.table_edges[e + 1] > opt.table_edges[e]))
+        fatal_error("RMC residual: tabulated proposal edges must be positive "
+                    "and ascending.");
+    tab_cdf_.assign(R * n_tab_, 0.0);
+    tab_sum_.assign(R, 0.0);
+    for (int64_t r = 0; r < R; ++r) {
+      double c = 0.0;
+      for (int e = 0; e < n_tab_; ++e) {
+        double v = opt.table[r * n_tab_ + e];
+        if (!(v >= 0.0))
+          fatal_error("RMC residual: negative tabulated proposal value.");
+        c += v;
+        tab_cdf_[r * n_tab_ + e] = c;
+      }
+      tab_sum_[r] = c;
+    }
+  }
 }
 
 namespace {
@@ -171,6 +223,24 @@ Draw<OutgoingState> OutgoingProposal::sample(
   Tag t, int64_t region, uint64_t* seed) const
 {
   OutgoingState s;
+  if (n_tab_ > 0) {
+    double sum = (region >= 0) ? tab_sum_[region] : 0.0;
+    if (sum > 0.0 && opt_.beta < 1.0 && prn(seed) >= opt_.beta) {
+      double x = prn(seed) * sum;
+      const double* c = &tab_cdf_[region * n_tab_];
+      int e = static_cast<int>(std::upper_bound(c, c + n_tab_, x) - c);
+      e = std::min(e, n_tab_ - 1);
+      double lo = opt_.table_edges[e], hi = opt_.table_edges[e + 1];
+      s.E = lo * std::exp(std::log(hi / lo) * prn(seed));
+    } else {
+      s.E = opt_.E_min * std::exp(log_ratio_ * prn(seed));
+    }
+    double mu = 2.0 * prn(seed) - 1.0;
+    double phi = 2.0 * PI * prn(seed);
+    double st = std::sqrt(std::max(0.0, 1.0 - mu * mu));
+    s.u = {st * std::cos(phi), st * std::sin(phi), mu};
+    return {s, density(t, region, s)};
+  }
   double mass = (opt_.beta < 1.0) ? group_sum(field_, t, region) : 0.0;
   if (mass > 0.0 && prn(seed) >= opt_.beta) {
     // Group by emission, then the lift within the group
@@ -196,6 +266,24 @@ Draw<OutgoingState> OutgoingProposal::sample(
 
 double OutgoingProposal::energy_density(Tag t, int64_t region, double E) const
 {
+  if (n_tab_ > 0) {
+    double sum = (region >= 0) ? tab_sum_[region] : 0.0;
+    double beta = (sum > 0.0) ? opt_.beta : 1.0;
+    double f = 0.0;
+    if (E >= opt_.E_min && E <= opt_.E_max)
+      f += beta / (E * log_ratio_);
+    if (sum > 0.0 && E >= opt_.table_edges.front() &&
+        E < opt_.table_edges.back()) {
+      int e = static_cast<int>(std::upper_bound(opt_.table_edges.begin(),
+                                 opt_.table_edges.end(), E) -
+                               opt_.table_edges.begin()) -
+              1;
+      double p = opt_.table[region * n_tab_ + e] / sum;
+      f += (1.0 - beta) * p /
+           (E * std::log(opt_.table_edges[e + 1] / opt_.table_edges[e]));
+    }
+    return f;
+  }
   double f = 0.0;
   double mass = (opt_.beta < 1.0) ? group_sum(field_, t, region) : 0.0;
   double beta = (mass > 0.0) ? opt_.beta : 1.0;
@@ -746,9 +834,40 @@ void ResidualSampler::sample(
       const double* seg_s = nullptr;
       const double* seg_f = nullptr;
       if (opt_.directions == DirectionMode::isotropic) {
-        stratified_directions(opt_.n_directions, &s, dirs);
-        weights.assign(dirs.size(), 4.0 * PI / opt_.n_directions);
+        const int J = opt_.n_directions;
+        double kappa = 0.0;
+        if (opt_.cone_fraction > 0.0 && opt_.cone_kappa > 0.0 &&
+            st.E > opt_.cone_E0) {
+          double x = std::log(st.E / opt_.cone_E0) /
+                     std::log(opt_.cone_E1 / opt_.cone_E0);
+          kappa = opt_.cone_kappa * std::min(1.0, x);
+        }
+        int Jc = (kappa > 1e-3)
+                   ? std::min(J - 1, static_cast<int>(
+                                       std::lround(opt_.cone_fraction * J)))
+                   : 0;
+        int Ji = J - Jc;
+        stratified_directions(Ji, &s, dirs);
         picks_.clear();
+        if (Jc == 0) {
+          weights.assign(dirs.size(), 4.0 * PI / J);
+        } else {
+          // von Mises-Fisher about the outgoing direction:
+          // f(mu) = kappa e^{kappa (mu - 1)} / (2 pi (1 - e^{-2 kappa}))
+          const double norm = kappa / (2.0 * PI * (1.0 - std::exp(-2.0 * kappa)));
+          for (int c = 0; c < Jc; ++c) {
+            double u = prn(&s);
+            double mu = 1.0 + std::log(1.0 - u * (1.0 - std::exp(-2.0 * kappa))) / kappa;
+            mu = std::max(-1.0, std::min(1.0, mu));
+            dirs.push_back(rotate_angle(st.u, mu, nullptr, &s));
+          }
+          weights.resize(dirs.size());
+          for (size_t j = 0; j < dirs.size(); ++j) {
+            double mu = std::max(-1.0, std::min(1.0, dirs[j].dot(st.u)));
+            double f = norm * std::exp(kappa * (mu - 1.0));
+            weights[j] = 1.0 / (Ji / (4.0 * PI) + Jc * f);
+          }
+        }
       } else {
         // Sweep segments in the region; omega_j = 4 pi l_j / (rho V_R)
         int64_t lo = (d.region >= 0) ? sweep_->offset[d.region] : 0;

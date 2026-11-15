@@ -365,7 +365,13 @@ class ResidualConfig(Structure):
                 ('Ein_min', c_double), ('Ein_max', c_double),
                 ('all_sampler', c_int), ('n_energies', c_int),
                 ('common_numbers', c_int), ('sampler_control', c_int),
-                ('region_samples', c_int), ('net', c_int)]
+                ('region_samples', c_int), ('net', c_int),
+                ('E_table_edges', POINTER(c_double)), ('n_E_table_edges', c_int64),
+                ('E_table', POINTER(c_double)), ('n_E_table', c_int64),
+                ('cone_fraction', c_double), ('cone_kappa', c_double),
+                ('cone_E0', c_double), ('cone_E1', c_double),
+                ('skin_fraction', c_double), ('skin_x', c_double), ('skin_y', c_double),
+                ('skin_radius', c_double), ('skin_dmin', c_double)]
 
 
 DIRECTIONS = {'isotropic': 0, 'sweep': 1}
@@ -385,7 +391,8 @@ def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
                     E_range=(1e-5, 2e7), incident='log_uniform', beta_in=0.1,
                     Ein_range=(1e-5, 2e7), keep_directions=False,
                     all_sampler=False, n_energies=1, common_numbers=False,
-                    sampler_control='none', region_samples=1, net=False):
+                    sampler_control='none', region_samples=1, net=False,
+                    E_table=None, cone=None, skin=None):
     """Residual records of n samples of tag 's' or 'f' with the loaded field.
 
     The options are those of rmc::ResidualOptions (include/openmc/rmc/
@@ -402,7 +409,13 @@ def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
     region_samples forward samples of its region term; net (biased, for
     study) gives one outgoing state the net of the K.
     With keep_directions, also 'ce' and 'mg': the per-direction CE and MG
-    estimates (G3.7).
+    estimates (G3.7). E_table = (edges, table[R, n_bins]) replaces the
+    emission spectrum of the (1 - beta) part of the outgoing-energy proposal
+    by per-region bin probabilities (log-uniform within a bin). cone =
+    (fraction, kappa, E0, E1) draws that fraction of the directions from a
+    forward cone about the outgoing direction (rmc::ResidualOptions). skin =
+    (fraction, x, y, radius, d_min) draws that fraction of box destinations
+    at a log-uniform depth inside a z-cylinder (rmc::VoxelOptions).
     """
     w = None
     if voxel_weights is not None:
@@ -417,7 +430,16 @@ def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
         float(E_range[0]), float(E_range[1]), INCIDENT[incident], float(beta_in),
         float(Ein_range[0]), float(Ein_range[1]), int(bool(all_sampler)),
         int(n_energies), int(bool(common_numbers)),
-        SAMPLER_CONTROL[sampler_control], int(region_samples), int(bool(net)))
+        SAMPLER_CONTROL[sampler_control], int(region_samples), int(bool(net)),
+        None, 0, None, 0, *(cone if cone is not None else (0.0, 0.0, 1e4, 1e7)),
+        *(skin if skin is not None else (0.0, 0.0, 0.0, 0.0, 1e-5)))
+    if E_table is not None:
+        edges = np.ascontiguousarray(E_table[0], dtype=float)
+        table = np.ascontiguousarray(E_table[1], dtype=float).ravel()
+        cfg.E_table_edges = edges.ctypes.data_as(POINTER(c_double))
+        cfg.n_E_table_edges = edges.size
+        cfg.E_table = table.ctypes.data_as(POINTER(c_double))
+        cfg.n_E_table = table.size
     m = c_int64()
     _dll.openmc_rmc_residual_sample(byref(cfg), TAGS[tag], int(n), int(seed),
                                     int(bool(keep_directions)), byref(m))

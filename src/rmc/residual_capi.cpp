@@ -91,6 +91,11 @@ extern "C" int openmc_rmc_residual_sample(const openmc_rmc_residual_config* cfg,
   opt.outgoing.beta = cfg->beta;
   opt.outgoing.E_min = cfg->E_min;
   opt.outgoing.E_max = cfg->E_max;
+  if (cfg->n_E_table > 0) {
+    opt.outgoing.table_edges.assign(
+      cfg->E_table_edges, cfg->E_table_edges + cfg->n_E_table_edges);
+    opt.outgoing.table.assign(cfg->E_table, cfg->E_table + cfg->n_E_table);
+  }
   opt.incident.mode = static_cast<rmc::IncidentMode>(cfg->incident_mode);
   opt.incident.beta = cfg->beta_in;
   opt.incident.E_min = cfg->Ein_min;
@@ -101,6 +106,22 @@ extern "C" int openmc_rmc_residual_sample(const openmc_rmc_residual_config* cfg,
   opt.sampler.control = static_cast<rmc::SamplerControl>(cfg->sampler_control);
   opt.sampler.region_samples = cfg->region_samples;
   opt.sampler.net = cfg->net != 0;
+  opt.cone_fraction = cfg->cone_fraction;
+  opt.cone_kappa = cfg->cone_kappa;
+  opt.cone_E0 = cfg->cone_E0;
+  opt.cone_E1 = cfg->cone_E1;
+  opt.voxel.skin_fraction = cfg->skin_fraction;
+  opt.voxel.skin_x = cfg->skin_x;
+  opt.voxel.skin_y = cfg->skin_y;
+  opt.voxel.skin_radius = cfg->skin_radius;
+  opt.voxel.skin_dmin = cfg->skin_dmin;
+  if (opt.voxel.skin_fraction > 0.0 &&
+      (opt.voxel.skin_fraction >= 1.0 || !(opt.voxel.skin_radius > 0.0) ||
+        !(opt.voxel.skin_dmin > 0.0 &&
+          opt.voxel.skin_dmin < opt.voxel.skin_radius))) {
+    set_errmsg("Invalid skin destination options.");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
 
   bool need_tables = opt.control ||
                      opt.incident.mode == rmc::IncidentMode::flux ||

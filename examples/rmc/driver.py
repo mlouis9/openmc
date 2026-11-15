@@ -95,6 +95,9 @@ class Config:
     # estimate k_n f / P_n (P_n the production of the incoming state) is
     # recorded as k_next either way.
     damping: float = 1.0
+    # Estimate the field's fission production directly (backend
+    # field_production) instead of through the sampled fission residual's mass
+    field_production: bool = False
 
 
 @dataclass
@@ -130,6 +133,7 @@ def generation(state, backend, cfg):
     residual_f = backend.tag_sum(cand, 'f')
     t1 = time.perf_counter()
     children = backend.propagate(state.bank, cfg.N_delta, k, seed_of(cfg.seed, n, 'flight'))
+    children_f = backend.tag_sum(children, 'f')
     cand = backend.concat(cand, children)
     t2 = time.perf_counter()
 
@@ -140,9 +144,18 @@ def generation(state, backend, cfg):
         cand, cancel_info = backend.cancel(cand, b, seed_of(cfg.seed, n, 'cancel'))
     t3 = time.perf_counter()
 
-    # Fission production, eigenvalue, normalization (never clipped)
+    # Fission production, eigenvalue, normalization (never clipped). With a
+    # field production estimator, the field's part (b_f <Q_f> plus the mass
+    # of its fission residual, whose expectation is a . X / k with X the CE
+    # nu-fission production of the field's flux per source tag) is estimated
+    # directly, and only the bank's fission children are counted from the
+    # candidate; both forms have the same expectation.
     field_f = b[1] * backend.field_mass('f')
-    f = k * (field_f + backend.tag_sum(cand, 'f'))
+    if cfg.field_production and hasattr(backend, 'field_production'):
+        f = backend.field_production(state.a, seed_of(cfg.seed, n, 'field_production')) \
+            + k * children_f
+    else:
+        f = k * (field_f + backend.tag_sum(cand, 'f'))
     if not f > 0.0:
         raise EstimatorFailure(f'generation {n}: fission production f = {f}')
     g = f ** cfg.damping

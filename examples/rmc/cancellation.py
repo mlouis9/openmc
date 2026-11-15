@@ -221,10 +221,23 @@ class Representation:
 
 class BinnedNetting:
     """Net per bin and re-sample n_b ~ N |m_b| / sum |m| particles per bin
-    (stochastic rounding), each with weight m_b / n_b."""
+    (stochastic rounding), each with weight m_b / n_b.
 
-    def __init__(self, rep, n_particles, exact_low=False):
+    Where the re-sampled particles are placed within their bin:
+    - 'field': the representation's shape (region by the field's emission,
+      the lift in energy, uniform in the direction bin);
+    - 'empirical': copies of the bin's own particles of the net's sign,
+      drawn with probability proportional to |w|. A bin holding one sign is
+      then re-sampled without bias; a mixed bin is biased only by the
+      difference between the shapes of its positive and negative parts
+      (zero when they are proportional), not by the difference between the
+      correction's shape and the field's."""
+
+    def __init__(self, rep, n_particles, exact_low=False, placement='field'):
         self.rep, self.n, self.exact_low = rep, n_particles, exact_low
+        self.placement = placement
+        if placement == 'empirical' and exact_low:
+            raise ValueError('empirical placement has no particles for a closed-form low term')
 
     def __call__(self, bank, b, seed):
         rep = self.rep
@@ -242,13 +255,40 @@ class BinnedNetting:
         nb = np.floor(expect + rng.random(len(expect))).astype(np.int64)
         live = np.flatnonzero(nb > 0)
         keys = np.repeat(live, nb[live])
-        out = rep.sample(keys, rng)
+        if self.placement == 'empirical':
+            out = self._empirical(bank, key, m, keys, rng)
+        else:
+            out = rep.sample(keys, rng)
         # Stochastic rounding: E[n_b] = expect_b, so weight m_b / expect_b
         # per particle keeps every bin's net in expectation
         out['w'] = np.repeat(m[live] / expect[live], nb[live])
         info = dict(W_before=float(np.abs(bank['w']).sum()), W_after=float(W),
                     bins=int(len(live)))
         return out, info
+
+    @staticmethod
+    def _empirical(bank, key, m, keys, rng):
+        """For each output key, a copy of one of the bin's particles whose
+        sign is the net's, chosen with probability proportional to |w|."""
+        ok = key >= 0
+        idx = np.flatnonzero(ok)
+        k_ok = key[idx]
+        w_ok = bank['w'][idx]
+        elig = np.where(np.sign(w_ok) == np.sign(m[k_ok]), np.abs(w_ok), 0.0)
+        order = np.argsort(k_ok, kind='stable')
+        ks, ws = k_ok[order], elig[order]
+        cs = np.cumsum(ws)
+        first = np.searchsorted(ks, keys, side='left')
+        last = np.searchsorted(ks, keys, side='right')
+        base = np.where(first > 0, cs[np.maximum(first - 1, 0)], 0.0)
+        base = np.where(first > 0, base, 0.0)
+        total = cs[last - 1] - base
+        target = base + rng.random(len(keys)) * total
+        j = np.searchsorted(cs, target, side='right')
+        j = np.clip(j, first, last - 1)
+        src = idx[order[j]]
+        return dict(r=bank['r'][src], u=bank['u'][src], E=bank['E'][src],
+                    tag=bank['tag'][src].astype(np.int32))
 
 
 # ---------------------------------------------------------------------------

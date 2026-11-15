@@ -401,6 +401,196 @@ Section~\ref{sec:convergence} is long only in units of collision generations, wh
 real figure-of-merit gap is the variance injected per unit of work, and history-based flights do not
 reduce it. They only change when it reaches fission.
 
+\subsection{Toward a speedup: the residual estimator's efficiency}\label{sec:res:speedup}
+
+The follow-up showed that the residual estimator sets the variance. This subsection measures that
+estimator's efficiency directly, searches its options, and makes the iteration cheaper. It then
+remeasures the whole method. The scans are in \code{examples/rmc/results/speedup}, made by
+\code{residual\_efficiency.py}; \code{speedup\_analysis.py} draws the figures.
+
+\paragraph{A measure of efficiency for the eigenvalue.} A generation's residual records enter the bank
+and reach fission over the following generations. To first order, their effect on $k$ is their total
+fission yield
+\begin{equation}
+Y=\big\langle 1,\;F\,(I-\mathcal S)^{-1}\hat r\big\rangle=\sum_i w_i\,\eta(\mathbf r_i,E_i),
+\end{equation}
+with $\eta$ the fission weight that a neutron emitted at $(\mathbf r,E)$ produces in its own
+history: an importance for $k$. Two steps build the estimate:
+\begin{itemize}
+\item $\eta$ is tabulated once, by field region and 60 energy bins, from history flights of
+  $2\times10^5$ states;
+\item one large sample ($5\times10^4$ to $10^6$ destinations per tag) gives
+  $\mathrm{Var}(Y)$ for $N=2000$ records per tag from its per-destination contributions.
+\end{itemize}
+$\mathrm{Var}(Y)$ times the sampling time measures the eigenvalue noise injected per second. Its
+ranking agrees with the full iteration wherever both were measured.
+
+\paragraph{Where the noise is.} In the Stage 8 configuration:
+\begin{itemize}
+\item the scattering residual carries $97\%$ of $\mathrm{Var}(Y)$; the pooled fission residual
+  carries $3\%$;
+\item within the scattering residual, fuel destinations above 100~keV account for $44\%$, and fuel
+  destinations in the resonance range (4~eV--10~keV) for $36\%$;
+\item at $J=8$ directions, about $60\%$ of the variance is direction noise: repeating the same
+  destinations with $J=32$ and $J=128$ leaves a floor of $\approx0.011$ (at $N=2000$);
+\item at $J=128$ the scattering residual is $4.5\%$ of the field's scattering emission in absolute
+  value: $4\%$ in the fuel and $1.2\%$ in the graphite (medians).
+\end{itemize}
+The largest single contributions come from destinations within $0.01$~cm of the pin surface at
+resonance energies, along the one or two directions that look into the graphite. There the
+moderator's unshielded flux meets the $^{238}$U scattering resonances.
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/speedup_scans.pdf}
+\caption{Variance of the scattering residual's fission yield per generation ($N=2000$) for the options
+tried. The direction, outgoing-energy ($\beta$), destination-by-volume and control scans vary the
+Stage 8 settings ($\beta=1$, cutoff $e^{-4}$; variance $0.06$ at $5\times10^4$ samples, $0.07$ at
+$10^6$). The skin, tabulated, cone and field scans vary the improved settings ($\beta=0.1$,
+cutoff $e^{-3}$; dotted line).}\label{fig:sp:scans}
+\end{figure}
+
+\paragraph{What the options do} (Figure~\ref{fig:sp:scans}, Table~\ref{tab:sp:scans}):
+\begin{itemize}
+\item \textbf{Outgoing-energy proposal.} Drawing 90\% of the outgoing energies from the region's
+  emission spectrum ($\beta=0.1$) instead of log-uniformly halves the variance. It also shortens the
+  heavy tail: the ten largest of $5\times10^4$ samples carry $12\%$ of the second moment instead
+  of $19\%$. This is the one large gain, and it has a second effect, described with the iteration
+  below.
+\item \textbf{Directions.} The variance falls with $J$ until the floor, and the cost rises with $J$.
+  Per unit time, $J=4$ to $8$ is best.
+\item \textbf{Destinations.}
+  \begin{itemize}
+  \item A skin proposal, which draws 20--40\% of the destinations at a log-uniform depth inside the
+    pin surface, removes the extreme tail (top-ten share $6\%$) but only $10\%$ of the variance.
+  \item A proposal tabulated from a pilot run (region $\times$ 100 energy bins,
+    $\propto\sqrt{n_b\,m_{2,b}}$) is worse. Its bins are far wider than the resonances, so it
+    misplaces the samples within them.
+  \end{itemize}
+\item \textbf{Controls.} The MG control on the same paths, more incident energies on the sampler
+  route, and a forward cone of directions for forward-peaked fast kernels leave the variance
+  unchanged or raise it. The MG control's production tracks the CE production closely overall
+  (correlation $0.99$), but not where the variance is: at the CE fine structure in energy.
+\item \textbf{The field.} 40 groups instead of 8, five times the MGXS statistics, or a $24\times24$
+  source-region mesh leave the variance unchanged. Within these options, neither the group
+  structure, the MGXS noise, nor the spatial resolution sets the residual's noise. Material-level
+  lifts and isotropic flat emission are what the field cannot represent near the pin surface.
+\end{itemize}
+
+\begin{table}[t]\centering\small
+\caption{Variance of the residual's fission yield per generation ($N=2000$ per tag) for each option:
+scattering ($s$) and fission ($f$), and the share of the scattering second moment carried by the
+ten largest samples.}\label{tab:sp:scans}
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+group & option & Var$(Y_s)$ & Var$(Y_f)$ & top ten\\
+\midrule
+\csname @@input\endcsname figures/speedup_scans.tex
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Engineering.} A residual sample's time is spent tracing backward paths: geometry, mesh
+crossings, cross sections and attenuation. Four changes make the scattering residual $3.5$ times
+faster (1.07~s to 0.31~s per 2000 samples), with identical results:
+\begin{itemize}
+\item a per-path cache of $\Sigma_t$ for each energy and material state, since a path alternates
+  among few materials;
+\item the field's energy bins found once per energy instead of once per segment;
+\item dense region tables per meshed cell instance, instead of hash lookups;
+\item an incremental regular-mesh traversal (Amanatides--Woo) in place of OpenMC's general
+  \code{bins\_crossed}, and one transcendental function per segment and energy instead of two.
+\end{itemize}
+The per-generation correction tally is not needed for $k$. Its field part is the same every
+generation up to the amplitudes, so it can be computed once. The $k$ runs below omit it.
+
+\begin{table}[t]\centering\small
+\caption{The iteration after the changes of this subsection, against the reference. The columns are:
+the number of replicas; $\Delta k$ with its standard error, from 10-generation batch means pooled over
+the replicas; $\overline{\Wabs}$; the per-generation spread of $k_n$; the active time per replica; and
+the $k$ figure of merit relative to OpenMC (replica spread of the reference). Unless stated
+otherwise, every run uses $N=2000$ per tag, $N_B=4\times10^4$, 40 inactive and 60 active
+generations, and the combined cancellation.}\label{tab:sp:runs}
+\setlength{\tabcolsep}{3.5pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+run & $n$ & $\Delta k$ (pcm) & $\overline{\Wabs}$ & $\sigma_{gen}$ & $T$ & FOM$_k$\\
+\midrule
+\csname @@input\endcsname figures/speedup_runs.tex
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\paragraph{The iteration, remeasured} (Table~\ref{tab:sp:runs}). With $b=a$, $\beta=0.1$, a cutoff of
+$e^{-3}$, $N_\delta=5\times10^4$ and the faster tracer:
+\begin{itemize}
+\item \textbf{Bias.} The eigenvalue bias at $N=2000$ falls from $+900$ to between $+120$ and
+  $+600$~pcm, depending on the seeds. Nine independent replicas of these settings (one set of three with smaller banks) give
+  $+350\pm125$~pcm.
+\item \textbf{Correlation.} The integrated autocorrelation time falls from $\approx21$ generations to
+  $\approx3$.
+\item \textbf{Figure of merit.} It rises from $0.005$ to $0.08$--$0.12$ of OpenMC's (batch-means
+  errors on both sides of the change), about $20$ times.
+\end{itemize}
+
+Ablations with paired seeds (3000--3002) tie the change in bias to the energy proposal: the baseline
+gives $+900$~pcm, $b=a$ with the cutoff $e^{-3}$ gives $+1130$, and $b=a$ with $\beta=0.1$ gives $-75$. The log-uniform proposal's
+heavy tail, a few samples carrying a large share of the second moment, did two things:
+\begin{itemize}
+\item it drove the long excursions of $k_n$ that made the error estimates so different;
+\item through the iteration's nonlinear normalization, it produced most of the bias.
+\end{itemize}
+
+At $N=8000$ the per-generation spread halves, and the figure of merit is $0.08$--$0.17$, depending on
+the replicas.
+
+\paragraph{The remaining bias.} At $N=8000$ the error of $k$ is small enough to expose a systematic
+offset. Six replicas give $+950\pm70$ and $+1070\pm100$~pcm (field placement).
+Figure~\ref{fig:sp:bias} shows how it builds up: $k_n$ starts near the reference while the bank is
+empty and rises over 20--30 generations, the time the scattering correction takes to reach fission.
+Several observations constrain its cause:
+\begin{itemize}
+\item \textbf{Placement.} Re-sampling netted particles from the bin's own particles of the net's sign
+  ('empirical' placement) lowers it to $+660\pm100$~pcm. Finer netting bins (12$\times$12 zones, 4
+  sub-bins per group) lower it to $+690$ (one replica).
+\item \textbf{Frequency.} Netting every second or fourth generation does not lower it in proportion
+  ($+985$ and $+650$, one replica each).
+\item \textbf{No netting.} Without netting the bank's absolute weight grows by the residual's injection
+  every generation (about 7 units), and the run fails after 65 generations.
+\item \textbf{The residual.} The scattering residual's mean fission yield from $10^6$ samples is
+  $+0.006\pm0.009$ (density route), $-0.002\pm0.044$ (density-free) and $+0.016\pm0.012$
+  ($\beta=1$). The routes agree, so no bias of the residual is visible at that precision.
+\end{itemize}
+So netting's projection explains part of the bias, but not all of it. Which other part of the
+iteration contributes is the next question.
+
+\begin{figure}[t]\centering
+\includegraphics[width=\textwidth]{figures/speedup_bias_buildup.pdf}
+\caption{$k_n$ by generation at $N=8000$ for four cancellation settings with the same seed (5-generation
+running means). The runs share their residual samples, so their fluctuations coincide. $k_n$ starts
+near the reference while the bank is empty, and rises over the 20--30 generations the scattering
+correction needs to reach fission. Empirical placement and finer netting lower the plateau, but do not
+remove it.}\label{fig:sp:bias}
+\end{figure}
+
+\paragraph{How far from a speedup.} The best configurations reach $0.1$--$0.17$ of analog Monte Carlo's
+figure of merit for $k$, a factor of 6--10 short of break-even. The remaining levers:
+\begin{itemize}
+\item \textbf{Fixed costs.} Python-side cancellation (about 20\% of a generation) and bank handling
+  could be moved to C++, a factor of about 1.3.
+\item \textbf{Larger $N$.} Amortizing the fixed costs further gives at most 1.5.
+\item \textbf{Fewer directions per unit of noise.} A per-stratum allocation of directions, more where
+  direction noise dominates (fuel above 10~keV), gives an estimated 1.2--1.5.
+\end{itemize}
+These multiply to about 3. Closing the rest needs a residual that is smaller where it matters: lifts
+resolved in space near the pin surface, or an anisotropic field emission. The measurements bound how
+small it must be. A scattering residual that is a fraction $\varepsilon$ of the scattering emission
+has an absolute fission yield of about $\varepsilon\,\bar n_c$ per unit of fission production, with
+$\bar n_c\approx37$ the number of collisions in a neutron's life. With $\varepsilon\approx4.5\%$
+here, that is about 1.7: larger than the production itself. The method beats analog Monte Carlo only
+when $\varepsilon\,\bar n_c\ll1$. In graphite that means a field accurate to well below 1\% locally;
+in light water, with $\bar n_c\approx20$, about twice that.
+
 \subsection{What optimization could recover}\label{sec:s8:projection}
 
 \begin{table}[t]\centering\small
@@ -483,27 +673,23 @@ The method runs. It is stable only with netting, and its pieces behave as design
 \item the correction tally with CE points reproduces the fission shape.
 \end{itemize}
 
-It is not yet competitive. Measured with nine independent replicas:
+After the speedup study (Section~\ref{sec:res:speedup}):
 \begin{itemize}
-\item its $k$ figure of merit is $0.0018$ of analog Monte Carlo's ($0.0033$ with $N=16000$);
-\item its fission-shape figure of merit is $\approx10^{-3}$ of analog's;
-\item it carries an eigenvalue bias of $+1050\pm360$~pcm at $N=2000$ and $+600\pm280$~pcm at
-  $N=16000$.
+\item the $k$ figure of merit is $0.08$--$0.17$ of analog Monte Carlo's, from $0.005$ (batch-means
+  errors on both): about 20 times better, but not yet a speedup;
+\item a better outgoing-energy proposal removes most of the bias at $N=2000$ and shortens the
+  correlation from about 21 generations to about 3, through the heavy tail it removes;
+\item a remaining eigenvalue bias of $+650$ to $+1000$~pcm appears at $N=8000$. It builds up as the
+  scattering correction matures, is reduced but not removed by better netting placement, and is the
+  first thing to settle.
 \end{itemize}
-After the engineering of Table~\ref{tab:impl:time} the $k$ figure of merit would be about $0.01$ of
-analog's.
 
-What sets the variance is the residual estimator's own noise: production-scale integration noise of
-the high term, plus an amplitude term that $b=a$ removes. The bank's absolute weight, the netting
-and the correlation between generations only carry or reflect it. Feasibility therefore rests on
-making each residual sample quieter and cheaper. Two orders of magnitude are needed, and the
-history-based and damped variants show that neither the iteration's structure nor its normalization
-offers them.
-
-The next stage should:
+What sets the variance is the size of the scattering residual: about $4.5\%$ of the scattering
+emission, which with 37 collisions per lifetime is more than the fission production. Neither more
+groups, better MGXS statistics nor a finer mesh changes it. The next stage should:
 \begin{enumerate}
-\item reduce the high term's integration noise per sample (stratified directions, a same-energy
-  CE/MG control);
-\item settle the bias with independent replicas at large $N$ and with finer netting;
-\item make the MG low term of the tally closed-form.
+\item find the rest of the bias (the netting projection explains part of it);
+\item reduce the residual near the pin surface, with spatially resolved lifts or anisotropic emission,
+  and measure the residual's size against the $\varepsilon\,\bar n_c\ll1$ criterion;
+\item move cancellation into C++ and allocate directions by stratum (about $3\times$ together).
 \end{enumerate}

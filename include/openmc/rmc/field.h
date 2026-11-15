@@ -12,6 +12,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "openmc/constants.h"
 #include "openmc/memory.h"
 #include "openmc/particle_data.h"
 #include "openmc/position.h"
@@ -67,6 +68,24 @@ public:
 
   int64_t locate(const GeometryState& p) const override;
   double evaluate(int64_t region, Tag t, double E) const override;
+
+  //! Region of every mesh bin of a meshed cell instance (-1 where none), or
+  //! nullptr for an instance without a mesh
+  const vector<int64_t>* dense_regions(int32_t cell_id, int32_t instance) const;
+
+  //! The group and fine-lift bin of an energy (-1 outside), for repeated
+  //! evaluate_bins() at one energy in many regions
+  void energy_bins(double E, int& g, int& i) const;
+  //! evaluate() with the bins of energy_bins()
+  double evaluate_bins(int64_t region, Tag t, int g, int i) const
+  {
+    if (region < 0 || g < 0 || i < 0 || lift_row_[region] < 0)
+      return 0.0;
+    const int64_t ti = static_cast<int64_t>(t);
+    double Q = emission_[(ti * n_regions() + region) * n_groups_ + g];
+    double h = lift_[(ti * n_lift_materials_ + lift_row_[region]) * n_fine_ + i];
+    return Q * h / (4.0 * PI);
+  }
   double mass(Tag t) const override { return mass_[static_cast<int>(t)]; }
 
   int64_t n_regions() const { return static_cast<int64_t>(lift_row_.size()); }
@@ -203,6 +222,8 @@ private:
   //! Mesh of each base region in the field: index into model::meshes, or -1
   //! for none. Base regions random ray never reached have no entry.
   std::unordered_map<Base, int32_t, BaseHash> mesh_of_base_;
+  std::unordered_map<Base, vector<int64_t>, BaseHash> dense_; //!< region by
+                                                              //!< mesh bin
   vector<int32_t> mesh_indices_; //!< distinct entries of mesh_of_base_ >= 0
   vector<int32_t> region_mesh_;  //!< [R], see region_mesh()
   Position box_lower_left_;

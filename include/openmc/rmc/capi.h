@@ -154,6 +154,22 @@ typedef struct {
   int sampler_control; //!< 0 none, 1 region (flux-difference)
   int region_samples;  //!< M_II forward samples of the region term
   int net;             //!< 0/1: one outgoing state carries the net (biased)
+  // Tabulated outgoing-energy proposal (rmc::OutgoingOptions::table)
+  const double* E_table_edges;
+  int64_t n_E_table_edges;
+  const double* E_table; //!< [n_regions * (n_E_table_edges - 1)]
+  int64_t n_E_table;
+  // Forward-cone directions (rmc::ResidualOptions::cone_*)
+  double cone_fraction;
+  double cone_kappa;
+  double cone_E0;
+  double cone_E1;
+  // Skin destinations (rmc::VoxelOptions::skin_*)
+  double skin_fraction;
+  double skin_x;
+  double skin_y;
+  double skin_radius;
+  double skin_dmin;
 } openmc_rmc_residual_config;
 
 //! Draw the records of n samples of tag (0 = s, 1 = f) with the loaded

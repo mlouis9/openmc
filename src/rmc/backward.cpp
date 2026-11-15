@@ -57,6 +57,12 @@ void BackwardFlux::evaluate_all(Position r, Direction u_back,
   bool hit_limit = false;
   if (n == 0)
     return;
+  xs_cache_.resize(n_ce * XS_CACHE);
+  xs_cache_n_.assign(n_ce, 0);
+  g_bin_.resize(n_ce);
+  i_bin_.resize(n_ce);
+  for (size_t e = 0; e < n_ce; ++e)
+    field_.energy_bins(E[e], g_bin_[e], i_bin_[e]);
 
   tracer_.begin(r, u_back);
   while (n_alive > 0) {
@@ -79,19 +85,43 @@ void BackwardFlux::evaluate_all(Position r, Direction u_back,
           continue;
         double sigma;
         if (e < n_ce) {
-          sigma = probe_.total(
-            mat, E[e], chunk_.sqrtkT[k], chunk_.density_mult[k]);
-          ++n_lookup;
+          // Sigma_t at this energy depends only on the segment's material
+          // state: look in the path's cache first
+          const double kT = chunk_.sqrtkT[k], dm = chunk_.density_mult[k];
+          XsCacheEntry* c = &xs_cache_[e * XS_CACHE];
+          int nc = xs_cache_n_[e], hit = -1;
+          for (int q = 0; q < nc; ++q)
+            if (c[q].mat == mat && c[q].sqrtkT == kT && c[q].dm == dm) {
+              hit = q;
+              break;
+            }
+          if (hit >= 0) {
+            sigma = c[hit].sigma;
+          } else {
+            sigma = probe_.total(mat, E[e], kT, dm);
+            ++n_lookup;
+            if (nc < XS_CACHE) {
+              c[nc] = {mat, kT, dm, sigma};
+              xs_cache_n_[e] = nc + 1;
+            } else {
+              c[n_lookup % XS_CACHE] = {mat, kT, dm, sigma};
+            }
+          }
         } else {
           // MG tables are for unit density; the cell instance scales them
           sigma = mg->sigma_t(mat, chunk_.sqrtkT[k], static_cast<int>(e - n_ce)) *
                   chunk_.density_mult[k];
         }
-        double w = T_[e] * attenuation_integral(sigma, l);
+        // One transcendental per segment and energy: e^{-x} - 1 gives both
+        // the attenuation integral and the transmission
+        double x = sigma * l;
+        double em1 = (x < 1e-6) ? -x * (1.0 - 0.5 * x + x * x / 6.0) : std::expm1(-x);
+        double integral = (x < 1e-6) ? l * (1.0 - 0.5 * x + x * x / 6.0) : -em1 / sigma;
+        double w = T_[e] * integral;
         if (region >= 0) {
           if (e < n_ce) {
-            psi_s[e] += w * field_.evaluate(region, Tag::s, E[e]);
-            psi_f[e] += w * field_.evaluate(region, Tag::f, E[e]);
+            psi_s[e] += w * field_.evaluate_bins(region, Tag::s, g_bin_[e], i_bin_[e]);
+            psi_f[e] += w * field_.evaluate_bins(region, Tag::f, g_bin_[e], i_bin_[e]);
           } else {
             // Group-integrated, isotropic: Q_g / (4 pi)
             int g = static_cast<int>(e - n_ce);
@@ -99,7 +129,7 @@ void BackwardFlux::evaluate_all(Position r, Direction u_back,
             mg_f[g] += w * field_.emission(region, Tag::f, g) / (4.0 * PI);
           }
         }
-        T_[e] *= std::exp(-sigma * l);
+        T_[e] *= 1.0 + em1;
 
         // Unbiased roulette: survive with probability T / cutoff and carry
         // on with T = cutoff, so the expected remaining tail is unchanged

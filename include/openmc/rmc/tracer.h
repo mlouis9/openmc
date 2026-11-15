@@ -102,6 +102,10 @@ private:
   bool ended_ {true};        //!< the path left through a vacuum boundary
   vector<int> bins_;         //!< scratch for Mesh::bins_crossed
   vector<double> fractions_; //!< scratch for Mesh::bins_crossed
+  int32_t last_cell_ {-1};   //!< cell id and instance of the last step,
+  int32_t last_inst_ {-1};   //!< with their mesh and region table
+  int32_t last_mesh_ {-2};
+  const vector<int64_t>* last_dense_ {nullptr};
 };
 
 } // namespace rmc

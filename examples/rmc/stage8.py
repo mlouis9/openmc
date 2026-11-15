@@ -66,20 +66,29 @@ class Stage8Backend(driver.OpenMCBackend):
         self.v = variant
         self.files = files
         self.rep = canc.Representation(rmc, files, mesh, n_sub=n_sub, coarsen=coarsen)
-        self.netting = (canc.BinnedNetting(self.rep, N_B, exact_low=True)
+        placement = variant.get('placement', 'field')
+        self.netting = (canc.BinnedNetting(self.rep, N_B, exact_low=(placement == 'field'),
+                                           placement=placement)
                         if variant.get('netting') else None)
         self.low_exact = set(variant.get('low_exact', set()))
         self.pool = canc.DestinationPooling(rmc, files) if variant.get('pooling') else None
         self.regional = canc.RegionalCancellation(rmc) if variant.get('regional') else None
-        self.tallier = canc.CorrectionTally(rmc, n_points=tally_points,
-                                            mg_points=tally_mg_points)
+        self.tallier = (canc.CorrectionTally(rmc, n_points=tally_points,
+                                             mg_points=tally_mg_points)
+                        if tally_points > 0 else None)
         self.nu = tally_mg_points > 0      # the low + correction tally is nu-fission
+        self.no_tally = tally_points <= 0  # eigenvalue only
         self._bank_tally = np.zeros(rmc.field_n_regions())
         self.info = {}
+        self.res_opts = {}   # per-tag overrides of the residual options
+        self._X_mg = None    # field_production: the MG part, once
+        self.net_every = 1   # netting every net_every generations
+        self.fp_points, self.fp_energies, self.k_mg = 10_000, 4, None
 
     def residual(self, t, n, a, b, k, seed):
         rmc = self.rmc
-        rec = rmc.residual_sample(t, n, seed=seed, **self.v['opts'][t])
+        rec = rmc.residual_sample(t, n, seed=seed, **{**self.v['opts'][t],
+                                                      **self.res_opts.get(t, {})})
         bb = list(b)
         if t in self.low_exact:
             bb['sf'.index(t)] = 0.0            # the low term enters at netting
@@ -114,7 +123,8 @@ class Stage8Backend(driver.OpenMCBackend):
     def cancel(self, cand, b, seed):
         info = dict(self.info)
         self.info = {}
-        if self.netting is None:
+        self._n_cancel = getattr(self, '_n_cancel', -1) + 1
+        if self.netting is None or self._n_cancel % self.net_every != 0:
             return cand, info or None
         # Low term per bin only for tags whose records carry none
         bl = tuple(b[i] if t in self.low_exact else 0.0 for i, t in enumerate('sf'))
@@ -122,7 +132,25 @@ class Stage8Backend(driver.OpenMCBackend):
         info['netting'] = ninfo
         return out, info
 
+    def field_production(self, a, seed):
+        """a_s X_s + a_f X_f: the CE nu-fission production of the field's
+        flux per source tag, as the exact MG production (k_MG <Q_f>, split by
+        tag in proportion to a one-off MG estimate) plus the CE - MG
+        difference on fresh backward paths (low variance: both share each
+        path)."""
+        rmc = self.rmc
+        if self._X_mg is None:
+            f, nf, sq, nm, dq = rmc.field_tally(200_000, 1, seed=123456789, mg=True)
+            split = nm.sum(axis=0) / nm.sum()
+            self._X_mg = self.k_mg * rmc.field_mass('f') * split
+        f, nf, sq, nm, dq = rmc.field_tally(self.fp_points, self.fp_energies, seed=seed,
+                                            mg=True)
+        X = self._X_mg + (nf - nm).sum(axis=0)
+        return float(a[0] * X[0] + a[1] * X[1])
+
     def tally(self, a, f, seed):
+        if self.no_tally:
+            return None
         X = self.tallier.field_part(a, seed)
         return ((X + self._bank_tally) / f).tolist()
 
@@ -183,6 +211,8 @@ def main():
     ap.add_argument('--inactive', type=int, default=5)
     ap.add_argument('--active', type=int, default=30)
     ap.add_argument('--N', type=int, default=2000)
+    ap.add_argument('--N-f', type=int, default=None,
+                    help='residual samples of tag f (default: --N)')
     ap.add_argument('--N-delta', type=int, default=20_000)
     ap.add_argument('--N-B', type=int, default=20_000)
     ap.add_argument('--tally-points', type=int, default=20_000)
@@ -191,8 +221,21 @@ def main():
     ap.add_argument('--fine-groups', type=int, nargs='*', default=[],
                     help='groups (ascending index) whose every fine lift bin is '
                          'its own netting energy bin (resonance-resolved netting)')
+    ap.add_argument('--res-beta', type=float, default=None,
+                    help='log-uniform weight of the outgoing-energy proposal (both tags)')
+    ap.add_argument('--res-cut', type=float, default=None,
+                    help='roulette cutoff of the backward tails, in optical depth')
+    ap.add_argument('--res-nd', type=int, nargs=2, default=None,
+                    help='directions per destination for tags s and f')
+    ap.add_argument('--net-every', type=int, default=1,
+                    help='apply netting every this many generations')
+    ap.add_argument('--placement', choices=['field', 'empirical'], default='field',
+                    help='where netting places re-sampled particles within a bin')
     ap.add_argument('--amplitudes', choices=['fixed', 'follow'], default='fixed',
                     help='field amplitudes b: fixed (1, 1), or follow a (b = a)')
+    ap.add_argument('--field-production', type=int, default=0,
+                    help='backward points per generation of the direct estimate of the '
+                         "field's fission production (0: through the fission residual)")
     ap.add_argument('--damping', type=float, default=1.0,
                     help='normalization damping (driver.Config.damping)')
     ap.add_argument('--seed-base', type=int, default=2000,
@@ -206,12 +249,23 @@ def main():
     ap.add_argument('--ref-batches', type=int, default=120)
     ap.add_argument('--ref-inactive', type=int, default=20)
     ap.add_argument('--out', default=None)
+    ap.add_argument('--field-groups', default=None,
+                    help='field of field_variants.field_files with this group structure '
+                         '(default: the 8-group field of the controlled study)')
+    ap.add_argument('--mgxs-particles', type=int, default=20_000)
+    ap.add_argument('--field-mesh', type=int, default=12,
+                    help='source-region mesh per side of the field variant')
     ap.add_argument('--run-name', default=None,
                     help='name of the working subdirectory (default: the variant), so '
                          'that runs of one variant can run at once')
     args = ap.parse_args()
 
-    w, files, k_mg = cs.exact_volume_files(args.work)
+    if args.field_groups:
+        import field_variants as fv
+        w, files, k_mg = fv.field_files(args.work, args.field_groups, args.mgxs_particles,
+                                        n_per_side=args.field_mesh)
+    else:
+        w, files, k_mg = cs.exact_volume_files(args.work)
     if args.reference:
         res = reference(w.model, w.mesh, files, files['work'] / 'stage8_reference',
                         args.ref_particles, args.ref_batches, args.ref_inactive,
@@ -227,13 +281,27 @@ def main():
         if args.fine_groups:
             n_sub = np.full(len(rmc.field_groups()) - 1, args.n_sub)
             n_sub[args.fine_groups] = 1 << 30
-        backend = Stage8Backend(files, w.mesh, VARIANTS[args.variant], args.N_B,
+        backend = Stage8Backend(files, w.mesh, {**VARIANTS[args.variant],
+                                                'placement': args.placement}, args.N_B,
                                 args.tally_points, args.tally_mg_points,
                                 n_sub, tuple(args.coarsen))
+        backend.k_mg = k_mg
+        backend.net_every = args.net_every
+        backend.fp_points = max(args.field_production, 1)
+        for i, t in enumerate('sf'):
+            o = {}
+            if args.res_beta is not None:
+                o['beta'] = args.res_beta
+            if args.res_cut is not None:
+                o['cutoff'] = math.exp(-args.res_cut)
+            if args.res_nd is not None:
+                o['n_directions'] = args.res_nd[i]
+            backend.res_opts[t] = o
         for rep in range(args.replicas):
-            cfg = driver.Config(N={'s': args.N, 'f': args.N}, N_delta=args.N_delta,
+            cfg = driver.Config(N={'s': args.N, 'f': args.N_f or args.N}, N_delta=args.N_delta,
                                 N_B=args.N_B, seed=args.seed_base + rep,
                                 damping=args.damping,
+                                field_production=args.field_production > 0,
                                 amplitudes=(driver.FollowAmplitudes()
                                             if args.amplitudes == 'follow'
                                             else driver.FixedAmplitudes()))

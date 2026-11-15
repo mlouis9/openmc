@@ -96,6 +96,11 @@ FrozenField::FrozenField(const std::string& field_file,
   auto h_f = read_vec<double>(lf, "h_f");
   if (object_exists(lf, "h_phi"))
     lift_phi_ = read_vec<double>(lf, "h_phi");
+  // Optional: one lift row per field region (zone lifts), overriding the
+  // row of the region's material
+  vector<int32_t> region_rows;
+  if (object_exists(lf, "region_rows"))
+    region_rows = read_vec<int32_t>(lf, "region_rows");
   file_close(lf);
   field_file_ = field_file;
   n_fine_ = static_cast<int>(fine_edges_.size()) - 1;
@@ -191,6 +196,12 @@ FrozenField::FrozenField(const std::string& field_file,
           fmt::format("RMC field: no lift for material {}.", material_id[r]));
       }
       lift_row_[r] = it->second;
+      if (!region_rows.empty()) {
+        if (static_cast<int64_t>(region_rows.size()) != R ||
+            region_rows[r] < 0 || region_rows[r] >= n_lift_materials_)
+          fatal_error("RMC field: invalid region_rows in the lift file.");
+        lift_row_[r] = region_rows[r];
+      }
       auto im = model::material_map.find(material_id[r]);
       if (im != model::material_map.end())
         region_material_[r] = im->second;
@@ -209,6 +220,28 @@ FrozenField::FrozenField(const std::string& field_file,
     mass_[0] = mass_[1] = std::nan("");
   if (key_to_region_.size() != static_cast<size_t>(R))
     fatal_error("RMC field: duplicate region keys.");
+
+  // Dense region tables per meshed cell instance, for the tracer's lookups
+  for (const auto& [base, mesh_idx] : mesh_of_base_) {
+    if (mesh_idx < 0)
+      continue;
+    vector<int64_t> v(model::meshes[mesh_idx]->n_bins(), -1);
+    dense_.emplace(base, std::move(v));
+  }
+  for (int64_t r = 0; r < R; ++r) {
+    if (mesh_bin[r] < 0)
+      continue;
+    auto it = dense_.find(Base {cell_id[r], instance[r]});
+    if (it != dense_.end() && mesh_bin[r] < static_cast<int64_t>(it->second.size()))
+      it->second[mesh_bin[r]] = r;
+  }
+}
+
+const vector<int64_t>* FrozenField::dense_regions(
+  int32_t cell_id, int32_t instance) const
+{
+  auto it = dense_.find(Base {cell_id, instance});
+  return (it == dense_.end()) ? nullptr : &it->second;
 }
 
 int32_t FrozenField::mesh_of(int32_t cell_id, int32_t instance) const
@@ -263,6 +296,12 @@ double FrozenField::evaluate(int64_t region, Tag t, double E) const
   double Q = emission_[(ti * R + region) * n_groups_ + g];
   double h = lift_[(ti * n_lift_materials_ + lift_row_[region]) * n_fine_ + i];
   return Q * h / (4.0 * PI);
+}
+
+void FrozenField::energy_bins(double E, int& g, int& i) const
+{
+  g = bin_index(group_edges_, E);
+  i = bin_index(fine_edges_, E);
 }
 
 int FrozenField::group(double E) const
