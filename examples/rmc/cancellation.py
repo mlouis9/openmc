@@ -287,8 +287,114 @@ class BinnedNetting:
         j = np.searchsorted(cs, target, side='right')
         j = np.clip(j, first, last - 1)
         src = idx[order[j]]
-        return dict(r=bank['r'][src], u=bank['u'][src], E=bank['E'][src],
-                    tag=bank['tag'][src].astype(np.int32))
+        out = {key: v[src] for key, v in bank.items() if key != 'w'}
+        out['tag'] = out['tag'].astype(np.int32)
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Exact: grouped cancellation at fission births (deterministic mixture)
+# ---------------------------------------------------------------------------
+
+RECORD_KEYS = ('rk', 'rE', 'ru', 'rn')
+
+
+def with_records(bank, kind=-1, E=None, u=None, nuclide=None):
+    """The bank with emission-record columns: rk (-1 directional particle, 0
+    isotropic at the sampled energy, 1 stationary-target elastic scattering),
+    rE (incident energy for rk = 1), ru (incident direction), rn (nuclide)."""
+    n = len(bank['w'])
+    out = dict(bank)
+    out['rk'] = np.full(n, kind, dtype=np.int32) if np.isscalar(kind) else kind.astype(np.int32)
+    out['rE'] = np.zeros(n) if E is None else E
+    out['ru'] = np.zeros((n, 3)) if u is None else u
+    out['rn'] = np.full(n, -1, dtype=np.int32) if nuclide is None else nuclide.astype(np.int32)
+    return out
+
+
+# Elastic scattering is off a stationary target above this incident energy
+# (400 kT at 293.6 K is 10.1 eV; below it the target moves or is bound)
+E_STATIONARY = 11.0
+
+
+def child_records(children, aux):
+    """Emission records of the children of flights: a fission birth is
+    isotropic at its sampled energy; an elastic scattering above E_STATIONARY
+    keeps its incident energy, direction, and nuclide; every other child is
+    a directional particle."""
+    elastic = (aux['mt'] == 2) & (aux['E_in'] > E_STATIONARY)
+    kind = np.where(children['tag'] == 1, 0, np.where(elastic, 1, -1))
+    return with_records(children, kind=kind, E=aux['E_in'], u=aux['u_in'],
+                        nuclide=aux['nuclide'])
+
+
+class GroupedFissionCancellation:
+    """Fission children of grouped emission records get the weight
+    sum_j J_j(y) / sum_j m_j q_j(y) over their parent's group, evaluated at
+    the candidate y = (site, fissioning nuclide, emitted energy)
+    (rmc.grouped_fission_weights). Groups are fixed before the flights from
+    the input bank only: eligible records (rk >= 0) sorted by zone, kind, and
+    energy decade, cut into runs of group_size. Only candidates whose own
+    flight was shorter than d_max are reweighted, with the connection sums
+    over reflected paths shorter than d_max; every other child keeps its
+    ordinary weight. Exact in expectation for any grouping."""
+
+    def __init__(self, rmc, rep, d_max=3.0, group_size=8):
+        self.rmc, self.rep, self.d_max, self.g = rmc, rep, d_max, group_size
+
+    def groups(self, bank, rng):
+        """Group index of every bank entry (-1 ungrouped) and the member
+        lists (CSR)."""
+        n = len(bank['w'])
+        el = np.flatnonzero(bank['rk'] >= 0)
+        gid = np.full(n, -1, dtype=np.int64)
+        if len(el) == 0:
+            return gid, np.zeros(1, dtype=np.int64), np.zeros(0, dtype=np.int64)
+        reg = np.maximum(self.rmc.field_locate(bank['r'][el]), 0)
+        zone = self.rep.zone[reg]
+        E = np.where(bank['rk'][el] == 1, bank['rE'][el], bank['E'][el])
+        dec = np.floor(np.log10(np.maximum(E, 1e-5))).astype(np.int64)
+        order = np.lexsort((rng.random(len(el)), dec, bank['rk'][el], zone))
+        members = el[order]
+        n_g = (len(members) + self.g - 1) // self.g
+        gid[members] = np.arange(len(members)) // self.g
+        offset = np.minimum(np.arange(n_g + 1) * self.g, len(members)).astype(np.int64)
+        return gid, offset, members
+
+    def __call__(self, bank, children, aux, gid, offset, members, n_flights, k):
+        rmc = self.rmc
+        par = aux['parent']
+        cand = np.flatnonzero((children['tag'] == 1) & (aux['path'] < self.d_max) &
+                              (gid[par] >= 0))
+        info = dict(fission_children=int((children['tag'] == 1).sum()),
+                    eligible=int(len(cand)))
+        f_all = children['tag'] == 1
+        info['W_fission_before'] = float(np.abs(children['w'][f_all]).sum())
+        if len(cand) == 0:
+            info['W_fission_after'] = info['W_fission_before']
+            return children, info
+        g = gid[par[cand]]
+        # CSR of each candidate's group members
+        sizes = offset[g + 1] - offset[g]
+        coff = np.r_[0, np.cumsum(sizes)].astype(np.int64)
+        cmem = np.concatenate([members[offset[q]:offset[q + 1]] for q in g])
+        W_abs = float(np.abs(bank['w']).sum())
+        rec = dict(r=bank['r'], kind=bank['rk'],
+                   E=np.where(bank['rk'] == 1, bank['rE'], bank['E']), u=bank['ru'],
+                   nuclide=bank['rn'], w=bank['w'],
+                   m=n_flights * np.abs(bank['w']) / W_abs)
+        W, ok = rmc.grouped_fission_weights(children['r'][cand], aux['nuclide'][cand],
+                                            children['E'][cand], coff, cmem, rec,
+                                            self.d_max, k)
+        out = dict(children)
+        w = children['w'].copy()
+        w[cand[ok]] = W[ok]
+        out['w'] = w
+        info.update(reweighted=int(ok.sum()),
+                    W_eligible_before=float(np.abs(children['w'][cand[ok]]).sum()),
+                    W_eligible_after=float(np.abs(W[ok]).sum()),
+                    W_fission_after=float(np.abs(w[f_all]).sum()))
+        return out, info
 
 
 # ---------------------------------------------------------------------------

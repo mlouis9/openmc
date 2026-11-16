@@ -74,7 +74,8 @@ for _name in ('openmc_rmc_field_groups', 'openmc_rmc_residual_sample',
               'openmc_rmc_bank_size', 'openmc_rmc_bank_get', 'openmc_rmc_bank_free',
               'openmc_rmc_propagate', 'openmc_rmc_residual_records_aux',
               'openmc_rmc_flight_children', 'openmc_rmc_propagate_aux',
-              'openmc_rmc_field_production'):
+              'openmc_rmc_field_production', 'openmc_rmc_flight_children_incident',
+              'openmc_rmc_grouped_fission_weights'):
     _fn = getattr(_dll, _name)
     _fn.restype, _fn.errcheck = c_int, _error_handler
 
@@ -785,15 +786,49 @@ def near_kernel(x, xp, E, d_max):
     return out
 
 
-def field_production(n_points, n_E=4, tail='roulette', cutoff=math.exp(-4.0), seed=1):
+def field_production(n_points, n_E=4, tail='roulette', cutoff=math.exp(-4.0), seed=1,
+                     score='nu-fission'):
     """CE nu-fission production of the field's first-flight flux per source
     tag, X[2], and the variance of each estimate, from backward points drawn
-    from the field's own lifted MG fission rate (needs the MG tables)."""
+    from the field's own lifted MG fission rate (needs the MG tables). With
+    score='loss', the net loss rate instead: absorption less the gain of
+    multiplying scatterings, in every material."""
     X, var = np.zeros(2), np.zeros(2)
     _dll.openmc_rmc_field_production(c_int64(int(n_points)), c_int(int(n_E)),
                                      c_int(TAILS[tail]), c_double(cutoff),
-                                     c_uint64(int(seed)), _dp(X), _dp(var))
+                                     c_uint64(int(seed)), _dp(X), _dp(var),
+                                     c_int({'nu-fission': 0, 'loss': 1}[score]))
     return X, var
+
+
+def grouped_fission_weights(x, nuclide, E_f, offset, member, records, d_max, k):
+    """Grouped cancellation at fission births (rmc::grouped_fission_weight):
+    for each candidate (site x[n, 3], fissioning nuclide, emitted energy) and
+    its group member[offset[c]:offset[c+1]] of emission records, the weight
+    sum J_j / sum m_j q_j. records: dict of r [M, 3], kind, E, u [M, 3],
+    nuclide, w, m. Returns (W, ok)."""
+    x = np.ascontiguousarray(x, dtype=float)
+    n = len(E_f)
+    nuclide = np.ascontiguousarray(nuclide, dtype=np.int32)
+    E_f = np.ascontiguousarray(E_f, dtype=float)
+    offset = np.ascontiguousarray(offset, dtype=np.int64)
+    member = np.ascontiguousarray(member, dtype=np.int64)
+    rr = np.ascontiguousarray(records['r'], dtype=float)
+    rk = np.ascontiguousarray(records['kind'], dtype=np.int32)
+    rE = np.ascontiguousarray(records['E'], dtype=float)
+    ru = np.ascontiguousarray(records['u'], dtype=float)
+    rn = np.ascontiguousarray(records['nuclide'], dtype=np.int32)
+    rw = np.ascontiguousarray(records['w'], dtype=float)
+    rm = np.ascontiguousarray(records['m'], dtype=float)
+    W = np.zeros(n)
+    ok = np.zeros(n, dtype=np.int32)
+    ip = lambda a: a.ctypes.data_as(POINTER(c_int))
+    lp = lambda a: a.ctypes.data_as(POINTER(c_int64))
+    _dll.openmc_rmc_grouped_fission_weights(
+        c_int64(n), _dp(x), ip(nuclide), _dp(E_f), lp(offset), lp(member),
+        c_int64(len(rw)), _dp(rr), ip(rk), _dp(rE), _dp(ru), ip(rn), _dp(rw), _dp(rm),
+        c_double(d_max), c_double(k), _dp(W), ip(ok))
+    return W, ok.astype(bool)
 
 
 def propagate_aux(bank, n, k, seed=1, out=None, children=True, region_tally=True,
@@ -807,7 +842,7 @@ def propagate_aux(bank, n, k, seed=1, out=None, children=True, region_tally=True
         out = Bank()
     R = field_n_regions()
     rf, rnf = np.zeros(max(R, 1)), np.zeros(max(R, 1))
-    stats = np.zeros(7)
+    stats = np.zeros(10)
     nc = c_int64()
     _dll.openmc_rmc_propagate_aux(c_int32(bank.handle), c_int64(int(n)), c_double(k),
                                   c_uint64(int(seed)), c_int32(out.handle),
@@ -820,8 +855,13 @@ def propagate_aux(bank, n, k, seed=1, out=None, children=True, region_tally=True
         _dll.openmc_rmc_flight_children(aux['parent'].ctypes.data_as(POINTER(c_int64)),
                                         _dp(aux['path']),
                                         aux['nuclide'].ctypes.data_as(POINTER(c_int)))
+        aux['E_in'] = np.empty(m)
+        aux['u_in'] = np.empty((m, 3))
+        aux['mt'] = np.empty(m, dtype=np.int32)
+        _dll.openmc_rmc_flight_children_incident(
+            _dp(aux['E_in']), _dp(aux['u_in']), aux['mt'].ctypes.data_as(POINTER(c_int)))
     aux['region_fission'] = rf[:R]
     aux['region_nu_fission'] = rnf[:R]
     names = ('flights', 'leaked', 'captured', 'scattered', 'fissions', 'W_abs',
-             'collisions')
+             'collisions', 'absorption', 'multiplied', 'nu_fission')
     return out, dict(zip(names, stats)), aux

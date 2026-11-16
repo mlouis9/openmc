@@ -98,6 +98,21 @@ class Config:
     # Estimate the field's fission production directly (backend
     # field_production) instead of through the sampled fission residual's mass
     field_production: bool = False
+    # Eigenvalue update. 'production': k_{n+1} = k_n g, the ratio of
+    # successive fission productions. 'balance': each generation estimates
+    # the production P_n and the net loss L_n (absorption less the gain of
+    # multiplying scatterings) of its own flux; both tags are normalized by
+    # the production alone, and k_{n+1} = sum P / sum L over the last
+    # balance_window generations (all of them if 0). The balance estimate
+    # has no memory of earlier eigenvalues: a generation's noise enters the
+    # sums once instead of being carried by k for a neutron lifetime. Needs
+    # backend.field_loss and backend.bank_balance.
+    k_update: str = 'production'
+    balance_window: int = 0
+    # Count the bank's fission production with the flights' collision
+    # estimator (backend.bank_balance) instead of the fission children's
+    # weights
+    collision_production: bool = False
 
 
 @dataclass
@@ -108,6 +123,7 @@ class State:
     bank: object
     n: int = 0
     P: float = 1.0      # production of this state relative to unit (damping)
+    balance: list = field(default_factory=list)   # (P_n, L_n) of past generations
 
 
 def seed_of(base, n, label):
@@ -151,22 +167,33 @@ def generation(state, backend, cfg):
     # directly, and only the bank's fission children are counted from the
     # candidate; both forms have the same expectation.
     field_f = b[1] * backend.field_mass('f')
+    bank_bal = backend.bank_balance() if hasattr(backend, 'bank_balance') else None
     if cfg.field_production and hasattr(backend, 'field_production'):
+        bank_P = bank_bal[0] if cfg.collision_production else k * children_f
         f = backend.field_production(state.a, seed_of(cfg.seed, n, 'field_production')) \
-            + k * children_f
+            + bank_P
     else:
         f = k * (field_f + backend.tag_sum(cand, 'f'))
     if not f > 0.0:
         raise EstimatorFailure(f'generation {n}: fission production f = {f}')
     g = f ** cfg.damping
-    k_next = k * g
+    balance, loss = state.balance, None
+    if cfg.k_update == 'balance':
+        loss = backend.field_loss(state.a, seed_of(cfg.seed, n, 'field_loss')) + bank_bal[1]
+        balance = (balance + [(f, loss)])[-cfg.balance_window:]
+        k_next = sum(x[0] for x in balance) / sum(x[1] for x in balance)
+        if not k_next > 0.0:
+            raise EstimatorFailure(f'generation {n}: balance eigenvalue {k_next}')
+    else:
+        k_next = k * g
     s_s, s_f = 1.0 / g, k / (k_next * g)
     cand = backend.scale(cand, s_s, s_f)
     a_next = (b[0] * s_s, b[1] * s_f)
 
     # Generation estimate: production after one generation over production
     # before it (state.P = 1 without damping)
-    diag = dict(n=n, k=k, k_next=k * f / state.P, f=f, a_s=state.a[0], a_f=state.a[1],
+    diag = dict(n=n, k=k, k_next=k * f / state.P, f=f, loss=loss,
+                k_balance=None if loss is None else f / loss, a_s=state.a[0], a_f=state.a[1],
                 b_s=b[0], b_f=b[1],
                 rho=k * (field_f + residual_f) / f,
                 W_abs=backend.abs_weight(cand), sum_s=backend.tag_sum(cand, 's'),
@@ -180,7 +207,7 @@ def generation(state, backend, cfg):
     cand = backend.resample(cand, cfg.N_B, seed_of(cfg.seed, n, 'resample'))
     diag['size_resampled'] = backend.size(cand)
     diag['time'] = time.perf_counter() - t0
-    return State(k=k_next, a=a_next, b=b, bank=cand, n=n + 1, P=f / g), diag
+    return State(k=k_next, a=a_next, b=b, bank=cand, n=n + 1, P=f / g, balance=balance), diag
 
 
 def run(backend, cfg, k0, n_generations, state=None, callback=None):
@@ -251,7 +278,19 @@ class ToyBackend:
 
     def propagate(self, bank, n, k, seed):
         Ss, Ff = self._produce(bank['s'], bank['f'], k)
+        # Production and net loss of the bank's flux: what enters a flight
+        # either scatters or is lost
+        self._balance = (k * Ff.sum(), bank['s'].sum() + bank['f'].sum() - Ss.sum())
         return {'s': Ss, 'f': Ff}
+
+    def bank_balance(self):
+        return self._balance
+
+    def field_loss(self, a, seed):
+        toy = self.toy
+        Qs, Qf = a[0] * toy.us, a[1] * toy.uf
+        Ss, _ = self._produce(Qs, Qf, 1.0)
+        return float(Qs.sum() + Qf.sum() - Ss.sum())
 
 
 # ---------------------------------------------------------------------------

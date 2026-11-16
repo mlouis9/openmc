@@ -53,6 +53,12 @@ VARIANTS = {
     # History-based flights: a generation is fission to fission. The regional
     # kernel needs isotropic tag-f parents of each child, which a history
     # no longer has, so it is left out.
+    # Grouped cancellation at fission births (deterministic mixture over
+    # emission records), without and with netting
+    'grouped': dict(opts={'s': DENSITY_ROUTE, 'f': DENSITY_FREE_F}, pooling=True,
+                    grouped=True),
+    'grouped_net': dict(opts={'s': DENSITY_ROUTE, 'f': DENSITY_FREE_F}, pooling=True,
+                        grouped=True, netting=True),
     'history': dict(opts={'s': DENSITY_ROUTE, 'f': DENSITY_FREE_F}, pooling=True,
                     netting=True, history=True),
 }
@@ -73,6 +79,8 @@ class Stage8Backend(driver.OpenMCBackend):
         self.low_exact = set(variant.get('low_exact', set()))
         self.pool = canc.DestinationPooling(rmc, files) if variant.get('pooling') else None
         self.regional = canc.RegionalCancellation(rmc) if variant.get('regional') else None
+        self.grouped = (canc.GroupedFissionCancellation(rmc, self.rep)
+                        if variant.get('grouped') else None)
         self.tallier = (canc.CorrectionTally(rmc, n_points=tally_points,
                                              mg_points=tally_mg_points)
                         if tally_points > 0 else None)
@@ -83,6 +91,8 @@ class Stage8Backend(driver.OpenMCBackend):
         self.res_opts = {}   # per-tag overrides of the residual options
         self._X_mg = None    # field_production: the MG part, once
         self._fp_sum, self._fp_n = np.zeros(2), 0
+        self._fl_sum, self._fl_n, self.fl_points = np.zeros(2), 0, 5000
+        self._flight_stats = None
         self.net_every = 1   # netting every net_every generations
         self.fp_points, self.fp_energies, self.k_mg = 10_000, 4, None
 
@@ -97,25 +107,44 @@ class Stage8Backend(driver.OpenMCBackend):
         if t == 'f' and self.pool is not None:
             out, info = self.pool(rec, w, n, b[1], np.random.default_rng(seed))
             self.info['pooling'] = info
-            return out
+            return self._rec(out)
         keep = w != 0.0
-        return dict(r=rec['r'][keep], u=rec['u'][keep], E=rec['E'][keep],
-                    w=w[keep], tag=rec['tag'][keep].astype(np.int32))
+        return self._rec(dict(r=rec['r'][keep], u=rec['u'][keep], E=rec['E'][keep],
+                              w=w[keep], tag=rec['tag'][keep].astype(np.int32)))
+
+    def _rec(self, bank):
+        """Fresh residual particles are directional (no emission record)."""
+        return canc.with_records(bank) if self.grouped is not None else bank
+
+    def empty(self):
+        return self._rec(driver.OpenMCBackend.empty())
 
     def propagate(self, bank, n, k, seed):
         rmc = self.rmc
+        self._flight_stats = None
         if len(bank['w']) == 0:
             self._bank_tally = np.zeros(rmc.field_n_regions())
             return self.empty()
-        b = rmc.Bank(**bank)
+        core = {key: bank[key] for key in ('r', 'u', 'E', 'w', 'tag')}
+        b = rmc.Bank(**core)
+        if self.grouped is not None:
+            gid, goff, gmem = self.grouped.groups(bank, np.random.default_rng(seed + 2))
         out, st, aux = rmc.propagate_aux(b, n, k, seed=seed,
-                                         children=self.regional is not None,
+                                         children=(self.regional is not None or
+                                                   self.grouped is not None),
                                          history=bool(self.v.get('history')))
         arr = out.arrays()
         out.free()
         b.free()
+        if self.grouped is not None:
+            arr, ginfo = self.grouped(bank, arr, aux, gid, goff, gmem, n, k)
+            self.info['grouped'] = ginfo
+            # The children's own records: elastic scattering keeps its
+            # incident state, a fission birth is isotropic at its energy
+            arr = canc.child_records(arr, aux)
         self._bank_tally = aux['region_nu_fission'] if self.nu else aux['region_fission']
         self.info['flights'] = st
+        self._flight_stats = st
         if self.regional is not None:
             arr, info = self.regional(bank, arr, aux, np.random.default_rng(seed + 1))
             self.info['regional'] = info
@@ -131,6 +160,8 @@ class Stage8Backend(driver.OpenMCBackend):
         bl = tuple(b[i] if t in self.low_exact else 0.0 for i, t in enumerate('sf'))
         out, ninfo = self.netting(cand, bl, seed)
         info['netting'] = ninfo
+        if self.grouped is not None and 'rk' not in out:
+            out = canc.with_records(out)       # field placement: no records
         return out, info
 
     def field_production(self, a, seed):
@@ -148,6 +179,26 @@ class Stage8Backend(driver.OpenMCBackend):
         self._fp_n += 1
         X = self._fp_sum / self._fp_n
         return float(a[0] * X[0] + a[1] * X[1])
+
+    def field_loss(self, a, seed):
+        """a_s L_s + a_f L_f: the net loss rate (absorption less the gain of
+        multiplying scatterings) of the field's first-flight flux per source
+        tag, a running mean like field_production."""
+        L, _ = self.rmc.field_production(self.fl_points, self.fp_energies, seed=seed,
+                                         cutoff=math.exp(-3), score='loss')
+        self._fl_sum = self._fl_sum + L
+        self._fl_n += 1
+        L = self._fl_sum / self._fl_n
+        return float(a[0] * L[0] + a[1] * L[1])
+
+    def bank_balance(self):
+        """(production, net loss) of the last flights' flux: collision
+        estimates of nu-fission and absorption, less the analog gain of
+        multiplying scatterings."""
+        st = self._flight_stats
+        if st is None:
+            return 0.0, 0.0
+        return st['nu_fission'], st['absorption'] - st['multiplied']
 
     def tally(self, a, f, seed):
         if self.no_tally:
@@ -235,6 +286,10 @@ def main():
                     help='image roulette floor of the scattering residual')
     ap.add_argument('--res-nd', type=int, nargs=2, default=None,
                     help='directions per destination for tags s and f')
+    ap.add_argument('--group-size', type=int, default=8,
+                    help='records per group of the grouped fission cancellation')
+    ap.add_argument('--group-dmax', type=float, default=3.0,
+                    help='longest path (cm) of the grouped fission cancellation')
     ap.add_argument('--net-every', type=int, default=1,
                     help='apply netting every this many generations')
     ap.add_argument('--placement', choices=['field', 'empirical'], default='field',
@@ -244,6 +299,16 @@ def main():
     ap.add_argument('--field-production', type=int, default=0,
                     help='backward points per generation of the direct estimate of the '
                          "field's fission production (0: through the fission residual)")
+    ap.add_argument('--k-update', choices=['production', 'balance'], default='production',
+                    help='eigenvalue update (driver.Config.k_update)')
+    ap.add_argument('--balance-window', type=int, default=0,
+                    help='generations in the balance sums (0: all)')
+    ap.add_argument('--field-loss', type=int, default=5000,
+                    help="backward points per generation of the field's net loss rate "
+                         '(balance update)')
+    ap.add_argument('--collision-production', action='store_true',
+                    help="the bank's fission production from the flights' collision "
+                         'estimator')
     ap.add_argument('--damping', type=float, default=1.0,
                     help='normalization damping (driver.Config.damping)')
     ap.add_argument('--seed-base', type=int, default=2000,
@@ -305,7 +370,10 @@ def main():
                                 n_sub, tuple(args.coarsen))
         backend.k_mg = k_mg
         backend.net_every = args.net_every
+        if backend.grouped is not None:
+            backend.grouped.g, backend.grouped.d_max = args.group_size, args.group_dmax
         backend.fp_points = max(args.field_production, 1)
+        backend.fl_points = args.field_loss
         ein_table = None
         if args.res_ein is not None:
             import residual_efficiency as reff
@@ -328,9 +396,12 @@ def main():
             backend.res_opts[t] = o
         for rep in range(args.replicas):
             backend._fp_sum, backend._fp_n = np.zeros(2), 0
+            backend._fl_sum, backend._fl_n = np.zeros(2), 0
             cfg = driver.Config(N={'s': args.N, 'f': args.N_f or args.N}, N_delta=args.N_delta,
                                 N_B=args.N_B, seed=args.seed_base + rep,
-                                damping=args.damping,
+                                damping=args.damping, k_update=args.k_update,
+                                balance_window=args.balance_window,
+                                collision_production=args.collision_production,
                                 field_production=args.field_production > 0,
                                 amplitudes=(driver.FollowAmplitudes()
                                             if args.amplitudes == 'follow'
@@ -341,6 +412,7 @@ def main():
             def cb(state, d, rep=rep, rows=rows):
                 rows.append(d)
                 print(f"  {args.variant} rep {rep} gen {d['n']:3d}  k {d['k_next']:.5f}  "
+                      + (f"k_bal {d['k_balance']:.5f}  " if d['k_balance'] else '') +
                       f"W_abs {d['W_abs']:.4g}  bank {d['size']} -> "
                       f"{d['size_resampled']}  {d['time']:.1f} s", flush=True)
             try:

@@ -126,14 +126,22 @@ eigenvalue calculation. Section~\ref{sec:res:stage8} reports it, with its follow
   its backward traces. The scattering residual's variance at equal time falls to a third, and the
   bank's absolute weight falls below the fission production.
 \item \textbf{History-based flights} cost more than they save.
+\item \textbf{Grouped cancellation at fission births} (the deferred-record scheme) is exact, and
+  removes three quarters of the eligible fission weight. But fission births are $2\%$ of the bank's
+  weight, and $7$--$42\%$ of them are eligible; without netting the bank grows as before.
+\item \textbf{Balance eigenvalue.} $k=\sum P/\sum L$ from each generation's production and net loss
+  replaces $k_{n+1}=k_nf_n$. The replica spread falls from $0.0024$ to $0.0010$ at equal cost.
 \end{itemize}
 
-\paragraph{Verdict.} The method is unbiased within about 80~pcm, and its $k$ figure of merit is
-$0.09$--$0.16$ of analog Monte Carlo's on this problem: not a speedup. The limit is no longer the
-scattering residual, nor the CE fission production of the field's first-flight flux, which a new
-importance-sampled estimator gives 150--230 times more efficiently (Section~\ref{sec:res:X}). It
-is the eigenvalue update $k_{n+1}=k_nf_n$, which corrects itself only after a neutron lifetime. An
-eigenvalue estimate without memory is the next step.
+\paragraph{Verdict.} The method is unbiased within about 80~pcm at $N\ge2000$, and its $k$ figure
+of merit is $0.26$ ($0.14$--$0.38$) of analog Monte Carlo's on this problem, measured on the spread
+of replica estimates: not a speedup. Three limits have been removed in turn: the scattering
+residual, the CE fission production of the field's first-flight flux
+(Section~\ref{sec:res:X}), and the eigenvalue update $k_{n+1}=k_nf_n$, which a balance estimate
+without memory replaces (Section~\ref{sec:res:grouped}; five times the figure of merit). Exact
+grouped cancellation at fission births is implemented and verified, and is not sufficient: the
+weight that must cancel is scattering weight. The present limits are the field's net loss rate and
+a correlated part of the bank's production and loss.
 \clearpage
 
 \input{part1_method}

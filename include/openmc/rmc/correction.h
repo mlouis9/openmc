@@ -43,13 +43,48 @@ struct FieldTallyResult {
   vector<double> diff_sq;       //!< [R][2] (with MG tables)
 };
 
+struct KernelScratch;
+
+//! A physical emission record of the bank, for grouped cancellation at
+//! fission births (deterministic-mixture estimator): the law its departure
+//! energy and direction are drawn from.
+struct EmissionRecord {
+  Position r;
+  int kind {-1};   //!< 0: isotropic direction at the sampled energy E
+                   //!< 1: stationary-target elastic scattering off nuclide
+                   //!<    `nuclide` at incident (E, u)
+  double E {0.0};  //!< departure energy (kind 0) or incident energy (kind 1)
+  Direction u;     //!< incident direction (kind 1)
+  int nuclide {-1};
+  double w {0.0};  //!< signed weight
+  double m {1.0};  //!< expected number of flights of this record
+};
+
+//! Connection sums of a record to a fission candidate at x (nuclide l,
+//! emitted energy E_f): over the reflected straight paths shorter than d_max,
+//!   q = sum a(d) exp(-tau(e)) / r^2 sigma_f,l(x, e) chi_l(E_f | e),
+//!   J = w sum a(d) exp(-tau(e)) / r^2 nu_l(e) / k sigma_f,l(x, e) chi_l(E_f | e),
+//! with a the record's angular density at the departure direction d of the
+//! path and e the departure energy that goes with it. Only paths shorter
+//! than d_max are counted: the grouped estimator applies to candidates whose
+//! own flight was shorter than d_max, and the others keep ordinary weights.
+void connection(const FrozenField& field, const EmissionRecord& rec, Position x,
+  int32_t mat, double sqrtkT, double dm, int l, double E_f, double d_max,
+  double k, KernelScratch& tracer, XsProbe& probe, double& q, double& J);
+
+//! Candidate weight W = sum_j J_j / sum_j m_j q_j over the group's records.
+//! Returns false (and leaves W) if the denominator is not positive.
+bool grouped_fission_weight(const FrozenField& field,
+  const vector<EmissionRecord>& group, Position x, int l, double E_f,
+  double d_max, double k, KernelScratch& tracer, XsProbe& probe, double& W);
+
 //! CE nu-fission production of the field's first-flight flux per source tag,
 //! X_y = <nu Sigma_f, G Q_y>, by backward points drawn from the field's own
 //! lifted MG fission rate (region, group, energy within the group), n_E
 //! energies per point on one isotropic path. var: variance of each mean.
 void field_fission_production(const FrozenField& field, const MGTables& mg,
   int64_t n_points, int n_E, const TailOptions& tail, uint64_t seed,
-  double X[2], double var[2]);
+  double X[2], double var[2], int score = 0);
 
 void field_reaction_tally(const FrozenField& field, int64_t n_points,
   int n_E, const TailOptions& tail, uint64_t seed, FieldTallyResult& out,

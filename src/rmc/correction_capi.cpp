@@ -54,7 +54,7 @@ extern "C" int openmc_rmc_field_tally(int64_t n_points, int n_E, int tail,
 }
 
 extern "C" int openmc_rmc_field_production(int64_t n_points, int n_E,
-  int tail, double cutoff, uint64_t seed, double* X, double* var)
+  int tail, double cutoff, uint64_t seed, double* X, double* var, int score)
 {
   if (int err = prepare())
     return err;
@@ -62,7 +62,7 @@ extern "C" int openmc_rmc_field_production(int64_t n_points, int n_E,
   opt.mode = static_cast<rmc::Tail>(tail);
   opt.cutoff = cutoff;
   rmc::field_fission_production(*rmc::loaded_field, rmc::loaded_mg_tables(),
-    n_points, n_E, opt, seed, X, var);
+    n_points, n_E, opt, seed, X, var, score);
   return 0;
 }
 
@@ -105,6 +105,52 @@ extern "C" int openmc_rmc_propagate_aux(int32_t in, int64_t n, double k,
   uint64_t seed, int32_t out, int children, int region_tally, int history,
   int64_t* n_children, double* region_fission, double* region_nu_fission,
   double* stats);
+
+extern "C" int openmc_rmc_flight_children_incident(
+  double* E_in, double* u_in, int* mt)
+{
+  std::copy(last_aux.E_in.begin(), last_aux.E_in.end(), E_in);
+  std::copy(last_aux.u_in.begin(), last_aux.u_in.end(), u_in);
+  std::copy(last_aux.mt.begin(), last_aux.mt.end(), mt);
+  return 0;
+}
+
+extern "C" int openmc_rmc_grouped_fission_weights(int64_t n_cand,
+  const double* x, const int* nuclide, const double* E_f,
+  const int64_t* offset, const int64_t* member, int64_t n_rec,
+  const double* rec_r, const int* rec_kind, const double* rec_E,
+  const double* rec_u, const int* rec_nuclide, const double* rec_w,
+  const double* rec_m, double d_max, double k, double* W, int* ok)
+{
+  if (int err = prepare())
+    return err;
+  rmc::KernelScratch tracer;
+  rmc::XsProbe probe;
+  vector<rmc::EmissionRecord> group;
+  for (int64_t c = 0; c < n_cand; ++c) {
+    group.clear();
+    for (int64_t q = offset[c]; q < offset[c + 1]; ++q) {
+      int64_t j = member[q];
+      if (j < 0 || j >= n_rec)
+        return OPENMC_E_INVALID_ARGUMENT;
+      rmc::EmissionRecord r;
+      r.r = {rec_r[3 * j], rec_r[3 * j + 1], rec_r[3 * j + 2]};
+      r.kind = rec_kind[j];
+      r.E = rec_E[j];
+      r.u = {rec_u[3 * j], rec_u[3 * j + 1], rec_u[3 * j + 2]};
+      r.nuclide = rec_nuclide[j];
+      r.w = rec_w[j];
+      r.m = rec_m[j];
+      group.push_back(r);
+    }
+    double w = 0.0;
+    ok[c] = rmc::grouped_fission_weight(*rmc::loaded_field, group,
+      {x[3 * c], x[3 * c + 1], x[3 * c + 2]}, nuclide[c], E_f[c], d_max, k,
+      tracer, probe, w);
+    W[c] = w;
+  }
+  return 0;
+}
 
 extern "C" int openmc_rmc_flight_children(
   int64_t* parent, double* path, int* nuclide)
@@ -157,6 +203,9 @@ extern "C" int openmc_rmc_propagate_aux(int32_t in, int64_t n, double k,
   stats[4] = st.fissions;
   stats[5] = st.W_abs;
   stats[6] = st.collisions;
+  stats[7] = st.absorption;
+  stats[8] = st.multiplied;
+  stats[9] = st.nu_fission;
   return 0;
 }
 

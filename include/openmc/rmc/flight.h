@@ -38,6 +38,9 @@ struct FlightAux {
   vector<int64_t> parent;      //!< [children] index of the parent in the bank
   vector<double> path;         //!< [children] flight path length [cm]
   vector<int> nuclide;         //!< [children] index into data::nuclides
+  vector<double> E_in;         //!< [children] energy at the collision [eV]
+  vector<double> u_in;         //!< [3 * children] direction at the collision
+  vector<int> mt;              //!< [children] MT of the sampled reaction
   vector<double> region_fission; //!< [R] signed sum of w Sigma_f / Sigma_t
                                  //!< at collisions (if sized to R)
   vector<double> region_nu_fission; //!< [R] the same with nu Sigma_f
@@ -52,6 +55,12 @@ struct FlightStats {
   int64_t fissions {0};
   int64_t collisions {0}; //!< all collisions (more than flights with history)
   double W_abs {0.0}; //!< sum |w| of the parents
+  //! Collision estimates over all collisions (signed): absorption
+  //! sum w Sigma_a / Sigma_t, nu-fission sum w nu Sigma_f / Sigma_t, and the
+  //! analog gain of multiplying scatterings sum w (yield - 1)
+  double absorption {0.0};
+  double nu_fission {0.0};
+  double multiplied {0.0};
 };
 
 //==============================================================================
@@ -99,6 +108,7 @@ private:
   struct Collision {
     int kind {0}; //!< 0 capture, 1 scatter, 2 fission
     int nuclide {-1};
+    int mt {0};
     double factor {0.0};
     double E {0.0};
     Direction u;

@@ -71,6 +71,7 @@ FlightPropagator::Collision FlightPropagator::collide(
     scatter(p, i_nuc);
     size_t copies = p.local_secondary_bank().size() - before;
     c.kind = 1;
+    c.mt = p.event_mt();
     c.factor = p.wgt() * (1.0 + static_cast<double>(copies));
     c.E = p.E();
     c.u = p.u();
@@ -82,6 +83,7 @@ FlightPropagator::Collision FlightPropagator::collide(
     SourceSite site;
     sample_fission_neutron(i_nuc, rx, &site, p);
     c.kind = 2;
+    c.mt = rx.mt_;
     c.factor = micro.nu_fission / micro.fission / k;
     c.E = site.E;
     c.u = site.u;
@@ -198,6 +200,13 @@ FlightStats FlightPropagator::propagate(const SignedBank& in, int64_t n,
         break;
       }
       ++st.collisions;
+      {
+        const auto& xs = probe_.particle().macro_xs();
+        if (xs.total > 0.0) {
+          st.absorption += wgt * xs.absorption / xs.total;
+          st.nu_fission += wgt * xs.nu_fission / xs.total;
+        }
+      }
 
       // Collision estimator of the fission rate by field region: the probe
       // holds the collision cell's cross sections at the flight's energy
@@ -216,8 +225,10 @@ FlightStats FlightPropagator::propagate(const SignedBank& in, int64_t n,
         ++st.captured;
         break;
       }
-      if (col.kind == 1)
+      if (col.kind == 1) {
         ++st.scattered;
+        st.multiplied += wgt * (col.factor - 1.0);
+      }
       else
         ++st.fissions;
       if (col.factor == 0.0)
@@ -242,6 +253,10 @@ FlightStats FlightPropagator::propagate(const SignedBank& in, int64_t n,
         aux->parent.push_back(i);
         aux->path.push_back(path);
         aux->nuclide.push_back(col.nuclide);
+        aux->E_in.push_back(E);
+        Direction ui = g_.u();
+        aux->u_in.insert(aux->u_in.end(), {ui.x, ui.y, ui.z});
+        aux->mt.push_back(col.mt);
       }
       break;
     }

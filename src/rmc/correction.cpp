@@ -12,6 +12,7 @@
 #include "openmc/nuclide.h"
 #include "openmc/random_lcg.h"
 #include "openmc/reaction.h"
+#include "openmc/rmc/channels.h"
 #include "openmc/rmc/production.h"
 #include "openmc/rmc/residual.h"
 
@@ -40,8 +41,13 @@ bool locate_point(const FrozenField& field, Position r, int64_t& region,
 
 void field_fission_production(const FrozenField& field, const MGTables& mg,
   int64_t n_points, int n_E, const TailOptions& tail, uint64_t seed,
-  double X[2], double var[2])
+  double X[2], double var[2], int score)
 {
+  // score 0: nu Sigma_f. score 1: the net loss cross section, Sigma_t minus
+  // the production of every non-fission channel (absorption less the gain
+  // of multiplying reactions), in every material. The text below is for
+  // score 0; score 1 replaces nu Sigma_f throughout.
+  //
   // X_y = int dr dE' dOmega nu Sigma_f(r, E') psi_y(r, E', Omega), sampled
   // with the density of the field's own lifted fission rate on the lifts'
   // fine grid: region r and fine bin i with probability
@@ -57,21 +63,31 @@ void field_fission_production(const FrozenField& field, const MGTables& mg,
   const int F = static_cast<int>(fe.size()) - 1;
   const double sqrtkT0 = std::sqrt(K_BOLTZMANN * 293.6);
   XsProbe probe;
-  // nu Sigma_f at the fine-bin midpoints, per fissionable material
+  ChannelRegistry registry;
+  auto score_xs = [&](int32_t m, double dm) {
+    if (score == 0)
+      return probe.particle().macro_xs().nu_fission;
+    double loss = probe.particle().macro_xs().total;
+    for (const auto& c : registry.channels(m))
+      if (c.kind != ChannelKind::fission)
+        loss -= ChannelRegistry::production(c, dm, probe);
+    return loss;
+  };
+  // The score's cross section at the fine-bin midpoints, per material
   std::unordered_map<int32_t, vector<double>> nsf;
   vector<int64_t> regions; //!< fissionable regions
   vector<double> wr(R, 0.0);
   vector<vector<double>> cdf(R);
   for (int64_t r = 0; r < R; ++r) {
     int32_t m = field.region_material(r);
-    if (m == MATERIAL_VOID || !model::materials[m]->fissionable())
+    if (m == MATERIAL_VOID || (score == 0 && !model::materials[m]->fissionable()))
       continue;
     auto it = nsf.find(m);
     if (it == nsf.end()) {
       vector<double> v(F);
       for (int i = 0; i < F; ++i) {
         probe.total(m, std::sqrt(fe[i] * fe[i + 1]), sqrtkT0, 1.0);
-        v[i] = probe.particle().macro_xs().nu_fission;
+        v[i] = std::max(0.0, score_xs(m, 1.0));
       }
       it = nsf.emplace(m, std::move(v)).first;
     }
@@ -122,8 +138,7 @@ void field_fission_production(const FrozenField& field, const MGTables& mg,
       if (!(q[k] > 0.0))
         continue;
       probe.total(mat, E[k], kT, dm);
-      double f = probe.particle().macro_xs().nu_fission * 4.0 * PI /
-                 (rd.density * q[k] * n_E);
+      double f = score_xs(mat, dm) * 4.0 * PI / (rd.density * q[k] * n_E);
       sc[0] += f * psi_s[k];
       sc[1] += f * psi_f[k];
     }
@@ -248,6 +263,139 @@ double fission_chi(int i_nuclide, const XsProbe& probe, double E_out)
            fission_energy_density(i_nuclide, *rx, E_in, E_out);
   }
   return f;
+}
+
+void connection(const FrozenField& field, const EmissionRecord& rec, Position x,
+  int32_t mat, double sqrtkT, double dm, int l, double E_f, double d_max,
+  double k, KernelScratch& tracer, XsProbe& probe, double& q, double& J)
+{
+  q = J = 0.0;
+  Position lo = field.box_lower_left(), hi = field.box_upper_right();
+  const double L[3] = {hi.x - lo.x, hi.y - lo.y, hi.z - lo.z};
+  const double a[3] = {rec.r.x, rec.r.y, rec.r.z};
+  const double c[3] = {x.x, x.y, x.z};
+  const double lw[3] = {lo.x, lo.y, lo.z};
+  // Images of the record's site under reflection in the box faces, with the
+  // parity of each (an odd image flips that component of the departure
+  // direction)
+  vector<double> img[3];
+  vector<int> par[3];
+  for (int ax = 0; ax < 3; ++ax) {
+    int n_max = static_cast<int>(std::ceil(d_max / (2.0 * L[ax]))) + 1;
+    for (int n = -n_max; n <= n_max; ++n) {
+      for (int odd = 0; odd < 2; ++odd) {
+        double v = (odd ? 2.0 * lw[ax] - a[ax] : a[ax]) + 2.0 * n * L[ax];
+        if (std::abs(v - c[ax]) < d_max) {
+          img[ax].push_back(v);
+          par[ax].push_back(odd);
+        }
+      }
+    }
+  }
+  const double awr = (rec.kind == 1) ? data::nuclides[rec.nuclide]->awr_ : 0.0;
+  const double kT0 = K_BOLTZMANN * 293.6;
+  for (size_t ix = 0; ix < img[0].size(); ++ix)
+    for (size_t iy = 0; iy < img[1].size(); ++iy)
+      for (size_t iz = 0; iz < img[2].size(); ++iz) {
+        Position d_vec {img[0][ix] - x.x, img[1][iy] - x.y, img[2][iz] - x.z};
+        double d = d_vec.norm();
+        if (!(d < d_max) || d <= 0.0)
+          continue;
+        Direction u = d_vec / d; // from the candidate back to the image
+        // Departure direction at the real site: travel is along -u in the
+        // unfolded picture; odd images flip the component
+        Direction dep {par[0][ix] ? u.x : -u.x, par[1][iy] ? u.y : -u.y,
+          par[2][iz] ? u.z : -u.z};
+        double e, ang;
+        if (rec.kind == 0) {
+          e = rec.E;
+          ang = 1.0 / (4.0 * PI);
+        } else {
+          double mu = std::max(-1.0, std::min(1.0, rec.u.dot(dep)));
+          double root = awr * awr - 1.0 + mu * mu;
+          if (root < 0.0)
+            continue;
+          double gam = (mu + std::sqrt(root)) / (awr + 1.0);
+          gam *= gam;
+          e = rec.E * gam;
+          // p_lab(mu | E_in) from the inverse evaluator at the outgoing
+          // energy: its density is p_lab / gamma
+          auto im = elastic_stationary(rec.nuclide, kT0, e, mu);
+          ang = im.density * gam / (2.0 * PI);
+          if (!(ang > 0.0))
+            continue;
+        }
+        // Optical depth along the reflected path of length d at energy e
+        Particle& g = tracer.scratch();
+        g.r() = x;
+        g.u() = u;
+        g.r_last() = x;
+        g.u_last() = u;
+        g.wgt() = 1.0;
+        g.surface() = SURFACE_NONE;
+        g.n_coord() = 1;
+        if (!exhaustive_find_cell(g))
+          continue;
+        double tau = 0.0, done = 0.0;
+        int32_t c_mat[2] = {-2, -2};
+        double c_sig[2] = {0.0, 0.0};
+        for (int crossings = 0; crossings < 100000 && done < d; ++crossings) {
+          const Cell& cell = *model::cells[g.lowest_coord().cell()];
+          int32_t inst = g.cell_instance();
+          int32_t m = cell.material(inst);
+          g.boundary() = distance_to_boundary(g);
+          double len = std::min(g.boundary().distance(), d - done);
+          if (m != MATERIAL_VOID) {
+            int slot = (c_mat[0] == m) ? 0 : (c_mat[1] == m) ? 1 : -1;
+            if (slot < 0) {
+              slot = (c_mat[0] == -2) ? 0 : 1;
+              c_mat[slot] = m;
+              c_sig[slot] =
+                probe.total(m, e, cell.sqrtkT(inst), cell.density_mult(inst));
+            }
+            tau += c_sig[slot] * len;
+          }
+          done += len;
+          if (done >= d)
+            break;
+          for (int lev = 0; lev < g.n_coord(); ++lev)
+            g.coord(lev).r() += len * g.coord(lev).u();
+          g.event_cross_surface();
+          if (!g.alive())
+            break;
+        }
+        // Fission of nuclide l at the candidate, at the arriving energy
+        probe.total(mat, e, sqrtkT, dm);
+        const auto& micro = probe.particle().neutron_xs(l);
+        if (!(micro.fission > 0.0))
+          continue;
+        double chi = fission_chi(l, probe, E_f);
+        double base = ang * std::exp(-tau) / (d * d) * micro.fission * chi;
+        q += base;
+        J += rec.w * base * micro.nu_fission / micro.fission / k;
+      }
+}
+
+bool grouped_fission_weight(const FrozenField& field,
+  const vector<EmissionRecord>& group, Position x, int l, double E_f,
+  double d_max, double k, KernelScratch& tracer, XsProbe& probe, double& W)
+{
+  int64_t region;
+  int32_t mat;
+  double kT, dm;
+  if (!locate_point(field, x, region, mat, kT, dm) || mat == MATERIAL_VOID)
+    return false;
+  double num = 0.0, den = 0.0;
+  for (const auto& rec : group) {
+    double q, J;
+    connection(field, rec, x, mat, kT, dm, l, E_f, d_max, k, tracer, probe, q, J);
+    num += J;
+    den += rec.m * q;
+  }
+  if (!(den > 0.0))
+    return false;
+  W = num / den;
+  return true;
 }
 
 double near_kernel(Position x, Position xp, double E, double d_max,

@@ -292,7 +292,8 @@ int openmc_rmc_near_kernel(int64_t n, const double* x, const double* xp,
 //! tag (X[2]) and the variance of each estimate (var[2]), from n_points
 //! backward points drawn from the field's lifted MG fission rate.
 int openmc_rmc_field_production(int64_t n_points, int n_E, int tail,
-  double cutoff, uint64_t seed, double* X, double* var);
+  double cutoff, uint64_t seed, double* X, double* var,
+  int score);
 //! Flights as openmc_rmc_propagate, optionally recording each child's
 //! parent, path length, and nuclide (read with openmc_rmc_flight_children)
 //! and a collision estimate of the fission and nu-fission rates by field
@@ -304,6 +305,20 @@ int openmc_rmc_propagate_aux(int32_t in, int64_t n, double k, uint64_t seed,
   int64_t* n_children, double* region_fission, double* region_nu_fission,
   double* stats);
 int openmc_rmc_flight_children(int64_t* parent, double* path, int* nuclide);
+//! Incident energy, direction [3 each], and reaction MT of each child's
+//! collision of the last openmc_rmc_propagate_aux call with children
+int openmc_rmc_flight_children_incident(double* E_in, double* u_in, int* mt);
+//! Grouped cancellation at fission births: for candidate c (site x, fissioning
+//! nuclide, emitted energy E_f) and its group of emission records
+//! member[offset[c] .. offset[c+1]), W = sum J_j / sum m_j q_j over reflected
+//! paths shorter than d_max (rmc::grouped_fission_weight). ok[c] = 0 where
+//! the denominator vanished.
+int openmc_rmc_grouped_fission_weights(int64_t n_cand, const double* x,
+  const int* nuclide, const double* E_f, const int64_t* offset,
+  const int64_t* member, int64_t n_rec, const double* rec_r,
+  const int* rec_kind, const double* rec_E, const double* rec_u,
+  const int* rec_nuclide, const double* rec_w, const double* rec_m,
+  double d_max, double k, double* W, int* ok);
 //! Incident energy and nuclide of the sampled particles of the last
 //! openmc_rmc_residual_sample call (0 and -1 on density records)
 int openmc_rmc_residual_records_aux(double* E_in, int* nuclide);

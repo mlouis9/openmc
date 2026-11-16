@@ -1450,10 +1450,59 @@ Findings
     - History flights are now stable at N = 2000 but :math:`k_n` oscillates
       (period about 6 generations); fixed amplitudes fail, damping 0.3
       reduces the amplitude only.
-    - The deferred-record grouped cancellation was not implemented: it can
-      act only at fission births (3.4 % of the children's absolute weight),
-      which netting already cancels without measurable bias.
+    - The deferred-record grouped cancellation was not implemented at this
+      commit (see the next entry).
 
 Not done
     - A per-generation balance estimate of k, a matched gain for the k
-      update, and a single normalization for history flights.
+      update, and a single normalization for history flights (next entry).
+
+Grouped cancellation at fission births and the balance eigenvalue
+-----------------------------------------------------------------
+
+**Commit:** "rmc: grouped cancellation at fission births; balance eigenvalue
+update". Report section "Grouped cancellation at fission births, and a balance
+eigenvalue".
+
+Added
+    - ``EmissionRecord``, ``connection``, ``grouped_fission_weight``
+      (``correction.h``; ``openmc_rmc_grouped_fission_weights``, binding
+      ``grouped_fission_weights``): the weight
+      :math:`\sum_j J_j / \sum_j m_j q_j` of a fission candidate over a group
+      of emission records (isotropic fission births, stationary-target elastic
+      scatterings), summed over reflected paths shorter than ``d_max``.
+    - ``FlightAux`` records the incident energy, direction, and MT of every
+      child (``openmc_rmc_flight_children_incident``).
+    - ``GroupedFissionCancellation``, ``child_records``, ``with_records`` in
+      ``cancellation.py``; variants ``grouped`` and ``grouped_net`` and options
+      ``--group-size``, ``--group-dmax`` in ``stage8.py``.
+    - ``field_fission_production`` takes a score: nu-fission or the net loss
+      cross section (total minus the production of every non-fission
+      channel); binding ``field_production(score='loss')``.
+    - ``FlightStats`` has collision estimates of absorption and nu-fission and
+      the analog gain of multiplying scatterings.
+    - ``driver.Config.k_update = 'balance'``, ``balance_window``,
+      ``collision_production``; ``ToyBackend`` and ``Stage8Backend`` have
+      ``field_loss`` and ``bank_balance``. ``stage8.py --k-update balance
+      --balance-window --field-loss --collision-production``.
+    - Tests G8.10 (grouped weights are exact) and G8.11 (field loss against
+      flights) in ``test_cancellation.py``;
+      ``test_balance_update_converges_to_ce_and_faster`` in
+      ``test_driver_toy.py``.
+
+Findings
+    - Grouped cancellation is exact (G8.10) and removes about three quarters
+      of the eligible fission weight with groups of 32, but it is not
+      sufficient: without netting the bank grows by 6.4 per generation as
+      before, because fission births are 2 % of the bank's weight and
+      scattering children are not touched. 42 % of fission births are
+      eligible without netting, 7 % with it (thermal scattering in graphite
+      has no density; fresh residual particles are directional). With netting
+      it changes neither k nor its spread.
+    - The balance update removes the lifetime-long memory of
+      :math:`k_{n+1} = k_n f_n`: see the report for the replica spread and the
+      figure of merit.
+    - The field's net loss is the least precise piece (0.27 % per root
+      second, against 0.066 % for the production): most of the loss is
+      resonance absorption, where the path's angular flux differs from the
+      lifted flux by a factor of order one.

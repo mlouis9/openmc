@@ -64,6 +64,20 @@ def test_eigenvalue_converges_to_ce():
         assert state.k == pytest.approx(toy.kE_ce, rel=1e-10)
 
 
+def test_balance_update_converges_to_ce_and_faster():
+    """The balance update k_{n+1} = P_n / L_n (production over net loss of
+    generation n's flux) has the CE eigenvalue as its fixed point, and its
+    error after a few generations is below the production update's."""
+    err = {}
+    for mode in ('production', 'balance'):
+        cfg = driver.Config(amplitudes=driver.FollowAmplitudes(), k_update=mode,
+                            balance_window=1)
+        state, rows = driver.run(driver.ToyBackend(), cfg, toy.kE_mg, 400)
+        assert state.k == pytest.approx(toy.kE_ce, rel=1e-10)
+        err[mode] = [abs(r['k'] / toy.kE_ce - 1) for r in rows[1:6]]
+    assert all(b < 0.5 * p for b, p in zip(err['balance'], err['production']))
+
+
 def test_nonpositive_production_stops():
     """f <= 0 raises; it is never clipped."""
     backend = driver.ToyBackend()

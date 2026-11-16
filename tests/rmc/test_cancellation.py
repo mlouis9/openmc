@@ -23,6 +23,18 @@
   ends in capture, fission, or leakage and banks only fission children;
   their total weight equals the fission weight that collision-by-collision
   flights of the same parents produce over all generations.
+- G8.10 (grouped cancellation at fission births is exact): parents fly once
+  and their children (emission records: fission births and stationary
+  elastic scatterings) fly again; the fission grandchildren, binned by
+  emitted energy, have the same mean total weight with ordinary weights and
+  with the grouped weights sum_j J_j / sum_j m_j q_j, over independent
+  repetitions of both flights; and the grouped weights carry less absolute
+  weight.
+- G8.11 (net loss of the field's flux): the backward estimate of the net
+  loss rate per source tag (absorption less the gain of multiplying
+  scatterings; field_production with score='loss') equals the flights'
+  collision estimate for a weighted sample of the field, and the flights'
+  loss and scattered weight add up to the weight flown.
 """
 import math
 
@@ -283,3 +295,72 @@ def test_field_production_matches_field_tally(lib):
     mean, sem = ref.mean(axis=0), ref.std(axis=0, ddof=1) / math.sqrt(len(ref))
     assert np.all(np.abs(X - mean) < 5 * np.hypot(sem, np.sqrt(var))), (X, mean, sem)
     assert np.sqrt(var.sum()) < 0.5 * ref.sum(axis=1).std(ddof=1)
+
+
+@pytest.mark.slow
+def test_grouped_fission_cancellation_is_exact(lib, field_files):
+    rmc, mesh = lib
+    rng = np.random.default_rng(41)
+    n_par, n1, n2, reps, k = 2000, 20_000, 40_000, 120, 0.7
+    parents = _fuel_parents(rng, n_par, 2.0e6)
+    parents['w'] = rng.choice([-1.0, 1.0], n_par) * (0.5 + rng.random(n_par))
+    rep = canc.Representation(rmc, field_files, mesh)
+    grouped = canc.GroupedFissionCancellation(rmc, rep, d_max=3.0, group_size=8)
+    edges = np.array([0.0, 5e5, 1.5e6, 3e6, 2e7])
+    diff, absw = [], []
+    for i in range(reps):
+        b = rmc.Bank(**parents)
+        out, _, aux = rmc.propagate_aux(b, n1, k, seed=1000 + i, children=True)
+        ch = out.arrays()
+        out.free()
+        b.free()
+        bank = canc.child_records(ch, aux)
+        gid, off, mem = grouped.groups(bank, np.random.default_rng(i))
+        b = rmc.Bank(**{key: bank[key] for key in ('r', 'u', 'E', 'w', 'tag')})
+        out, _, aux2 = rmc.propagate_aux(b, n2, k, seed=5000 + i, children=True)
+        gc = out.arrays()
+        out.free()
+        b.free()
+        new, info = grouped(bank, gc, aux2, gid, off, mem, n2, k)
+        f = gc['tag'] == 1
+        e = np.digitize(gc['E'][f], edges) - 1
+        diff.append(np.bincount(e, weights=new['w'][f] - gc['w'][f], minlength=4))
+        absw.append((info['W_eligible_before'], info['W_eligible_after'],
+                     info['eligible'], info['fission_children']))
+    diff = np.array(diff)
+    absw = np.array(absw).mean(axis=0)
+    mean, sem = diff.mean(axis=0), diff.std(axis=0, ddof=1) / math.sqrt(reps)
+    scale = absw[0] / 4                      # eligible weight per energy bin
+    print('grouped: paired difference / sem', mean / sem, ' sem/scale', sem / scale,
+          ' eligible', absw[2], 'of', absw[3], ' |w|', absw[0], '->', absw[1])
+    assert np.all(np.abs(mean) < 4.5 * sem), (mean, sem)
+    assert np.all(sem < 0.2 * scale)         # the comparison has power
+    assert absw[1] < 0.8 * absw[0]
+
+
+@pytest.mark.slow
+def test_field_loss_matches_flights(lib, field_files):
+    rmc, _ = lib
+    L, var = rmc.field_production(60_000, n_E=4, seed=17, cutoff=math.exp(-3), score='loss')
+    rng = np.random.default_rng(5)
+    bins = cs.Bins(rmc, field_files)
+    for i, comp in enumerate('sf'):
+        est = []
+        for rep in range(6):
+            r, u, E, w = cs.field_parents(rmc, bins, comp, 100_000, rng)
+            b = rmc.Bank(r=r, u=u, E=E, w=w, tag=np.zeros(len(w), dtype=np.int32))
+            out, st, _ = rmc.propagate_aux(b, 200_000, 1.0, seed=70 + rep, children=False)
+            ch = out.arrays()
+            out.free()
+            b.free()
+            loss = st['absorption'] - st['multiplied']
+            est.append(loss)
+            # Analog closure of the same flights: what is not lost scatters
+            scattered = ch['w'][ch['tag'] == 0].sum()
+            flown = w.sum()
+            assert abs(scattered + loss - flown) < 0.02 * abs(flown)
+        est = np.array(est)
+        mean, sem = est.mean(), est.std(ddof=1) / math.sqrt(len(est))
+        z = (L[i] - mean) / math.hypot(sem, math.sqrt(var[i]))
+        assert abs(z) < 5, (comp, L[i], mean, sem)
+        assert abs(L[i] / mean - 1) < 0.05
