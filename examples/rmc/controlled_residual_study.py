@@ -15,12 +15,18 @@ binned three ways:
 - energy: by material and 36 logarithmic outgoing-energy bins;
 - space: by field region (the fuel and the graphite are each split into
   regions by the source-region mesh), shown against the region's centroid
-  radius; the field integral uses geometric region volumes from a fine grid,
-  since the field's sampled volumes V_A are noisy in the small regions cut
-  by the pin surface;
+  radius;
 - angle: by material, energy range, and the radial cosine mu_r = Omega .
   e_rho of the outgoing direction (e_rho the unit vector away from the pin
   axis).
+
+Field. The pincell's field is solved with random ray's prescribed volume
+estimator, with the exact source-region volumes of volumes.py (a voxel cut
+by the pin surface), and the volume file holds the same exact volumes. The
+field, its normalization, the sweep weights, and the exact field integrals
+then all use the true geometry. (With point-sampled volumes the regions cut
+by the pin surface carry a few per cent of volume error, which shows up as
+apparent bias of the reference residual there.)
 
 Reference. Parents are drawn from each component of the field (Q_s alone,
 Q_f alone) in Python: a uniform point in the box, a group in proportion to
@@ -78,7 +84,10 @@ import openmc.lib
 import pipeline
 import problems
 import residual_gates as gates
-import estimator_study as es
+import field as fld
+import mg
+import visual_checks as vc
+import volumes as vol
 
 CHANNELS = ('elastic', 'thermal_elastic', 'inelastic', 'fission')
 KINDS = ('density', 'sampler', 'region')
@@ -153,6 +162,36 @@ AMPLITUDES = (0.0, 0.5, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 2.0, 3.0)
 
 
 # ---------------------------------------------------------------------------
+# Field with exact volumes
+# ---------------------------------------------------------------------------
+
+def exact_volume_files(work):
+    """The pincell's field solved with prescribed exact volumes, and a
+    volume file holding the same volumes. Reuses the MGXS library and the
+    lifts of the visual checks' pincell (same CE model and groups)."""
+    w = vc.Work(work)
+    P = w.pincell()
+    d = Path(work) / 'pincell_exact_volumes'
+    d.mkdir(parents=True, exist_ok=True)
+    sr = d / 'sr_volumes.h5'
+    cid, inst, b, V = vol.pincell_volumes(w.mesh)
+    vol.write_source_region_volumes(sr, cid, inst, b, V)
+    field = d / 'rr' / 'rmc_field.h5'
+    if not field.exists():
+        rr = {'volume_estimator': 'prescribed', 'source_region_volumes': str(sr)}
+        mg.run_random_ray(w.model, w.mesh, d / 'rr', mgxs_path=P['mgxs'], random_ray=rr,
+                          **{k: v for k, v in vc.RR.items() if k != 'mgxs_particles'})
+    F = fld.FieldFile.load(field)
+    exact = {(c, i, m): v for c, i, m, v in zip(cid.tolist(), inst.tolist(), b.tolist(), V)}
+    VR = np.array([exact[key] for key in F.keys()])
+    volumes = d / 'rmc_volumes_exact.h5'
+    zeros = np.zeros(len(VR), dtype=np.int64)
+    fld.write_volumes(volumes, VR, VR, zeros, zeros, fld.field_scale(F, VR), 0, (0, 0))
+    return w, dict(field=field, lifts=P['lifts'], volumes=volumes, mgxs=P['mgxs'],
+                   work=d), float(F.k_mg)
+
+
+# ---------------------------------------------------------------------------
 # Geometry and binning
 # ---------------------------------------------------------------------------
 
@@ -166,12 +205,9 @@ class Bins:
             self.V = f['V_A'][()]
         self.R = len(self.V)
         self.region_mat = np.where(self.region_material_id == problems.MAT_FUEL, 0, 1)
-        # Region centroids and geometric volumes from a grid of points (the
-        # problem is uniform in z). The field's own volumes V_A come from
-        # point sampling and carry a few per cent of noise in the small
-        # regions cut by the pin surface; the estimators and the reference
-        # both see the geometry, so the exact field integrals use these.
-        n = 4001
+        # Region centroids from a grid of points (the problem is uniform in
+        # z); the grid's volumes are kept as a check of the exact ones
+        n = 2001
         x = np.linspace(-problems.PITCH / 2, problems.PITCH / 2, n + 1)
         xc = 0.5 * (x[:-1] + x[1:])
         X, Y = np.meshgrid(xc, xc, indexing='ij')
@@ -207,15 +243,11 @@ class Bins:
     def field(self, rmc, files, tag):
         """Exact field integral F_t in every binning."""
         regions = [np.flatnonzero(self.region_mat == m) for m in (0, 1)]
-        V = self.V_geom
-        F = {'energy': gates.field_integral(rmc, files, regions, E_EDGES, tag,
-                                            volumes=V).ravel()}
+        F = {'energy': gates.field_integral(rmc, files, regions, E_EDGES, tag).ravel()}
         per_region = gates.field_integral(rmc, files, [[r] for r in range(self.R)],
-                                          np.array([E_EDGES[0], E_EDGES[-1]]), tag,
-                                          volumes=V)
+                                          np.array([E_EDGES[0], E_EDGES[-1]]), tag)
         F['space'] = per_region[:, 0]
-        by_range = gates.field_integral(rmc, files, regions, E_RANGES, tag,
-                                        volumes=V)                            # [2, 3]
+        by_range = gates.field_integral(rmc, files, regions, E_RANGES, tag)   # [2, 3]
         dmu = np.diff(MU_EDGES) / 2.0
         F['angle'] = (by_range[:, :, None] * dmu[None, None, :]).ravel()
         return F
@@ -333,12 +365,12 @@ def binned_all(bins, rec, w, N, mask=None):
     return out
 
 
-def summary(est, ref_r, ref_sd, N):
+def summary(est, ref_r, ref_sd, N, ref_hi):
     e, s = est
     err = np.hypot(s, ref_sd)
-    # A bin is compared only where both sides have a standard error: the
-    # reference has events there and the estimator has more than one sample
-    live = (s > 0) & (ref_sd > 0)
+    # A bin is compared only where the estimator has a standard error and the
+    # reference about ten events or more (controlled_residual_figures.resolved)
+    live = (s > 0) & (ref_sd > 0) & (ref_sd < 0.3 * np.abs(ref_hi))
     z = (e[live] - ref_r[live]) / err[live]
     return dict(chi2=float(np.sum(z**2)), dof=int(live.sum()),
                 max_abs_z=float(np.abs(z).max()) if z.size else 0.0,
@@ -358,7 +390,7 @@ def main():
     ap.add_argument('--figures', default=None, help='directory for the figures')
     args = ap.parse_args()
 
-    w, files, k = es._files(args.work)
+    w, files, k = exact_volume_files(args.work)
     import openmc.lib.rmc as rmc
     res = dict(k=k, n=args.n, n_scan=args.n_scan, ref_flights=args.ref_flights,
                variants={}, scans={}, amplitude={}, channels={})
@@ -394,8 +426,10 @@ def main():
                 arrays[f'F/{t}/{b}'] = F[t][b]
         arrays['centroid_radius'] = bins.centroid_radius
         arrays['region_mat'] = bins.region_mat
-        arrays['V'] = bins.V_geom
-        arrays['V_A'] = bins.V
+        arrays['V'] = bins.V
+        arrays['V_grid'] = bins.V_geom
+        live = bins.V > 0
+        res['grid_volume_check'] = float(np.max(np.abs(bins.V_geom[live] / bins.V[live] - 1)))
 
         # Main variants
         one = (1.0, 1.0)
@@ -415,7 +449,7 @@ def main():
                             rec, args.n, one, one, k, c, 0.0), args.n)[b]
                     else:
                         e0 = est[b]
-                    entry['binnings'][b] = summary(e0, rr, sd, args.n)
+                    entry['binnings'][b] = summary(e0, rr, sd, args.n, hi)
                     arrays[f'est/{name}/{t}/{b}'] = np.array(est[b])
                     arrays[f'est0/{name}/{t}/{b}'] = np.array(e0)
                 # The high term alone (b = 0): what remains if the low term
@@ -489,8 +523,8 @@ def main():
                                       seed=501 + 13 * it)
                     wts = rmc.residual_weights(rec, args.n_scan, one, one, k, 0.0, 0.0)
                     est = binned_all(bins, rec, wts, args.n_scan)
-                    rr, sd, _ = reference_residual(ref, F, t, one, 'energy')
-                    s = summary(est['energy'], rr, sd, args.n_scan)
+                    rr, sd, hi = reference_residual(ref, F, t, one, 'energy')
+                    s = summary(est['energy'], rr, sd, args.n_scan, hi)
                     wh = rmc.residual_weights(rec, args.n_scan, one, (0, 0), k, 0.0, 0.0)
                     _, sh = binned_all(bins, rec, wh, args.n_scan)['energy']
                     row[t] = dict(time_per_sample=rec['time'] / args.n_scan,

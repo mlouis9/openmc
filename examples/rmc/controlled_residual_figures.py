@@ -395,10 +395,10 @@ def fig_z(d, j, out):
         z = []
         for t in 'sf':
             for b in ('energy', 'space', 'angle'):
-                rr, sd, _ = _ref(d, t, b)
+                rr, sd, hi = _ref(d, t, b)
                 e, se = d[f'est0/{name}/{t}/{b}']
                 err = np.hypot(se, sd)
-                live = (se > 0) & (sd > 0)
+                live = resolved(se, sd, hi)
                 z.append((e[live] - rr[live]) / err[live])
         z = np.concatenate(z)
         h, _ = np.histogram(np.clip(z, -4.99, 4.99), zz, density=True)
@@ -412,16 +412,23 @@ def fig_z(d, j, out):
     _save(fig, out, 'controlled_z.png')
 
 
+def resolved(se, sd, hi):
+    """Bins where a z-score means something: the estimate has a standard
+    error, and the reference has about ten events or more (relative standard
+    error below 0.3). With fewer, the reference's own error is far from
+    normal, and an estimator much quieter than it shows false bias."""
+    return (se > 0) & (sd > 0) & (sd < 0.3 * np.abs(hi))
+
+
 def bias_table(d):
-    """chi^2 over the bins where both the estimate and the reference have a
-    standard error, per variant, tag, and binning."""
+    """chi^2 over the resolved bins, per variant, tag, and binning."""
     out = {}
     for name in VARIANTS:
         for t in 'sf':
             for b in ('energy', 'space', 'angle'):
-                rr, sd, _ = _ref(d, t, b)
+                rr, sd, hi = _ref(d, t, b)
                 e, se = d[f'est0/{name}/{t}/{b}']
-                live = (se > 0) & (sd > 0)
+                live = resolved(se, sd, hi)
                 z = (e[live] - rr[live]) / np.hypot(se[live], sd[live])
                 out[f'{name} | {t} | {b}'] = dict(
                     chi2=float(np.sum(z**2)), dof=int(live.sum()),
