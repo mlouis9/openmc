@@ -82,6 +82,7 @@ class Stage8Backend(driver.OpenMCBackend):
         self.info = {}
         self.res_opts = {}   # per-tag overrides of the residual options
         self._X_mg = None    # field_production: the MG part, once
+        self._fp_sum, self._fp_n = np.zeros(2), 0
         self.net_every = 1   # netting every net_every generations
         self.fp_points, self.fp_energies, self.k_mg = 10_000, 4, None
 
@@ -145,7 +146,13 @@ class Stage8Backend(driver.OpenMCBackend):
             self._X_mg = self.k_mg * rmc.field_mass('f') * split
         f, nf, sq, nm, dq = rmc.field_tally(self.fp_points, self.fp_energies, seed=seed,
                                             mg=True)
-        X = self._X_mg + (nf - nm).sum(axis=0)
+        # X_s and X_f are constants of the frozen field, so every
+        # generation's estimate of the CE - MG difference is averaged with
+        # the earlier ones: the estimate's noise falls with the number of
+        # generations instead of entering each k_n afresh
+        self._fp_sum = self._fp_sum + (nf - nm).sum(axis=0)
+        self._fp_n += 1
+        X = self._X_mg + self._fp_sum / self._fp_n
         return float(a[0] * X[0] + a[1] * X[1])
 
     def tally(self, a, f, seed):
@@ -225,6 +232,13 @@ def main():
                     help='log-uniform weight of the outgoing-energy proposal (both tags)')
     ap.add_argument('--res-cut', type=float, default=None,
                     help='roulette cutoff of the backward tails, in optical depth')
+    ap.add_argument('--res-ko', type=int, default=None,
+                    help='outgoing states per destination of the scattering residual')
+    ap.add_argument('--res-ein', type=float, default=None,
+                    help='tabulated incident-energy proposal of the scattering sampler '
+                         'route, with this log-uniform weight')
+    ap.add_argument('--res-ir', type=float, default=None,
+                    help='image roulette floor of the scattering residual')
     ap.add_argument('--res-nd', type=int, nargs=2, default=None,
                     help='directions per destination for tags s and f')
     ap.add_argument('--net-every', type=int, default=1,
@@ -253,6 +267,10 @@ def main():
                     help='field of field_variants.field_files with this group structure '
                          '(default: the 8-group field of the controlled study)')
     ap.add_argument('--mgxs-particles', type=int, default=20_000)
+    ap.add_argument('--fine-lifts', type=int, nargs='+', default=None,
+                    help='fine lift bins per group (fine_lifts.py)')
+    ap.add_argument('--zone-lifts', type=int, nargs=2, default=None,
+                    help='lifts per zone (fuel rings, graphite rings) from zone_lifts.py')
     ap.add_argument('--field-mesh', type=int, default=12,
                     help='source-region mesh per side of the field variant')
     ap.add_argument('--run-name', default=None,
@@ -266,6 +284,12 @@ def main():
                                         n_per_side=args.field_mesh)
     else:
         w, files, k_mg = cs.exact_volume_files(args.work)
+    if args.fine_lifts:
+        import fine_lifts as fl
+        w, files, k_mg = fl.fine_lift_files(args.work, args.fine_lifts)
+    if args.zone_lifts:
+        import zone_lifts as zl
+        w, files, k_mg = zl.zone_lift_files(args.work, tuple(args.zone_lifts))
     if args.reference:
         res = reference(w.model, w.mesh, files, files['work'] / 'stage8_reference',
                         args.ref_particles, args.ref_batches, args.ref_inactive,
@@ -288,16 +312,28 @@ def main():
         backend.k_mg = k_mg
         backend.net_every = args.net_every
         backend.fp_points = max(args.field_production, 1)
+        ein_table = None
+        if args.res_ein is not None:
+            import residual_efficiency as reff
+            ein_table = reff.incident_table(rmc, files)
         for i, t in enumerate('sf'):
             o = {}
+            if t == 's' and ein_table is not None:
+                o['Ein_table'] = ein_table
+                o['beta_in'] = args.res_ein
             if args.res_beta is not None:
                 o['beta'] = args.res_beta
             if args.res_cut is not None:
                 o['cutoff'] = math.exp(-args.res_cut)
             if args.res_nd is not None:
                 o['n_directions'] = args.res_nd[i]
+            if t == 's' and args.res_ko is not None:
+                o['n_outgoing'] = args.res_ko
+            if t == 's' and args.res_ir is not None:
+                o['image_roulette'] = args.res_ir
             backend.res_opts[t] = o
         for rep in range(args.replicas):
+            backend._fp_sum, backend._fp_n = np.zeros(2), 0
             cfg = driver.Config(N={'s': args.N, 'f': args.N_f or args.N}, N_delta=args.N_delta,
                                 N_B=args.N_B, seed=args.seed_base + rep,
                                 damping=args.damping,

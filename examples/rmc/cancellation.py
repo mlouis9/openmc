@@ -111,7 +111,7 @@ class Representation:
 
     def _lift_mass(self, region, t):
         """Fine-bin masses of the lift h_{t,m,g} of the region's material."""
-        key = (int(self.material_id[region]), t)
+        key = (int(region), t)
         if key not in self._hmass:
             mid = 0.5 * (self.fine[:-1] + self.fine[1:])
             h = self.rmc.field_shape(np.full(mid.size, region), mid, t)
@@ -155,7 +155,7 @@ class Representation:
         return out
 
     def _lift_cdf(self, region, t):
-        key = (int(self.material_id[region]), t)
+        key = (int(region), t)
         if key not in self._cdf:
             mass = self._lift_mass(region, t)
             cdfs = []

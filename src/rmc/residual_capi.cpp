@@ -17,7 +17,7 @@ namespace {
 //! The records of the last openmc_rmc_residual_sample call, and the
 //! per-direction diagnostics if requested
 rmc::ResidualRecords last_records;
-vector<double> last_ce, last_mg;
+vector<double> last_ce, last_mg, last_mu;
 
 } // namespace
 
@@ -115,6 +115,32 @@ extern "C" int openmc_rmc_residual_sample(const openmc_rmc_residual_config* cfg,
   opt.voxel.skin_y = cfg->skin_y;
   opt.voxel.skin_radius = cfg->skin_radius;
   opt.voxel.skin_dmin = cfg->skin_dmin;
+  opt.fixed_r = cfg->fixed_r;
+  opt.fixed_E = cfg->fixed_E;
+  opt.fixed_u = cfg->fixed_u;
+  opt.n_fixed = cfg->n_fixed;
+  opt.flux_control = cfg->flux_control != 0;
+  opt.flux_quadrature = cfg->flux_quadrature;
+  opt.flux_control_Emin = cfg->flux_control_Emin;
+  opt.flux_control_local_Emax = cfg->flux_control_local_Emax;
+  opt.n_outgoing = std::max(1, cfg->n_outgoing);
+  opt.image_roulette = cfg->image_roulette;
+  if (cfg->n_Ein_table > 0) {
+    opt.incident.table_edges.assign(
+      cfg->Ein_table_edges, cfg->Ein_table_edges + cfg->n_Ein_table_edges);
+    opt.incident.table.assign(cfg->Ein_table, cfg->Ein_table + cfg->n_Ein_table);
+    if (opt.incident.table.size() !=
+        model::materials.size() * (opt.incident.table_edges.size() - 1)) {
+      set_errmsg("Tabulated incident proposal: one row per material.");
+      return OPENMC_E_INVALID_ARGUMENT;
+    }
+  }
+  opt.mu_fraction = cfg->mu_fraction;
+  opt.mu_n_bins = cfg->mu_n_bins;
+  if (cfg->n_mu_table > 0) {
+    opt.mu_E_edges.assign(cfg->mu_E_edges, cfg->mu_E_edges + cfg->n_mu_E_edges);
+    opt.mu_table.assign(cfg->mu_table, cfg->mu_table + cfg->n_mu_table);
+  }
   if (opt.voxel.skin_fraction > 0.0 &&
       (opt.voxel.skin_fraction >= 1.0 || !(opt.voxel.skin_radius > 0.0) ||
         !(opt.voxel.skin_dmin > 0.0 &&
@@ -135,6 +161,7 @@ extern "C" int openmc_rmc_residual_sample(const openmc_rmc_residual_config* cfg,
   sampler.sample(static_cast<rmc::Tag>(tag), n, seed, last_records);
   last_ce = sampler.kept_ce();
   last_mg = sampler.kept_mg();
+  last_mu = sampler.kept_mu();
   *n_records = last_records.size();
   return 0;
 }
@@ -158,6 +185,14 @@ extern "C" int openmc_rmc_residual_records(double* r, double* u, double* E,
     &rec.C_s, &rec.C_f, &rec.M_s, &rec.M_f, &rec.R_s, &rec.R_f, &rec.U, &rec.Z};
   for (int c = 0; c < 8; ++c)
     std::copy(cols[c]->begin(), cols[c]->end(), terms + c * n);
+  return 0;
+}
+
+extern "C" int openmc_rmc_residual_direction_mu(int64_t* n, double* mu)
+{
+  *n = static_cast<int64_t>(last_mu.size());
+  if (mu)
+    std::copy(last_mu.begin(), last_mu.end(), mu);
   return 0;
 }
 

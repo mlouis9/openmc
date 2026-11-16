@@ -92,9 +92,10 @@ private:
     int32_t mat;
     double sqrtkT, dm, sigma;
   };
-  static constexpr int XS_CACHE = 4;
-  vector<XsCacheEntry> xs_cache_; //!< [n_ce * XS_CACHE]
-  vector<int> xs_cache_n_;        //!< [n_ce] entries used
+  static constexpr int XS_CACHE = 8;
+  vector<XsCacheEntry> states_;   //!< material states met on this path
+  vector<double> sig_;            //!< [n_ce * XS_CACHE] Sigma_t, < 0 unset
+  vector<size_t> live_;           //!< CE energies still alive
   vector<int> g_bin_, i_bin_;     //!< [n_ce] field bins of each energy
   vector<double> psi_s_, psi_f_;
   vector<double> mg_s_, mg_f_;

@@ -112,6 +112,30 @@ def config(name):
                 c[t]['n_energies'] = int(val)
         elif key in ('Ns', 'Nf'):
             c[key] = int(val)
+        elif key == 'ein':
+            c['ein'] = float(val)       # log-uniform weight of the tabulated incident proposal
+        elif key == 'kf':
+            c['f']['n_energies'] = int(val)
+        elif key == 'incf':
+            c['f']['incident'] = val
+        elif key == 'ks':
+            c['s']['n_energies'] = int(val)
+        elif key == 'ir':
+            c['s']['image_roulette'] = float(val)
+        elif key == 'ko':
+            c['s']['n_outgoing'] = int(val)   # outgoing states per destination
+        elif key == 'fc':
+            # quadrature points[:E_min]
+            v = val.split(':')
+            c['s']['flux_control'] = True
+            c['s']['flux_quadrature'] = int(v[0])
+            if len(v) > 1:
+                c['s']['flux_control_Emin'] = float(v[1])
+            if len(v) > 2:
+                c['s']['flux_control_local_Emax'] = float(v[2])
+            c['c'] = 1.0
+        elif key == 'mu':
+            c['mu'] = float(val)        # fraction of learned-cosine directions
         elif key == 'opt':
             c['opt'] = val          # tags with the optimized proposal, e.g. 'sf'
         elif key == 'ctrls':
@@ -235,6 +259,76 @@ def build_proposal(rmc, files, k, table, base='base', N_big=50_000, floor=0.1, s
     return out
 
 
+def incident_table(rmc, files, n_bins=240):
+    """Incident-energy proposal of the scattering sampler route, per material
+    (rows in the order of openmc.lib.materials): bin probabilities
+    proportional to the integral of the sampler-route production times the
+    material's mean lifted MG flux."""
+    import h5py
+    import openmc.lib
+    edges = np.logspace(-5, np.log10(2e7), n_bins + 1)
+    mid = np.sqrt(edges[:-1] * edges[1:])
+    with h5py.File(files['field']) as f:
+        mat_of_region = f['regions/material_id'][()]
+        phi_g = f['regions/phi'][()].reshape(len(mat_of_region), -1)   # [R, G], ascending
+    with h5py.File(files['volumes']) as f:
+        V = f['V_A'][()]
+    groups = np.asarray(rmc.field_groups())
+    g_of = np.clip(np.searchsorted(groups, mid, side='right') - 1, 0, len(groups) - 2)
+    rows = []
+    for mid_ in openmc.lib.materials.keys():
+        regs = np.flatnonzero(mat_of_region == mid_)
+        if len(regs) == 0:
+            rows.append(np.zeros(n_bins))
+            continue
+        # volume-weighted lifted flux of the material's regions (a sample)
+        pick = regs[np.argsort(-V[regs])[:8]]
+        phi = np.zeros(n_bins)
+        for r in pick:
+            phi += V[r] * phi_g[r, g_of] * rmc.field_shape(np.full(n_bins, r), mid, 'phi')
+        _, by_route = rmc.channel_production(mid_, mid)
+        rows.append(by_route[('s', 'sampler')] * phi * mid)   # per unit lethargy
+    return edges, np.array(rows)
+
+
+MU_E_EDGES = np.logspace(-5, np.log10(2e7), 31)
+MU_BINS = 40
+
+
+def build_mu_table(rmc, files, k, table, N=8000, J=32, seed=77, floor=0.02):
+    """Learned scattering-cosine proposal: for each material and outgoing
+    energy bin, a density over mu0 = Omega' . Omega proportional to the root
+    mean square of the directions' contributions (eta / density times the
+    per-direction CE estimate) in each mu bin, from a pilot with J
+    stratified isotropic directions; a fraction floor of uniform keeps every
+    row positive."""
+    import openmc.lib
+    mats = list(openmc.lib.materials.keys())          # material ids in index order
+    rec = rmc.residual_sample('s', N, seed=seed, n_directions=J, tail='roulette',
+                              cutoff=math.exp(-3), beta=0.1, keep_directions=True)
+    d = rec['sampler'] == 0
+    ce = rec['ce'].reshape(-1, J)
+    mu = rec['mu'].reshape(-1, J)
+    f = lookup(table, rmc, rec['r'][d], rec['E'][d]) / (N * rec['density'][d])
+    import h5py
+    with h5py.File(files['field']) as h:
+        mat_of_region = h['regions/material_id'][()]
+    reg = np.maximum(rmc.field_locate(rec['r'][d]), 0)
+    mi = np.array([mats.index(int(m)) for m in mat_of_region[reg]])
+    e = np.clip(np.searchsorted(MU_E_EDGES, rec['E'][d], side='right') - 1, 0, len(MU_E_EDGES) - 2)
+    b = np.clip(((mu + 1.0) / 2.0 * MU_BINS).astype(int), 0, MU_BINS - 1)
+    nE = len(MU_E_EDGES) - 1
+    m2 = np.zeros((len(mats), nE, MU_BINS))
+    cnt = np.zeros_like(m2)
+    val = (f[:, None] * ce)**2
+    np.add.at(m2, (np.repeat(mi, J), np.repeat(e, J), b.ravel()), val.ravel())
+    np.add.at(cnt, (np.repeat(mi, J), np.repeat(e, J), b.ravel()), 1.0)
+    rms = np.sqrt(np.where(cnt > 0, m2 / np.maximum(cnt, 1), 0.0))
+    tot = rms.sum(axis=2, keepdims=True)
+    p = np.where(tot > 0, (1 - floor) * rms / np.where(tot > 0, tot, 1) + floor / MU_BINS, 0.0)
+    return (MU_E_EDGES, p)
+
+
 def run_config_table(rmc, files, name, N, k, table, N_big=100_000, seed0=0, proposal=None):
     """Variance of Y per generation at N records per tag, with the yield of
     each record from the importance table: Var(Y_N) = (S m2 - Y^2) / N over
@@ -246,6 +340,11 @@ def run_config_table(rmc, files, name, N, k, table, N_big=100_000, seed0=0, prop
         n_t = c.get('N' + t, N)
         seed = 1_000_003 * (seed0 + 1) + (17 if t == 's' else 29)
         opts = dict(c[t])
+        if c.get('ein') and t == 's':
+            opts['Ein_table'] = proposal['ein']
+            opts['beta_in'] = c['ein']
+        if c.get('mu') and t == 's':
+            opts['mu_table'] = (c['mu'], *proposal['mu'])
         if c.get('opt') and proposal is not None and t in c['opt']:
             opts.update(voxel='tabulated', voxel_weights=proposal[t]['voxel_weights'],
                         E_table=proposal[t]['E_table'])
@@ -268,7 +367,10 @@ def run_config_table(rmc, files, name, N, k, table, N_big=100_000, seed0=0, prop
         else:
             T = time.perf_counter() - t0
             contrib = w * lookup(table, rmc, rec['r'], rec['E'])
-            cs_ = np.bincount(sample, weights=contrib)
+            # records of one destination: its sampler particles, then its
+            # n_outgoing density records
+            ko = opts.get('n_outgoing', 1) if t == 's' else 1
+            cs_ = np.bincount(sample // ko, weights=contrib, minlength=N_big)
             W = float(np.abs(w).sum())
         S = N_big
         m2 = float(np.sum(cs_**2))
@@ -278,8 +380,7 @@ def run_config_table(rmc, files, name, N, k, table, N_big=100_000, seed0=0, prop
         T_N = T * n_t / N_big
         res[t] = dict(mean=Y, var=var_N, T=T_N, W=W * N_big / n_t / (N_big / n_t),
                       cost_var=var_N * T_N, N=n_t, top10=top,
-                      mass_var=float((S * np.sum(np.bincount(sample, weights=w)**2)
-                                      - w.sum()**2) / n_t))
+                      mass_var=0.0)
     res['cost_var'] = res['s']['cost_var'] + res['f']['cost_var']
     return res
 
@@ -295,6 +396,11 @@ def run_config(rmc, files, name, N, reps, n_hist, k, seed0=0, N_big=20_000, n_pe
         n_t = c.get('N' + t, N)
         seed = 1_000_003 * (seed0 + 1) + (17 if t == 's' else 29)
         opts = dict(c[t])
+        if c.get('ein') and t == 's':
+            opts['Ein_table'] = proposal['ein']
+            opts['beta_in'] = c['ein']
+        if c.get('mu') and t == 's':
+            opts['mu_table'] = (c['mu'], *proposal['mu'])
         if c.get('opt') and proposal is not None and t in c['opt']:
             opts.update(voxel='tabulated', voxel_weights=proposal[t]['voxel_weights'],
                         E_table=proposal[t]['E_table'])
@@ -341,6 +447,10 @@ def main():
     ap.add_argument('--field-groups', default=None,
                     help='use field_variants.field_files with this group structure')
     ap.add_argument('--mgxs-particles', type=int, default=20_000)
+    ap.add_argument('--fine-lifts', type=int, nargs='+', default=None,
+                    help='fine lift bins per group (fine_lifts.py)')
+    ap.add_argument('--zone-lifts', type=int, nargs=2, default=None,
+                    help='lifts per zone (fuel rings, graphite rings) from zone_lifts.py')
     ap.add_argument('--field-mesh', type=int, default=12,
                     help='source-region mesh per side of the field variant')
     ap.add_argument('--pilot', default='base',
@@ -356,6 +466,12 @@ def main():
                                         n_per_side=args.field_mesh)
     else:
         w, files, k_mg = cs.exact_volume_files(args.work)
+    if args.fine_lifts:
+        import fine_lifts as fl
+        w, files, k_mg = fl.fine_lift_files(args.work, args.fine_lifts)
+    if args.zone_lifts:
+        import zone_lifts as zl
+        w, files, k_mg = zl.zone_lift_files(args.work, tuple(args.zone_lifts))
     results = []
     p = Path(args.out)
     if p.exists():
@@ -371,6 +487,10 @@ def main():
         proposal = None
         if any('opt=' in n for n in args.configs.split(',')):
             proposal = build_proposal(rmc, files, k_mg, table, base=args.pilot)
+        if any('ein=' in n for n in args.configs.split(',')):
+            proposal = dict(proposal or {}, ein=incident_table(rmc, files))
+        if any('mu=' in n for n in args.configs.split(',')):
+            proposal = dict(proposal or {}, mu=build_mu_table(rmc, files, k_mg, table))
         for name in args.configs.split(','):
             r = run_config_table(rmc, files, name, args.N, k_mg, table, N_big=args.N_big,
                                  proposal=proposal)

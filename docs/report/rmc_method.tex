@@ -119,15 +119,20 @@ eigenvalue calculation. Section~\ref{sec:res:stage8} reports it, with its follow
   \end{itemize}
   The heavy tail removed by the new proposal had caused most of the eigenvalue bias at $N=2000$ and
   the long correlation between generations.
-\item \textbf{Bias.} A bias of $+650$ to $+1000$~pcm remains at $N=8000$. It builds up as the
-  scattering correction matures, and netting's projection explains only part of it.
+\item \textbf{Bias.} A bias of $+650$ to $+1000$~pcm appeared at $N=8000$. Its cause was netting
+  acting on resonance structure that the low term's lifts did not resolve. With resonance-resolved
+  lifts it is $-86\pm58$~pcm (Section~\ref{sec:res:lifts}).
+\item \textbf{Several energies per trace.} Sixteen stratified outgoing states per destination share
+  its backward traces. The scattering residual's variance at equal time falls to a third, and the
+  bank's absolute weight falls below the fission production.
 \item \textbf{History-based flights} cost more than they save.
 \end{itemize}
 
-\paragraph{Verdict.} The method is about 6--10 times short of analog Monte Carlo on this problem. About
-3 of that is in reach of engineering. The rest needs a field whose local error $\varepsilon$
-satisfies $\varepsilon\,\bar n_c\ll1$, with $\bar n_c$ the number of collisions in a neutron's life.
-The remaining bias must be settled first.
+\paragraph{Verdict.} The method is unbiased within about 80~pcm, and its $k$ figure of merit is
+$0.09$--$0.16$ of analog Monte Carlo's on this problem: not a speedup. The limit is no longer the
+scattering residual. It is one scalar, the CE fission production of the field's first-flight flux,
+which is estimated at analog-like cost. A correlated control for it, or MG fission cross sections
+condensed so that the field carries it, is the next step.
 \clearpage
 
 \input{part1_method}

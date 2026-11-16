@@ -109,6 +109,11 @@ class OutgoingProposal {
 public:
   OutgoingProposal(const FrozenField& field, const OutgoingOptions& opt);
   Draw<OutgoingState> sample(Tag t, int64_t region, uint64_t* seed) const;
+  //! As sample(), with the mixture component and the group (or the
+  //! log-uniform energy) chosen by the given uniform number u in [0, 1), so
+  //! that several states of one destination can be stratified in energy
+  Draw<OutgoingState> sample_at(
+    Tag t, int64_t region, double u, uint64_t* seed) const;
   double density(Tag t, int64_t region, const OutgoingState& s) const;
 
 private:
@@ -135,6 +140,14 @@ struct IncidentOptions {
   double beta {0.1};
   double E_min {1e-5};
   double E_max {2e7};
+  //! Tabulated proposal for the sampler route of tag s: with probability
+  //! 1 - beta, a bin of table_edges with probability proportional to
+  //! table[material index * n_bins + bin] and a log-uniform energy within
+  //! it; otherwise log-uniform on [E_min, E_max]. For channels with
+  //! thresholds (inelastic levels), where a log-uniform draw over the whole
+  //! range is mostly wasted. A zero row uses the log-uniform part only.
+  vector<double> table_edges;
+  vector<double> table;
 };
 
 //==============================================================================
@@ -263,6 +276,55 @@ struct ResidualOptions {
   double cone_kappa {0.0};
   double cone_E0 {1e4};
   double cone_E1 {1e7};
+  //! Learned scattering-cosine directions (isotropic direction source only):
+  //! a fraction mu_fraction of the J incident directions has its cosine
+  //! mu0 = Omega' . Omega drawn from a table per material and outgoing-energy
+  //! bin (piecewise constant on mu_n_bins equal bins of [-1, 1]) and its
+  //! azimuth uniform. Weights by the balance heuristic over both components,
+  //! as for the cone. mu_table is [material index (model::materials)]
+  //! [energy bin][mu bin]; a zero row uses isotropic directions only.
+  double mu_fraction {0.0};
+  vector<double> mu_E_edges;
+  int mu_n_bins {0};
+  vector<double> mu_table;
+  //! Outgoing states per destination (tag s, evaluator route): each of the
+  //! n_outgoing states is a density record with its own energy and
+  //! direction, and all share the destination's J backward traces (the
+  //! image energies of every state ride on each path). The noise of the
+  //! high term is mostly fine structure of the path's flux in energy, which
+  //! several image energies per path average at little cost. Records carry
+  //! n_outgoing times their draw density, so weights need no change.
+  int n_outgoing {1};
+  //! Roulette of the elastic images (tag s, evaluator route): nuclide n's
+  //! image is kept with probability p_n = min(1, max(image_roulette,
+  //! 4 x its share of the material's scattering cross section at the
+  //! outgoing energy)) and weighted by 1 / p_n; 0 keeps every image. Each
+  //! image is one more energy on every backward path, and trace nuclides
+  //! contribute little.
+  double image_roulette {0.0};
+  //! Isotropic-flux control on the density route (tag s, evaluator
+  //! channels): on every direction, the same elastic images and kernels with
+  //! the region's isotropic MG flux phi_R(E') / 4 pi in place of the path's
+  //! angular flux; its integral over directions is restored by a stratified
+  //! quadrature in mu0 with flux_quadrature points. The control goes into
+  //! M_s and R_s (weights with c = 1). The per-direction CE production varies
+  //! mostly through the kernel and the cross sections at the image energies,
+  //! which the control shares, so only the flux's angular variation is left.
+  bool flux_control {false};
+  int flux_quadrature {32};
+  double flux_control_Emin {0.0}; //!< applied only at outgoing E >= this
+  //! Below this outgoing energy the control's flux is the local uncollided
+  //! flux of the field's emission, (Q_s + Q_f)(R, E') / Sigma_t(E') per sr,
+  //! which follows the CE self-shielding at the image energies; above it,
+  //! the region's isotropic MG flux
+  double flux_control_local_Emax {0.0};
+  //! Diagnostics: sample i uses the given destination and outgoing state
+  //! (r[3i..3i+2], E[i], u[3i..3i+2]) with density 1, instead of drawing
+  //! them (n must not exceed n_fixed)
+  const double* fixed_r {nullptr};
+  const double* fixed_E {nullptr};
+  const double* fixed_u {nullptr};
+  int64_t n_fixed {0};
 };
 
 //==============================================================================
@@ -289,6 +351,7 @@ public:
   void keep_directions(bool on) { keep_ = on; }
   const vector<double>& kept_ce() const { return kept_ce_; }
   const vector<double>& kept_mg() const { return kept_mg_; }
+  const vector<double>& kept_mu() const { return kept_mu_; }
 
 private:
   //! Destination state
@@ -315,11 +378,24 @@ private:
   struct DirectionTerms {
     double C[2] {0.0, 0.0};
     double M[2] {0.0, 0.0};
+    double F {0.0}; //!< flux control: the evaluator production with the
+                    //!< region's isotropic flux in place of the path's
+    vector<double> Cx; //!< [3 * extra states]: C_s, C_f, F of each extra
+                       //!< outgoing state
     vector<SampledParticle> sampled;
   };
 
   //! MG scalar flux of the region at E': phi_{R,g(E')} h_phi(E') [per eV]
   double region_flux(int64_t region, double E) const;
+
+  //! The control's flux per sr at E' for a destination with outgoing E;
+  //! sigma_t is Sigma_t(E') at the destination (local mode)
+  double control_flux(const Destination& d, double E_out, double E_in,
+    double sigma_t) const;
+
+  //! Integral over incident directions of the isotropic-flux control
+  double flux_control_mean(const Destination& d, const OutgoingState& s,
+    uint64_t* seed);
 
   //! Forward samples of the region term (flux-difference control)
   void region_term(
@@ -361,7 +437,12 @@ private:
   XsProbe probe_;
 
   bool keep_ {false};
-  vector<double> kept_ce_, kept_mg_;
+  vector<double> kept_ce_, kept_mg_, kept_mu_;
+  vector<OutgoingState> extra_states_; //!< further outgoing states of the
+                                       //!< current destination
+  vector<int> image_state_;            //!< state of each elastic image
+  vector<double> extra_density_;       //!< draw densities of extra_states_
+  vector<double> extra_C_;             //!< [3 * extras] summed over directions
 
   // Scratch, reused between samples (no allocation in steady state)
   vector<double> energies_, psi_s_, psi_f_, mg_s_, mg_f_, image_density_;

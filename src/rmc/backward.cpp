@@ -57,8 +57,12 @@ void BackwardFlux::evaluate_all(Position r, Direction u_back,
   bool hit_limit = false;
   if (n == 0)
     return;
-  xs_cache_.resize(n_ce * XS_CACHE);
-  xs_cache_n_.assign(n_ce, 0);
+  sig_.assign(n_ce * XS_CACHE, -1.0);
+  states_.clear();
+  live_.resize(n_ce);
+  for (size_t e = 0; e < n_ce; ++e)
+    live_[e] = e;
+  int sid = -1;
   g_bin_.resize(n_ce);
   i_bin_.resize(n_ce);
   for (size_t e = 0; e < n_ce; ++e)
@@ -80,59 +84,89 @@ void BackwardFlux::evaluate_all(Position r, Direction u_back,
       int64_t region = chunk_.region[k];
       int32_t mat = chunk_.material[k];
 
-      for (size_t e = 0; e < n; ++e) {
+      // Material state of the segment: an index into the few states this
+      // path has met, so that Sigma_t of each energy is looked up once per
+      // state
+      const double kT = chunk_.sqrtkT[k], dm = chunk_.density_mult[k];
+      if (n_ce > 0 && (sid < 0 || states_[sid].mat != mat ||
+                        states_[sid].sqrtkT != kT || states_[sid].dm != dm)) {
+        sid = -1;
+        for (int q = 0; q < static_cast<int>(states_.size()); ++q)
+          if (states_[q].mat == mat && states_[q].sqrtkT == kT &&
+              states_[q].dm == dm) {
+            sid = q;
+            break;
+          }
+        if (sid < 0) {
+          if (static_cast<int>(states_.size()) == XS_CACHE) {
+            states_.clear();
+            std::fill(sig_.begin(), sig_.end(), -1.0);
+          }
+          sid = static_cast<int>(states_.size());
+          states_.push_back({mat, kT, dm, 0.0});
+        }
+      }
+
+      // CE energies still alive
+      for (size_t a = 0; a < live_.size();) {
+        const size_t e = live_[a];
+        double& sg = sig_[e * XS_CACHE + sid];
+        if (sg < 0.0) {
+          sg = probe_.total(mat, E[e], kT, dm);
+          ++n_lookup;
+        }
+        const double sigma = sg;
+        const double x = sigma * l;
+        double integral, ex;
+        if (x < 1e-4) {
+          // Series of (1 - e^-x) / x and of e^-x, to round-off for x < 1e-4
+          integral = l * (1.0 - 0.5 * x + x * x / 6.0);
+          ex = 1.0 - x + 0.5 * x * x - x * x * x / 6.0;
+        } else {
+          ex = std::exp(-x);
+          integral = (1.0 - ex) / sigma;
+        }
+        if (region >= 0) {
+          const double w = T_[e] * integral;
+          psi_s[e] += w * field_.evaluate_bins(region, Tag::s, g_bin_[e], i_bin_[e]);
+          psi_f[e] += w * field_.evaluate_bins(region, Tag::f, g_bin_[e], i_bin_[e]);
+        }
+        T_[e] *= ex;
+        // Unbiased roulette: survive with probability T / cutoff and carry
+        // on with T = cutoff, so the expected remaining tail is unchanged
+        if (opt.mode == Tail::roulette && T_[e] < opt.cutoff) {
+          if (prn(seed) < T_[e] / opt.cutoff) {
+            T_[e] = opt.cutoff;
+          } else {
+            alive_[e] = 0;
+            --n_alive;
+            live_[a] = live_.back();
+            live_.pop_back();
+            continue;
+          }
+        }
+        ++a;
+      }
+
+      // MG groups
+      for (size_t e = n_ce; e < n; ++e) {
         if (!alive_[e])
           continue;
-        double sigma;
-        if (e < n_ce) {
-          // Sigma_t at this energy depends only on the segment's material
-          // state: look in the path's cache first
-          const double kT = chunk_.sqrtkT[k], dm = chunk_.density_mult[k];
-          XsCacheEntry* c = &xs_cache_[e * XS_CACHE];
-          int nc = xs_cache_n_[e], hit = -1;
-          for (int q = 0; q < nc; ++q)
-            if (c[q].mat == mat && c[q].sqrtkT == kT && c[q].dm == dm) {
-              hit = q;
-              break;
-            }
-          if (hit >= 0) {
-            sigma = c[hit].sigma;
-          } else {
-            sigma = probe_.total(mat, E[e], kT, dm);
-            ++n_lookup;
-            if (nc < XS_CACHE) {
-              c[nc] = {mat, kT, dm, sigma};
-              xs_cache_n_[e] = nc + 1;
-            } else {
-              c[n_lookup % XS_CACHE] = {mat, kT, dm, sigma};
-            }
-          }
-        } else {
-          // MG tables are for unit density; the cell instance scales them
-          sigma = mg->sigma_t(mat, chunk_.sqrtkT[k], static_cast<int>(e - n_ce)) *
-                  chunk_.density_mult[k];
-        }
-        // One transcendental per segment and energy: e^{-x} - 1 gives both
-        // the attenuation integral and the transmission
+        // MG tables are for unit density; the cell instance scales them
+        double sigma =
+          mg->sigma_t(mat, chunk_.sqrtkT[k], static_cast<int>(e - n_ce)) *
+          chunk_.density_mult[k];
         double x = sigma * l;
         double em1 = (x < 1e-6) ? -x * (1.0 - 0.5 * x + x * x / 6.0) : std::expm1(-x);
         double integral = (x < 1e-6) ? l * (1.0 - 0.5 * x + x * x / 6.0) : -em1 / sigma;
         double w = T_[e] * integral;
         if (region >= 0) {
-          if (e < n_ce) {
-            psi_s[e] += w * field_.evaluate_bins(region, Tag::s, g_bin_[e], i_bin_[e]);
-            psi_f[e] += w * field_.evaluate_bins(region, Tag::f, g_bin_[e], i_bin_[e]);
-          } else {
-            // Group-integrated, isotropic: Q_g / (4 pi)
-            int g = static_cast<int>(e - n_ce);
-            mg_s[g] += w * field_.emission(region, Tag::s, g) / (4.0 * PI);
-            mg_f[g] += w * field_.emission(region, Tag::f, g) / (4.0 * PI);
-          }
+          // Group-integrated, isotropic: Q_g / (4 pi)
+          int g = static_cast<int>(e - n_ce);
+          mg_s[g] += w * field_.emission(region, Tag::s, g) / (4.0 * PI);
+          mg_f[g] += w * field_.emission(region, Tag::f, g) / (4.0 * PI);
         }
         T_[e] *= 1.0 + em1;
-
-        // Unbiased roulette: survive with probability T / cutoff and carry
-        // on with T = cutoff, so the expected remaining tail is unchanged
         if (opt.mode == Tail::roulette && T_[e] < opt.cutoff) {
           if (prn(seed) < T_[e] / opt.cutoff) {
             T_[e] = opt.cutoff;

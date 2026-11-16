@@ -371,7 +371,17 @@ class ResidualConfig(Structure):
                 ('cone_fraction', c_double), ('cone_kappa', c_double),
                 ('cone_E0', c_double), ('cone_E1', c_double),
                 ('skin_fraction', c_double), ('skin_x', c_double), ('skin_y', c_double),
-                ('skin_radius', c_double), ('skin_dmin', c_double)]
+                ('skin_radius', c_double), ('skin_dmin', c_double),
+                ('fixed_r', POINTER(c_double)), ('fixed_E', POINTER(c_double)),
+                ('fixed_u', POINTER(c_double)), ('n_fixed', c_int64),
+                ('mu_fraction', c_double), ('mu_E_edges', POINTER(c_double)),
+                ('n_mu_E_edges', c_int64), ('mu_n_bins', c_int),
+                ('mu_table', POINTER(c_double)), ('n_mu_table', c_int64),
+                ('flux_control', c_int), ('flux_quadrature', c_int),
+                ('flux_control_Emin', c_double), ('flux_control_local_Emax', c_double),
+                ('n_outgoing', c_int), ('image_roulette', c_double),
+                ('Ein_table_edges', POINTER(c_double)), ('n_Ein_table_edges', c_int64),
+                ('Ein_table', POINTER(c_double)), ('n_Ein_table', c_int64)]
 
 
 DIRECTIONS = {'isotropic': 0, 'sweep': 1}
@@ -392,7 +402,10 @@ def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
                     Ein_range=(1e-5, 2e7), keep_directions=False,
                     all_sampler=False, n_energies=1, common_numbers=False,
                     sampler_control='none', region_samples=1, net=False,
-                    E_table=None, cone=None, skin=None):
+                    E_table=None, cone=None, skin=None, fixed=None, mu_table=None,
+                    flux_control=False, flux_quadrature=32, flux_control_Emin=0.0,
+                    flux_control_local_Emax=0.0, n_outgoing=1,
+                    image_roulette=0.0, Ein_table=None):
     """Residual records of n samples of tag 's' or 'f' with the loaded field.
 
     The options are those of rmc::ResidualOptions (include/openmc/rmc/
@@ -415,7 +428,14 @@ def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
     (fraction, kappa, E0, E1) draws that fraction of the directions from a
     forward cone about the outgoing direction (rmc::ResidualOptions). skin =
     (fraction, x, y, radius, d_min) draws that fraction of box destinations
-    at a log-uniform depth inside a z-cylinder (rmc::VoxelOptions).
+    at a log-uniform depth inside a z-cylinder (rmc::VoxelOptions). fixed =
+    (r[n, 3], E[n], u[n, 3]) evaluates the residual at given destinations
+    and outgoing states (density 1; diagnostics). mu_table = (fraction,
+    E_edges, table[n_materials, n_E, n_mu]) draws that fraction of the
+    directions with learned cosines (rmc::ResidualOptions::mu_*); with
+    keep_directions, 'mu' holds every kept direction's cosine.
+    flux_control adds the isotropic-flux control of the density route to
+    M_s and R_s (use c = 1 in residual_weights).
     """
     w = None
     if voxel_weights is not None:
@@ -432,7 +452,36 @@ def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
         int(n_energies), int(bool(common_numbers)),
         SAMPLER_CONTROL[sampler_control], int(region_samples), int(bool(net)),
         None, 0, None, 0, *(cone if cone is not None else (0.0, 0.0, 1e4, 1e7)),
-        *(skin if skin is not None else (0.0, 0.0, 0.0, 0.0, 1e-5)))
+        *(skin if skin is not None else (0.0, 0.0, 0.0, 0.0, 1e-5)), None, None, None, 0,
+        0.0, None, 0, 0, None, 0, int(bool(flux_control)), int(flux_quadrature),
+        float(flux_control_Emin), float(flux_control_local_Emax), int(n_outgoing),
+        float(image_roulette), None, 0, None, 0)
+    if Ein_table is not None:
+        ee = np.ascontiguousarray(Ein_table[0], dtype=float)
+        et = np.ascontiguousarray(Ein_table[1], dtype=float).ravel()
+        cfg.Ein_table_edges = ee.ctypes.data_as(POINTER(c_double))
+        cfg.n_Ein_table_edges = ee.size
+        cfg.Ein_table = et.ctypes.data_as(POINTER(c_double))
+        cfg.n_Ein_table = et.size
+    if mu_table is not None:
+        frac, mE, mt = mu_table
+        mE = np.ascontiguousarray(mE, dtype=float)
+        mt = np.ascontiguousarray(mt, dtype=float)
+        cfg.mu_fraction = float(frac)
+        cfg.mu_E_edges = mE.ctypes.data_as(POINTER(c_double))
+        cfg.n_mu_E_edges = mE.size
+        cfg.mu_n_bins = mt.shape[-1]
+        flat = mt.ravel()
+        cfg.mu_table = flat.ctypes.data_as(POINTER(c_double))
+        cfg.n_mu_table = flat.size
+    if fixed is not None:
+        fr = np.ascontiguousarray(fixed[0], dtype=float).ravel()
+        fE = np.ascontiguousarray(fixed[1], dtype=float).ravel()
+        fu = np.ascontiguousarray(fixed[2], dtype=float).ravel()
+        cfg.fixed_r = fr.ctypes.data_as(POINTER(c_double))
+        cfg.fixed_E = fE.ctypes.data_as(POINTER(c_double))
+        cfg.fixed_u = fu.ctypes.data_as(POINTER(c_double))
+        cfg.n_fixed = fE.size
     if E_table is not None:
         edges = np.ascontiguousarray(E_table[0], dtype=float)
         table = np.ascontiguousarray(E_table[1], dtype=float).ravel()
@@ -471,6 +520,9 @@ def residual_sample(tag, n, seed=1, directions='isotropic', n_directions=8,
         ce, mg = np.empty(k.value), np.empty(k.value)
         _dll.openmc_rmc_residual_directions(byref(k), p(ce), p(mg))
         out['ce'], out['mg'] = ce, mg
+        mu = np.empty(k.value)
+        _dll.openmc_rmc_residual_direction_mu(byref(k), _dp(mu) if k.value else None)
+        out['mu'] = mu
     return out
 
 

@@ -170,6 +170,30 @@ typedef struct {
   double skin_y;
   double skin_radius;
   double skin_dmin;
+  // Diagnostics: fixed destinations and outgoing states (n_fixed of them)
+  const double* fixed_r;
+  const double* fixed_E;
+  const double* fixed_u;
+  int64_t n_fixed;
+  // Learned cosine directions (rmc::ResidualOptions::mu_*)
+  double mu_fraction;
+  const double* mu_E_edges;
+  int64_t n_mu_E_edges;
+  int mu_n_bins;
+  const double* mu_table;
+  int64_t n_mu_table;
+  // Isotropic-flux control (rmc::ResidualOptions::flux_control)
+  int flux_control;
+  int flux_quadrature;
+  double flux_control_Emin;
+  double flux_control_local_Emax;
+  int n_outgoing; //!< outgoing states per destination (tag s)
+  double image_roulette; //!< rmc::ResidualOptions::image_roulette
+  // Tabulated incident-energy proposal (rmc::IncidentOptions::table)
+  const double* Ein_table_edges;
+  int64_t n_Ein_table_edges;
+  const double* Ein_table; //!< [n_materials * (n_Ein_table_edges - 1)]
+  int64_t n_Ein_table;
 } openmc_rmc_residual_config;
 
 //! Draw the records of n samples of tag (0 = s, 1 = f) with the loaded
@@ -278,6 +302,9 @@ int openmc_rmc_flight_children(int64_t* parent, double* path, int* nuclide);
 //! Incident energy and nuclide of the sampled particles of the last
 //! openmc_rmc_residual_sample call (0 and -1 on density records)
 int openmc_rmc_residual_records_aux(double* E_in, int* nuclide);
+//! Scattering cosine Omega' . Omega of every kept direction of the last
+//! residual sample with keep_directions (same order as the CE estimates)
+int openmc_rmc_residual_direction_mu(int64_t* n, double* mu);
 }
 
 #endif // OPENMC_RMC_CAPI_H

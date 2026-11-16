@@ -591,6 +591,164 @@ here, that is about 1.7: larger than the production itself. The method beats ana
 when $\varepsilon\,\bar n_c\ll1$. In graphite that means a field accurate to well below 1\% locally;
 in light water, with $\bar n_c\approx20$, about twice that.
 
+\subsection{Resonance-resolved lifts and several energies per trace}\label{sec:res:lifts}
+
+The speedup study ended with two open items: a bias of $+650$ to $+1000$~pcm, and a scattering
+residual too noisy by a factor of 6--10. This subsection finds the cause of the first, makes the
+scattering residual about five times more efficient, and finds that a different term now limits
+the method. The runs are in \code{examples/rmc/results/speedup2}.
+
+\paragraph{What the direction noise is.} Anisotropic emission was to be the next field improvement.
+Before implementing it in random ray, its potential was measured. The scattering residual was
+evaluated at fixed destinations and energies for 12 outgoing directions (128 incident directions
+each), and split into its angle average and the rest:
+\begin{itemize}
+\item the angular part carries $15\%$ of the residual's second moment overall;
+\item in the fuel it carries $13\%$, and in the fast fuel about $1\%$.
+\end{itemize}
+An anisotropic field could remove at most that share, so it was not implemented.
+
+The per-direction data show what the noise is instead. At a fixed destination and outgoing state,
+the CE production of single incident directions scatters by $13$--$100\%$ about its mean. The MG
+production on the same paths varies by about $5\%$ and is uncorrelated with it. Each direction has
+its own image energy $E'=E/\gamma_A(\mu_0)$ for each nuclide, and the path's flux $\psi(E')$ has
+resonance structure: a ray that crosses the pin at an energy on a $^{238}$U resonance arrives
+attenuated, and a neighbouring energy does not. The direction noise is therefore noise in
+\emph{energy}, sampled once per direction. No smooth control can follow it. Three were tried:
+\begin{itemize}
+\item a control with the region's isotropic flux at the same image energies: correlation $0.95$ in
+  the fast fuel, where the structure is the kernel's and not the flux's, but only $-25\%$ in the
+  total variance;
+\item a control with the local uncollided flux $Q/\Sigma_t$: no gain;
+\item incident directions drawn from a learned distribution of the scattering cosine: $-15\%$.
+\end{itemize}
+
+\paragraph{Several outgoing states per destination.} If the noise is in energy, more energies per
+trace average it. Each destination now carries $K_{out}$ outgoing states (energy and direction), each
+a density record of its own, and all of them share the destination's $J$ backward traces: the image
+energies of every state ride on each path. Three details matter:
+\begin{itemize}
+\item \textbf{Stratified energies.} The $K_{out}$ energies are stratified over the proposal
+  (systematic sampling with one random offset), so every destination covers the energy range. This
+  matters in the fast fuel: there the sampler-route particles (inelastic scattering) of a
+  destination are offset by the low term at fast outgoing energies, and only on average.
+\item \textbf{Image roulette.} In the fuel each state has one image per nuclide, and trace nuclides
+  contribute little. Nuclide $n$'s image is kept with probability
+  $p_n=\min(1,\max(0.25,4\times\text{its share of }\Sigma_s))$ and weighted by $1/p_n$. A floor of
+  $0.05$ is too low: a rare image on a resonance then carries a weight of 20.
+\item \textbf{Tabulated incident energies} for the sampler route, proportional to its production
+  times the lifted flux. A log-uniform draw over twelve decades mostly misses the inelastic
+  thresholds.
+\end{itemize}
+The estimate stays unbiased for any $K_{out}$: every record carries $K_{out}$ times its draw density.
+
+\begin{table}[t]\centering\small
+\caption{The scattering residual with $K_{out}$ outgoing states per destination ($J=8$, $\beta=0.1$,
+cutoff $e^{-3}$, $N=2000$ destinations): variance of the fission yield per generation and time per
+generation. The last column is their product relative to $K_{out}=1$ with the first lifts.}
+\label{tab:lifts:ko}
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+lifts & $K_{out}$ & Var$(Y_s)$ & time (s) & Var $\times$ time\\
+\midrule
+200 fine bins per group & 1 & 0.0338 & 0.32 & 1\\
+ & 4 (independent energies) & 0.0103 & 0.68 & 0.65\\
+ & 8 (stratified, roulette, tabulated incident) & 0.0059 & 0.93 & 0.51\\
+ & 16 & 0.0028 & 1.43 & 0.37\\
+resonance-resolved (4000 bins, 4~eV--5.5~keV) & 1 & 0.0290 & 0.31 & 0.83\\
+ & 8 & 0.0043 & 0.96 & 0.38\\
+ & 16 & 0.0023 & 1.49 & 0.32\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The variance falls nearly as $1/K_{out}$ (Table~\ref{tab:lifts:ko}), almost as if each state were an
+independent destination, while a state costs about a sixth of a destination. With $K_{out}=16$ and the
+lifts below, the scattering residual's variance at equal time is about a third of what it was. In the
+iteration, the bank's absolute weight falls below one for the first time ($\Wabs\approx0.85$).
+
+\paragraph{Resonance-resolved lifts remove the bias.} The lifts had 200 fine bins per group. In the
+group from 4~eV to 5.5~keV that is a lethargy width of $0.036$ per bin, ten times wider than the
+$^{238}$U resonances. The scattering emission of the fuel keeps resonance structure, because a
+collision with $^{238}$U changes the lethargy by at most $0.017$. So the low term $U(E)$ averaged
+over structure that the CE production $C(E)$ resolves, and the residual in the fuel carried large
+positive and negative parts within every lift bin.
+
+New lifts were tallied with 4000 bins in that group (lethargy width $0.0018$) and 800 in the next.
+The field's group emission is unchanged; only the within-group shapes are finer. Two results:
+\begin{itemize}
+\item \textbf{Variance.} The scattering residual's variance falls by $15$--$30\%$
+  (Table~\ref{tab:lifts:ko}).
+\item \textbf{Bias.} With the same seeds and settings ($N=8000$, $K_{out}=1$, empirical placement),
+  the bias goes from $+664\pm102$~pcm to $-31\pm80$~pcm (the error from batch means; the three
+  replicas agree within $30$~pcm). With $K_{out}=16$, nine replicas give $-86\pm58$~pcm.
+\end{itemize}
+This settles the cause of the bias. It was netting: not through the netting bins of the resonance
+range, which the follow-up tested, but through what was in them. The unresolved low term made the
+correction carry large cancelling parts on the scale of single resonances, and every netting
+smeared them within its bins. With lifts that resolve the resonances, the correction no longer has
+that structure, and netting's projection error falls below the present precision of about 80~pcm.
+
+\paragraph{What limits the method now.} With the scattering residual quieter, the figure of merit
+should have risen. It did not: the best configuration ($K_{out}=16$, resonance-resolved lifts,
+$N=2000$, $N_f=6000$) gives $\sigma(\bar k)=0.0013$--$0.0017$ over 60 generations in about 145~s. That
+is a figure of merit of $0.09$--$0.16$ of OpenMC's, the same as before within its uncertainty.
+
+The reason is a noise source that had been hidden. The per-generation spread of $k_n$ is now white
+(no autocorrelation) and proportional to $1/\sqrt{N_f}$, the number of \emph{fission} residual
+samples:
+\begin{center}\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+run & $N_f$ & $\sigma_{gen}$\\
+\midrule
+$N=2000$, $K_{out}=8$ & 2000 & 0.0168\\
+$N=4000$, $K_{out}=8$ & 4000 & 0.0126\\
+$N=2000$, $K_{out}=16$ & 6000 & 0.0095\\
+$N=8000$, $K_{out}=1$ & 8000 & 0.0088\\
+\bottomrule
+\end{tabular}
+\end{center}
+This is the noise of one number: the CE fission production of the field's own first-flight flux,
+\begin{equation}
+X=\big\langle\nu\Sigma_f,\;\phi^{CE}[a\,\Qmg]\big\rangle,
+\end{equation}
+which enters every $k_n$ through the fission residual's mass. $X$ is a constant of the frozen field.
+Estimating it directly and averaging the estimates over the generations
+(\code{-{}-field-production}) removes the white noise: $\sigma_{gen}$ falls from $0.0095$ to
+$0.003$. But the error of the running mean is then shared by every generation, and the spread of
+replica means stays at $0.002$.
+
+The eigenvalue cannot be known better than $X$: $\sigma_k/k\ge\sigma_X/X$. And $X$ is expensive to
+estimate, because no variance reduction is in place for it:
+\begin{itemize}
+\item the MG control on the same paths lowers its variance only from $(1.7\%)^2$ to $(1.2\%)^2$ per
+  $2\times10^4$ points;
+\item for the fission residual, more incident energies or directions per sample lower the variance
+  only in proportion to their cost (Var $\times$ time is constant from 8 to 256 path-energies per
+  sample).
+\end{itemize}
+Reaching the reference's $0.077\%$ in $X$ with the present estimator takes about as long as the
+reference itself. This term, not the scattering residual, now sets the figure of merit.
+
+\paragraph{Where a speedup has to come from.} The method's premise holds for the shape of the
+correction: it is carried by signed particles whose absolute weight is now below the fission
+production. It does not yet hold for the one scalar $X$, which is estimated at analog-like cost. The
+candidates:
+\begin{itemize}
+\item \textbf{A correlated control for $X$.} Evaluate the CE and the lifted-MG fission production
+  at the same incident energies on the same path, $\nu\Sigma_f(E')\,[\psi^{CE}(E')-\psi^{MG}_{g}h_\phi(E')]$,
+  so that only the flux difference is sampled. The flux-difference control of the sampler route did
+  this for the high term of the fission residual (4.7 times, Section~\ref{sec:res:controlled}); it
+  has to be combined with destination pooling.
+\item \textbf{Importance in the thermal range.} Most of $X$ is thermal fission in the pin's outer
+  layer. Destinations by the field's fission emission and incident energies by
+  $\nu\Sigma_f\phi$ are not yet used for tag $f$.
+\item \textbf{A field that carries $X$.} If the MG cross sections were condensed with the CE flux of
+  the field's own emission, the MG and CE fission productions of the field would agree by
+  construction, and $X-X^{MG}$ would be a second-order quantity.
+\end{itemize}
+
 \subsection{What optimization could recover}\label{sec:s8:projection}
 
 \begin{table}[t]\centering\small
@@ -666,30 +824,25 @@ cross sections.
 
 \subsection{Verdict}
 
-The method runs. It is stable only with netting, and its pieces behave as designed:
+The method runs, and after Sections~\ref{sec:res:speedup} and~\ref{sec:res:lifts} it is unbiased
+within the present precision:
 \begin{itemize}
-\item pooling cancels the fission residual exactly;
-\item netting holds $\Wabs$ at a stationary value;
-\item the correction tally with CE points reproduces the fission shape.
+\item \textbf{Bias.} With lifts that resolve the resonances, the eigenvalue bias is $-86\pm58$~pcm
+  (nine replicas), down from $+650$ to $+1000$~pcm. Its cause was netting acting on the unresolved
+  resonance structure of the low term.
+\item \textbf{The correction.} The scattering residual is about 15 times more efficient than in the
+  first measurement (proposal, tracer, several energies per trace, lifts). The bank's absolute
+  weight is below the fission production ($\Wabs\approx0.85$), from 4.4.
+\item \textbf{Figure of merit.} For $k$ it is $0.09$--$0.16$ of analog Monte Carlo's, from $0.005$
+  in the first measurement. It is not a speedup.
 \end{itemize}
 
-After the speedup study (Section~\ref{sec:res:speedup}):
-\begin{itemize}
-\item the $k$ figure of merit is $0.08$--$0.17$ of analog Monte Carlo's, from $0.005$ (batch-means
-  errors on both): about 20 times better, but not yet a speedup;
-\item a better outgoing-energy proposal removes most of the bias at $N=2000$ and shortens the
-  correlation from about 21 generations to about 3, through the heavy tail it removes;
-\item a remaining eigenvalue bias of $+650$ to $+1000$~pcm appears at $N=8000$. It builds up as the
-  scattering correction matures, is reduced but not removed by better netting placement, and is the
-  first thing to settle.
-\end{itemize}
-
-What sets the variance is the size of the scattering residual: about $4.5\%$ of the scattering
-emission, which with 37 collisions per lifetime is more than the fission production. Neither more
-groups, better MGXS statistics nor a finer mesh changes it. The next stage should:
+What limits it has changed. It is no longer the scattering residual. It is one scalar: the CE
+fission production $X$ of the field's first-flight flux, which enters every $k_n$ and is estimated
+without effective variance reduction. The next stage should:
 \begin{enumerate}
-\item find the rest of the bias (the netting projection explains part of it);
-\item reduce the residual near the pin surface, with spatially resolved lifts or anisotropic emission,
-  and measure the residual's size against the $\varepsilon\,\bar n_c\ll1$ criterion;
-\item move cancellation into C++ and allocate directions by stratum (about $3\times$ together).
+\item build a correlated control for $X$ (same incident energies on the same paths), with
+  importance sampling in the thermal range;
+\item condense the MG fission cross sections so that the field carries $X$ to first order;
+\item then remeasure, with enough replicas to resolve a figure of merit to 20\%.
 \end{enumerate}

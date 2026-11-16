@@ -264,6 +264,35 @@ Draw<OutgoingState> OutgoingProposal::sample(
   return {s, density(t, region, s)};
 }
 
+Draw<OutgoingState> OutgoingProposal::sample_at(
+  Tag t, int64_t region, double u, uint64_t* seed) const
+{
+  if (n_tab_ > 0)
+    return sample(t, region, seed);
+  OutgoingState s;
+  double mass = (opt_.beta < 1.0) ? group_sum(field_, t, region) : 0.0;
+  const double beta = (mass > 0.0) ? opt_.beta : 1.0;
+  if (u < beta) {
+    s.E = opt_.E_min * std::exp(log_ratio_ * (u / beta));
+  } else {
+    double x = (u - beta) / (1.0 - beta) * mass, c = 0.0;
+    int g = 0;
+    for (; g < field_.n_groups() - 1; ++g) {
+      c += field_.emission(region, t, g);
+      if (c > x)
+        break;
+    }
+    double dens;
+    s.E = field_.sample_shape(
+      static_cast<FrozenField::Shape>(t), region, g, seed, dens);
+  }
+  double mu = 2.0 * prn(seed) - 1.0;
+  double phi = 2.0 * PI * prn(seed);
+  double st = std::sqrt(std::max(0.0, 1.0 - mu * mu));
+  s.u = {st * std::cos(phi), st * std::sin(phi), mu};
+  return {s, density(t, region, s)};
+}
+
 double OutgoingProposal::energy_density(Tag t, int64_t region, double E) const
 {
   if (n_tab_ > 0) {
@@ -385,6 +414,17 @@ ResidualSampler::ResidualSampler(const FrozenField& field,
 {
   if (opt.sampler.energies < 1)
     fatal_error("RMC residual: the sampler route needs K >= 1 energies.");
+  if (opt.flux_control &&
+      (!field.has_flux() || !field.has_shape(FrozenField::Shape::phi)))
+    fatal_error("RMC residual: the isotropic-flux control needs the field's "
+                "scalar flux and the flux lifts.");
+  if (opt.n_outgoing > 1 && (opt.control ||
+                              opt.directions != DirectionMode::isotropic))
+    fatal_error("RMC residual: several outgoing states per destination need "
+                "isotropic directions and no MG control.");
+  if (opt.flux_control && opt.control)
+    fatal_error("RMC residual: the isotropic-flux control and the MG control "
+                "share the M and R terms; use one.");
   if (opt.sampler.control == SamplerControl::region) {
     if (!field.has_flux())
       fatal_error("RMC residual: the flux-difference control needs the field's "
@@ -428,6 +468,38 @@ Draw<double> ResidualSampler::incident(Tag t, const Destination& d,
 {
   const auto& o = opt_.incident;
   const double log_ratio = std::log(o.E_max / o.E_min);
+  if (t == Tag::s && !o.table.empty() && d.material >= 0) {
+    const int nb = static_cast<int>(o.table_edges.size()) - 1;
+    const double* row = &o.table[static_cast<size_t>(d.material) * nb];
+    double sum = 0.0;
+    for (int b = 0; b < nb; ++b)
+      sum += row[b];
+    const double beta = (sum > 0.0) ? o.beta : 1.0;
+    double E;
+    if (prn(seed) >= beta) {
+      double x = prn(seed) * sum, c = 0.0;
+      int b = 0;
+      for (; b < nb - 1; ++b) {
+        c += row[b];
+        if (c > x)
+          break;
+      }
+      E = o.table_edges[b] *
+          std::exp(std::log(o.table_edges[b + 1] / o.table_edges[b]) * prn(seed));
+    } else {
+      E = o.E_min * std::exp(log_ratio * prn(seed));
+    }
+    double f = (E >= o.E_min && E <= o.E_max) ? beta / (E * log_ratio) : 0.0;
+    if (sum > 0.0 && E >= o.table_edges.front() && E < o.table_edges.back()) {
+      int b = static_cast<int>(std::upper_bound(o.table_edges.begin(),
+                                 o.table_edges.end(), E) -
+                               o.table_edges.begin()) -
+              1;
+      f += (1.0 - beta) * row[b] / sum /
+           (E * std::log(o.table_edges[b + 1] / o.table_edges[b]));
+    }
+    return {E, f};
+  }
   if (o.mode == IncidentMode::flux) {
     const int G = field_.n_groups();
     w_g_.assign(G, 0.0);
@@ -542,18 +614,45 @@ void ResidualSampler::direction(Tag t, const Destination& d, Direction omega_in,
   image_density_.clear();
   image_nuclide_.clear();
   double mu0 = omega_in.dot(s.u);
+  image_state_.clear();
   if (t == Tag::s && !all_sampler) {
-    probe_.total(d.material, s.E, d.sqrtkT, d.density_mult);
-    for (int i = 0; i < static_cast<int>(mat.nuclide_.size()); ++i) {
-      int i_nuc = mat.nuclide_[i];
-      auto img = elastic_stationary(
-        i_nuc, ChannelRegistry::elastic_kT(i_nuc, probe_), s.E, mu0);
-      if (img.density > 0.0) {
-        energies_.push_back(img.E_in);
-        image_density_.push_back(img.density);
-        image_nuclide_.push_back(i);
+    const int n_states = 1 + static_cast<int>(extra_states_.size());
+    for (int q = 0; q < n_states; ++q) {
+      const OutgoingState& sq = (q == 0) ? s : extra_states_[q - 1];
+      double mu_q = (q == 0) ? mu0 : omega_in.dot(sq.u);
+      probe_.total(d.material, sq.E, d.sqrtkT, d.density_mult);
+      const int n_nuc = static_cast<int>(mat.nuclide_.size());
+      double sig_s = 0.0;
+      if (opt_.image_roulette > 0.0) {
+        for (int i = 0; i < n_nuc; ++i) {
+          const auto& micro = probe_.particle().neutron_xs(mat.nuclide_[i]);
+          sig_s += mat.atom_density(i, d.density_mult) *
+                   (micro.total - micro.absorption);
+        }
+      }
+      for (int i = 0; i < n_nuc; ++i) {
+        int i_nuc = mat.nuclide_[i];
+        double keep = 1.0;
+        if (opt_.image_roulette > 0.0 && sig_s > 0.0) {
+          const auto& micro = probe_.particle().neutron_xs(i_nuc);
+          double share = mat.atom_density(i, d.density_mult) *
+                         (micro.total - micro.absorption) / sig_s;
+          keep = std::min(1.0, std::max(opt_.image_roulette, 4.0 * share));
+          if (keep < 1.0 && prn(seed) >= keep)
+            continue;
+        }
+        auto img = elastic_stationary(
+          i_nuc, ChannelRegistry::elastic_kT(i_nuc, probe_), sq.E, mu_q);
+        img.density /= keep;
+        if (img.density > 0.0) {
+          energies_.push_back(img.E_in);
+          image_density_.push_back(img.density);
+          image_nuclide_.push_back(i);
+          image_state_.push_back(q);
+        }
       }
     }
+    out.Cx.assign(3 * extra_states_.size(), 0.0);
   }
   Draw<double> Ein {0.0, 0.0};
   const bool fission_evaluator = (t == Tag::f) && !all_sampler;
@@ -589,8 +688,21 @@ void ResidualSampler::direction(Tag t, const Destination& d, Direction omega_in,
       double sigma_el = ChannelRegistry::production(el, d.density_mult, probe_);
       // Density per unit mu0 and azimuth: 1 / (2 pi)
       double f = sigma_el * image_density_[k] / (2.0 * PI);
-      out.C[0] += f * psi_s_[k];
-      out.C[1] += f * psi_f_[k];
+      const int q = image_state_[k];
+      const double E_q = (q == 0) ? s.E : extra_states_[q - 1].E;
+      double F = 0.0;
+      if (opt_.flux_control && E_q >= opt_.flux_control_Emin)
+        F = f * control_flux(
+                  d, E_q, energies_[k], probe_.particle().macro_xs().total);
+      if (q == 0) {
+        out.C[0] += f * psi_s_[k];
+        out.C[1] += f * psi_f_[k];
+        out.F += F;
+      } else {
+        out.Cx[3 * (q - 1)] += f * psi_s_[k];
+        out.Cx[3 * (q - 1) + 1] += f * psi_f_[k];
+        out.Cx[3 * (q - 1) + 2] += F;
+      }
     }
   } else if (fission_evaluator && Ein.density > 0.0) {
     // Fission: OpenMC's tabulated nu-fission per nuclide, shared among
@@ -694,6 +806,51 @@ void ResidualSampler::direction(Tag t, const Destination& d, Direction omega_in,
   // MG control on this direction
   if (opt_.control)
     mg_terms(t, d, s, mg_s_, mg_f_, Ein.value, Ein.density, out.M);
+}
+
+double ResidualSampler::control_flux(
+  const Destination& d, double E_out, double E_in, double sigma_t) const
+{
+  if (E_out < opt_.flux_control_local_Emax) {
+    if (!(sigma_t > 0.0))
+      return 0.0;
+    return (field_.evaluate(d.region, Tag::s, E_in) +
+             field_.evaluate(d.region, Tag::f, E_in)) /
+           sigma_t;
+  }
+  return region_flux(d.region, E_in) / (4.0 * PI);
+}
+
+double ResidualSampler::flux_control_mean(
+  const Destination& d, const OutgoingState& st, uint64_t* seed)
+{
+  // R = sum_n int_{-1}^{1} dmu0 sigma_el,n(E'_n) p_n(mu0) phi_R(E'_n) / 4 pi
+  // (the integral over azimuth, 2 pi, cancels the 1 / 2 pi of the kernel),
+  // by one random point in each of K equal strata of mu0: unbiased
+  const Material& mat = *model::materials[d.material];
+  const int K = std::max(1, opt_.flux_quadrature);
+  const double h = 2.0 / K;
+  double sum = 0.0;
+  probe_.total(d.material, st.E, d.sqrtkT, d.density_mult);
+  for (int q = 0; q < K; ++q) {
+    double mu0 = -1.0 + h * (q + prn(seed));
+    for (int i = 0; i < static_cast<int>(mat.nuclide_.size()); ++i) {
+      int i_nuc = mat.nuclide_[i];
+      probe_.total(d.material, st.E, d.sqrtkT, d.density_mult);
+      auto img = elastic_stationary(
+        i_nuc, ChannelRegistry::elastic_kT(i_nuc, probe_), st.E, mu0);
+      if (!(img.density > 0.0))
+        continue;
+      probe_.total(d.material, img.E_in, d.sqrtkT, d.density_mult);
+      Channel el {i, i_nuc, 0, ChannelKind::elastic, Tag::s};
+      if (registry_.route(el, img.E_in, probe_) != Route::evaluator)
+        continue;
+      double sigma_el = ChannelRegistry::production(el, d.density_mult, probe_);
+      sum += h * sigma_el * img.density *
+             control_flux(d, st.E, img.E_in, probe_.particle().macro_xs().total);
+    }
+  }
+  return sum;
 }
 
 double ResidualSampler::region_flux(int64_t region, double E) const
@@ -805,6 +962,7 @@ void ResidualSampler::sample(
   if (keep_) {
     kept_ce_.clear();
     kept_mg_.clear();
+    kept_mu_.clear();
   }
 
   for (int64_t i = 0; i < n; ++i) {
@@ -813,16 +971,49 @@ void ResidualSampler::sample(
 
     // Destination and its state
     int64_t region;
-    auto rd = voxel_.sample(&s, region);
+    Draw<Position> rd {{0.0, 0.0, 0.0}, 1.0};
+    if (opt_.n_fixed > 0) {
+      if (i >= opt_.n_fixed)
+        fatal_error("RMC residual: more samples than fixed destinations.");
+      rd.value = {opt_.fixed_r[3 * i], opt_.fixed_r[3 * i + 1], opt_.fixed_r[3 * i + 2]};
+    } else {
+      rd = voxel_.sample(&s, region);
+    }
     Destination d;
     d.r = rd.value;
     if (!locate(field_, d.r, d.region, d.material, d.sqrtkT, d.density_mult))
       fatal_error("RMC residual: destination outside the geometry.");
 
     // Outgoing state, and the field at it
-    auto draw = outgoing_.sample(t, d.region, &s);
+    // With several outgoing states, their energies are stratified over the
+    // proposal (systematic sampling with one random offset), so that every
+    // destination covers the energy range, in particular the part of the low
+    // term that the sampler-route particles of this destination offset
+    const bool multi = opt_.n_outgoing > 1 && t == Tag::s &&
+                       !registry_.all_sampler() && opt_.n_fixed == 0;
+    const double xi = multi ? prn(&s) : 0.0;
+    auto draw = multi ? outgoing_.sample_at(t, d.region, xi / opt_.n_outgoing, &s)
+                      : outgoing_.sample(t, d.region, &s);
+    if (opt_.n_fixed > 0) {
+      draw.value.E = opt_.fixed_E[i];
+      draw.value.u = {opt_.fixed_u[3 * i], opt_.fixed_u[3 * i + 1], opt_.fixed_u[3 * i + 2]};
+      draw.density = 1.0;
+    }
     const OutgoingState& st = draw.value;
     double U = field_.evaluate(d.region, t, st.E);
+
+    // Further outgoing states sharing this destination's traces
+    extra_states_.clear();
+    extra_density_.clear();
+    if (multi) {
+      for (int q = 1; q < opt_.n_outgoing; ++q) {
+        auto dq = outgoing_.sample_at(
+          t, d.region, (q + xi) / opt_.n_outgoing, &s);
+        extra_states_.push_back(dq.value);
+        extra_density_.push_back(dq.density);
+      }
+    }
+    extra_C_.assign(3 * extra_states_.size(), 0.0);
 
     double C[2] = {0.0, 0.0}, M[2] = {0.0, 0.0}, R[2] = {0.0, 0.0};
     bool active = d.material != MATERIAL_VOID;
@@ -842,6 +1033,50 @@ void ResidualSampler::sample(
                      std::log(opt_.cone_E1 / opt_.cone_E0);
           kappa = opt_.cone_kappa * std::min(1.0, x);
         }
+        // Learned cosine table for this material and outgoing energy
+        const double* mu_row = nullptr;
+        double mu_row_sum = 0.0;
+        if (opt_.mu_fraction > 0.0 && opt_.mu_n_bins > 0 && d.material >= 0) {
+          const int nE = static_cast<int>(opt_.mu_E_edges.size()) - 1;
+          if (st.E >= opt_.mu_E_edges.front() && st.E < opt_.mu_E_edges.back()) {
+            int e = static_cast<int>(std::upper_bound(opt_.mu_E_edges.begin(),
+                                       opt_.mu_E_edges.end(), st.E) -
+                                     opt_.mu_E_edges.begin()) -
+                    1;
+            int64_t off = (static_cast<int64_t>(d.material) * nE + e) * opt_.mu_n_bins;
+            if (off + opt_.mu_n_bins <= static_cast<int64_t>(opt_.mu_table.size())) {
+              mu_row = &opt_.mu_table[off];
+              for (int b = 0; b < opt_.mu_n_bins; ++b)
+                mu_row_sum += mu_row[b];
+            }
+          }
+        }
+        if (mu_row && mu_row_sum > 0.0) {
+          const int nb = opt_.mu_n_bins;
+          const double dmu = 2.0 / nb;
+          int Jt = std::min(J - 1, static_cast<int>(std::lround(opt_.mu_fraction * J)));
+          int Ji = J - Jt;
+          stratified_directions(Ji, &s, dirs);
+          picks_.clear();
+          for (int c = 0; c < Jt; ++c) {
+            double x = prn(&s) * mu_row_sum, acc = 0.0;
+            int b = 0;
+            for (; b < nb - 1; ++b) {
+              acc += mu_row[b];
+              if (acc > x)
+                break;
+            }
+            double mu = -1.0 + dmu * (b + prn(&s));
+            dirs.push_back(rotate_angle(st.u, mu, nullptr, &s));
+          }
+          weights.resize(dirs.size());
+          for (size_t j = 0; j < dirs.size(); ++j) {
+            double mu = std::max(-1.0, std::min(1.0, dirs[j].dot(st.u)));
+            int b = std::min(nb - 1, static_cast<int>((mu + 1.0) / dmu));
+            double pdf_mu = mu_row[b] / mu_row_sum / dmu; // per unit mu
+            weights[j] = 1.0 / (Ji / (4.0 * PI) + Jt * pdf_mu / (2.0 * PI));
+          }
+        } else {
         int Jc = (kappa > 1e-3)
                    ? std::min(J - 1, static_cast<int>(
                                        std::lround(opt_.cone_fraction * J)))
@@ -867,6 +1102,7 @@ void ResidualSampler::sample(
             double f = norm * std::exp(kappa * (mu - 1.0));
             weights[j] = 1.0 / (Ji / (4.0 * PI) + Jc * f);
           }
+        }
         }
       } else {
         // Sweep segments in the region; omega_j = 4 pi l_j / (rho V_R)
@@ -936,15 +1172,23 @@ void ResidualSampler::sample(
         C[1] += weights[j] * dt.C[1];
         M[0] += weights[j] * dt.M[0];
         M[1] += weights[j] * dt.M[1];
+        if (opt_.flux_control)
+          M[0] += weights[j] * dt.F;
+        for (size_t q = 0; q < dt.Cx.size() && q < extra_C_.size(); ++q)
+          extra_C_[q] += weights[j] * dt.Cx[q];
         if (keep_) {
           kept_ce_.push_back(dt.C[0] + dt.C[1]);
-          kept_mg_.push_back(dt.M[0] + dt.M[1]);
+          kept_mg_.push_back(dt.M[0] + dt.M[1] + dt.F); // F: flux control
+          kept_mu_.push_back(dirs[j].dot(st.u));
         }
         for (const auto& q : dt.sampled)
           push_sampled(out, d.r, q, weights[j], rd.density, t, 1);
       }
       if (opt_.control && opt_.directions == DirectionMode::isotropic)
         control_mean(t, d, st, &s, R);
+      if (opt_.flux_control && t == Tag::s && !registry_.all_sampler() &&
+          st.E >= opt_.flux_control_Emin)
+        R[0] += flux_control_mean(d, st, &s);
       if (opt_.sampler.control == SamplerControl::region &&
           opt_.sampler_route && (t == Tag::s || registry_.all_sampler())) {
         region_particles_.clear();
@@ -954,11 +1198,40 @@ void ResidualSampler::sample(
       }
     }
 
+    // Density records of the extra outgoing states (same destination and
+    // traces); every record of a multi-state destination carries n_outgoing
+    // times its density
+    const double n_out = 1.0 + extra_states_.size();
+    for (size_t q = 0; q < extra_states_.size(); ++q) {
+      const OutgoingState& sq = extra_states_[q];
+      out.r.insert(out.r.end(), {d.r.x, d.r.y, d.r.z});
+      out.u.insert(out.u.end(), {sq.u.x, sq.u.y, sq.u.z});
+      out.E.push_back(sq.E);
+      out.density.push_back(n_out * extra_density_[q] * rd.density);
+      out.tag.push_back(static_cast<int>(t));
+      out.sampler.push_back(0);
+      out.kind.push_back(0);
+      out.channel.push_back(-1);
+      out.E_in.push_back(0.0);
+      out.nuclide.push_back(-1);
+      out.Z.push_back(0.0);
+      out.C_s.push_back(active ? extra_C_[3 * q] : 0.0);
+      out.C_f.push_back(active ? extra_C_[3 * q + 1] : 0.0);
+      out.M_s.push_back(active ? extra_C_[3 * q + 2] : 0.0);
+      out.M_f.push_back(0.0);
+      double Rq = 0.0;
+      if (active && opt_.flux_control && sq.E >= opt_.flux_control_Emin)
+        Rq = flux_control_mean(d, sq, &s);
+      out.R_s.push_back(Rq);
+      out.R_f.push_back(0.0);
+      out.U.push_back(field_.evaluate(d.region, t, sq.E));
+    }
+
     // The density-branch record
     out.r.insert(out.r.end(), {d.r.x, d.r.y, d.r.z});
     out.u.insert(out.u.end(), {st.u.x, st.u.y, st.u.z});
     out.E.push_back(st.E);
-    out.density.push_back(draw.density * rd.density);
+    out.density.push_back(n_out * draw.density * rd.density);
     out.tag.push_back(static_cast<int>(t));
     out.sampler.push_back(0);
     out.kind.push_back(0);

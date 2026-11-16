@@ -1381,3 +1381,46 @@ Findings
       scattering correction matures. Empirical netting placement lowers it
       by about 300 pcm; netting less often does not lower it in proportion;
       without netting the bank's absolute weight grows without bound.
+
+Resonance-resolved lifts and several energies per trace
+-------------------------------------------------------
+
+**Commit:** "rmc: several outgoing states per trace, resonance-resolved
+lifts, and the cause of the bias". Report section "Resonance-resolved lifts
+and several energies per trace".
+
+Added
+    - Residual options: ``n_outgoing`` (stratified outgoing states per
+      destination sharing its traces), ``image_roulette``, a tabulated
+      incident-energy proposal for the sampler route (``Ein_table``), a
+      learned scattering-cosine direction proposal (``mu_table``), the
+      isotropic-flux control (``flux_control``), and fixed destinations for
+      diagnostics (``fixed``); ``keep_directions`` also returns the cosines.
+    - ``BackwardFlux``: Sigma_t per (energy, material state of the path), a
+      list of live energies, and ``exp`` in place of ``expm1``.
+    - ``examples/rmc/fine_lifts.py`` (lifts with a chosen number of fine bins
+      per group), ``zone_lifts.py`` (lifts per ring of regions; the lift
+      file's ``region_rows``).
+    - ``stage8.py``: ``--res-ko``, ``--res-ir``, ``--res-ein``,
+      ``--fine-lifts``, ``--zone-lifts``; ``--field-production`` averages its
+      estimates over the generations.
+    - Tests G8.7 and G8.8 in ``test_residual_importance_options.py``.
+
+Findings
+    - The angular part of the scattering residual is 15 % of its second
+      moment (1 % in fast fuel): anisotropic emission was not implemented.
+    - The direction noise of the high term is resonance structure of the
+      path's flux at the image energies. Sixteen outgoing states per
+      destination cut the variance 12 times at 4.5 times the cost.
+    - Lifts with 4000 fine bins from 4 eV to 5.5 keV remove the eigenvalue
+      bias: +664 to -31 pcm with paired seeds; -86 +- 58 pcm over nine
+      replicas of the best configuration. The bias was netting acting on
+      the low term's unresolved resonance structure.
+    - :math:`W_{abs}` falls to 0.85. The figure of merit stays at 0.09-0.16:
+      the per-generation noise of :math:`k_n` is now white and proportional
+      to :math:`1/\sqrt{N_f}`: the noise of the field's CE fission production
+      :math:`X`, for which no effective control exists yet.
+
+Not done
+    - A correlated control for :math:`X`; MG fission cross sections
+      condensed with the field's own first-flight CE flux.
