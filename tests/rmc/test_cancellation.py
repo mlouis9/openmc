@@ -35,6 +35,10 @@
   scatterings; field_production with score='loss') equals the flights'
   collision estimate for a weighted sample of the field, and the flights'
   loss and scattered weight add up to the weight flown.
+- G8.12 (forward rays): the first-collision rates of the field's emission
+  from forward rays integrated analytically (field_first_flight_rates)
+  equal the backward estimates of the production and the net loss, per
+  source tag.
 """
 import math
 
@@ -364,3 +368,16 @@ def test_field_loss_matches_flights(lib, field_files):
         z = (L[i] - mean) / math.hypot(sem, math.sqrt(var[i]))
         assert abs(z) < 5, (comp, L[i], mean, sem)
         assert abs(L[i] / mean - 1) < 0.05
+
+
+@pytest.mark.slow
+def test_forward_rays_match_backward_estimates(lib):
+    rmc, _ = lib
+    Xb, vXb = rmc.field_production(200_000, n_E=4, seed=31, cutoff=math.exp(-3))
+    Lb, vLb = rmc.field_production(200_000, n_E=4, seed=32, cutoff=math.exp(-3), score='loss')
+    Xf, Lf, vXf, vLf = rmc.field_first_flight_rates(400_000, n_E=2, seed=33)
+    for name, b, vb, f, vf in (('X', Xb, vXb, Xf, vXf), ('L', Lb, vLb, Lf, vLf)):
+        z = (f - b) / np.sqrt(vb + vf)
+        assert np.all(np.abs(z) < 5), (name, b, f, z)
+        # the comparison resolves one per cent of the larger component
+        assert math.sqrt(vb[0] + vf[0]) < 0.01 * b[0]

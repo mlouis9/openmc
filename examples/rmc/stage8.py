@@ -96,6 +96,7 @@ class Stage8Backend(driver.OpenMCBackend):
         # Precomputed (X_s, X_f) and (L_s, L_f) of the frozen field, if given:
         # they replace the per-generation estimates
         self.constants = None
+        self.loss_estimator = 'backward'
         self.net_every = 1   # netting every net_every generations
         self.fp_points, self.fp_energies, self.k_mg = 10_000, 4, None
 
@@ -193,8 +194,12 @@ class Stage8Backend(driver.OpenMCBackend):
         if self.constants is not None:
             L = self.constants['L']
             return float(a[0] * L[0] + a[1] * L[1])
-        L, _ = self.rmc.field_production(self.fl_points, self.fp_energies, seed=seed,
-                                         cutoff=math.exp(-3), score='loss')
+        if self.loss_estimator == 'forward':
+            # Forward rays integrated analytically (rmc.field_first_flight_rates)
+            _, L, _, _ = self.rmc.field_first_flight_rates(self.fl_points, 1, seed=seed)
+        else:
+            L, _ = self.rmc.field_production(self.fl_points, self.fp_energies, seed=seed,
+                                             cutoff=math.exp(-3), score='loss')
         self._fl_sum = self._fl_sum + L
         self._fl_n += 1
         L = self._fl_sum / self._fl_n
@@ -315,6 +320,11 @@ def main():
     ap.add_argument('--field-loss', type=int, default=5000,
                     help="backward points per generation of the field's net loss rate "
                          '(balance update)')
+    ap.add_argument('--loss-estimator', choices=['backward', 'forward'], default='backward',
+                    help="estimator of the field's net loss: backward points "
+                         '(rmc.field_production) or forward rays integrated analytically '
+                         '(rmc.field_first_flight_rates; --field-loss is then the number '
+                         'of rays)')
     ap.add_argument('--field-constants', default=None,
                     help="JSON file with the field's production X and net loss L per "
                          'source tag (field_constants.py); replaces the per-generation '
@@ -358,7 +368,8 @@ def main():
         w, files, k_mg = cs.exact_volume_files(args.work)
     if args.fine_lifts:
         import fine_lifts as fl
-        w, files, k_mg = fl.fine_lift_files(args.work, args.fine_lifts)
+        base = (w, files, k_mg) if args.field_groups else None
+        w, files, k_mg = fl.fine_lift_files(args.work, args.fine_lifts, base=base)
     if args.zone_lifts:
         import zone_lifts as zl
         w, files, k_mg = zl.zone_lift_files(args.work, tuple(args.zone_lifts))
@@ -387,6 +398,7 @@ def main():
             backend.grouped.g, backend.grouped.d_max = args.group_size, args.group_dmax
         backend.fp_points = max(args.field_production, 1)
         backend.fl_points = args.field_loss
+        backend.loss_estimator = args.loss_estimator
         if args.field_constants:
             c = json.loads(Path(args.field_constants).read_text())
             backend.constants = dict(X=np.array(c['X']), L=np.array(c['L']))

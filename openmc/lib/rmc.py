@@ -75,6 +75,7 @@ for _name in ('openmc_rmc_field_groups', 'openmc_rmc_residual_sample',
               'openmc_rmc_propagate', 'openmc_rmc_residual_records_aux',
               'openmc_rmc_flight_children', 'openmc_rmc_propagate_aux',
               'openmc_rmc_field_production', 'openmc_rmc_flight_children_incident',
+              'openmc_rmc_field_first_flight_rates',
               'openmc_rmc_grouped_fission_weights'):
     _fn = getattr(_dll, _name)
     _fn.restype, _fn.errcheck = c_int, _error_handler
@@ -807,6 +808,23 @@ def field_production(n_points, n_E=4, tail='roulette', cutoff=math.exp(-4.0), se
                                      c_int({'nu-fission': 0, 'loss': 1}[score]),
                                      c_double(hyperfine), c_double(sigma_e), c_int(int(classes)))
     return X, var
+
+
+def field_first_flight_rates(n_rays, n_E=8, cutoff=math.exp(-4.0), seed=1, du=1e-4,
+                             sigma_e=1.0):
+    """First-collision rates of the field's emission per source tag, from
+    forward rays integrated analytically (no noise from where on the ray
+    the collision falls): the nu-fission production X[2] and the net loss
+    L[2], and the variance of each. Source points are drawn from the field's
+    emission times a rational approximation of the loss probability with
+    escape cross section sigma_e, on sub-bins of lethargy width du; n_E
+    energies share a ray. Returns (X, L, var_X, var_L)."""
+    rate, var = np.zeros(4), np.zeros(4)
+    _dll.openmc_rmc_field_first_flight_rates(c_int64(int(n_rays)), c_int(int(n_E)),
+                                             c_double(cutoff), c_uint64(int(seed)),
+                                             c_double(du), c_double(sigma_e),
+                                             _dp(rate), _dp(var))
+    return rate[[0, 2]], rate[[1, 3]], var[[0, 2]], var[[1, 3]]
 
 
 def grouped_fission_weights(x, nuclide, E_f, offset, member, records, d_max, k):

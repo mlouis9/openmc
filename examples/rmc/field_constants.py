@@ -35,28 +35,46 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--work', default='rmc_visual_work')
     ap.add_argument('--fine-lifts', type=int, nargs='+', default=None)
+    ap.add_argument('--field-groups', default=None,
+                    help='group structure of a field variant (field_variants.py)')
+    ap.add_argument('--mgxs-particles', type=int, default=20_000)
+    ap.add_argument('--field-mesh', type=int, default=12,
+                    help='source-region mesh per side of the field variant')
     ap.add_argument('--calls', type=int, default=80, help='calls for the net loss')
     ap.add_argument('--production-calls', type=int, default=10)
     ap.add_argument('--points', type=int, default=100_000, help='backward points per call')
+    ap.add_argument('--loss-estimator', choices=['backward', 'forward'], default='forward',
+                    help='net loss from backward points, or from forward rays integrated '
+                         'analytically (four times as many rays as points per call)')
     ap.add_argument('--label', default='A', help='seeds differ between labels')
     ap.add_argument('--out', default='field_constants.json')
     args = ap.parse_args()
 
+    base = None
+    if args.field_groups:
+        import field_variants as fv
+        base = fv.field_files(args.work, args.field_groups, args.mgxs_particles,
+                              n_per_side=args.field_mesh)
     if args.fine_lifts:
         import fine_lifts as fl
-        w, files, _ = fl.fine_lift_files(args.work, args.fine_lifts)
+        w, files, _ = fl.fine_lift_files(args.work, args.fine_lifts, base=base)
     else:
-        w, files, _ = cs.exact_volume_files(args.work)
+        w, files, _ = base or cs.exact_volume_files(args.work)
     import openmc.lib.rmc as rmc
     out = dict(label=args.label, points=args.points)
-    with pipeline.ce_session(w.model, w.mesh, files['work'] / f'field_constants_{args.label}'):
+    with pipeline.ce_session(w.model, w.mesh, files['work'] / f'field_constants_{args.label}_{args.field_mesh}'):
         rmc.field_load(files['field'], files['lifts'], files['volumes'])
         for key, score, n in (('X', 'nu-fission', args.production_calls),
                               ('L', 'loss', args.calls)):
             t0 = time.perf_counter()
-            v = np.array([rmc.field_production(args.points, 4, cutoff=math.exp(-3),
-                                               seed=call_seed(args.label, score, i),
-                                               score=score)[0] for i in range(n)])
+            if key == 'L' and args.loss_estimator == 'forward':
+                v = np.array([rmc.field_first_flight_rates(
+                    4 * args.points, 1, seed=call_seed(args.label, 'forward', i))[1]
+                    for i in range(n)])
+            else:
+                v = np.array([rmc.field_production(args.points, 4, cutoff=math.exp(-3),
+                                                   seed=call_seed(args.label, score, i),
+                                                   score=score)[0] for i in range(n)])
             out[key] = v.mean(axis=0).tolist()
             out[key + '_se'] = (v.std(axis=0, ddof=1) / math.sqrt(n)).tolist()
             out[key + '_time'] = time.perf_counter() - t0

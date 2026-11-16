@@ -312,6 +312,318 @@ void field_fission_production(const FrozenField& field, const MGTables& mg,
   }
 }
 
+void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
+  int n_E, const TailOptions& tail, uint64_t seed, double du, double sigma_e,
+  double rate[4], double var[4])
+{
+  // rate[2 * tag + x] = int dr dE dOmega Q_tag(r, E) / (4 pi) A_x(r, Omega, E),
+  // x = 0 nu-fission, 1 net loss, with A_x the expected first-collision
+  // score of a neutron born at r towards Omega at E:
+  //   A_x = sum over the ray's segments of (Sigma_x / Sigma_t)
+  //         (exp(-tau_in) - exp(-tau_out)).
+  // The ray is integrated analytically, so the position of the collision
+  // carries no noise, and it needs only the material of each segment. The
+  // source point is drawn from the field's own emission times a rational
+  // approximation of the loss probability,
+  //   p(E) = Sigma_loss,F / (Sigma_t,F + sigma_e)
+  //          + sigma_e / (Sigma_t,F + sigma_e) (Sigma_loss / Sigma_t)_other,
+  // F the fissionable material, tabulated on sub-bins of lethargy width du
+  // of the lifts' fine bins. n_E energies share a ray.
+  const int64_t R = field.n_regions();
+  const auto& fe = field.fine_edges();
+  const int F = static_cast<int>(fe.size()) - 1;
+  const double sqrtkT0 = std::sqrt(K_BOLTZMANN * 293.6);
+  XsProbe probe;
+  ChannelRegistry registry;
+  auto loss_xs = [&](int32_t m, double dm) {
+    // Below 1 MeV no reaction multiplies neutrons: the loss is absorption
+    if (probe.E() < 1.0e6)
+      return probe.particle().macro_xs().absorption;
+    double loss = probe.particle().macro_xs().total;
+    for (const auto& c : registry.channels(m))
+      if (c.kind != ChannelKind::fission)
+        loss -= ChannelRegistry::production(c, dm, probe);
+    return loss;
+  };
+  struct Tables {
+    const FrozenField* field {nullptr};
+    double du {0.0}, sigma_e {0.0};
+    size_t F {0};
+    vector<int> start;        //!< [F + 1] first sub-bin of each fine bin
+    vector<double> e_lo, e_hi; //!< sub-bin edges
+    vector<double> p;         //!< proposal factor of each sub-bin
+    vector<double> cum;       //!< cumulative p dE within each fine bin
+    vector<int> bin_group;
+    vector<double> wr;
+    vector<double> wr_opt;      //!< region weights after the pilot
+    vector<vector<double>> cdf; //!< [region][fine bin]
+  };
+  static Tables tab;
+  if (tab.field != &field || tab.du != du || tab.sigma_e != sigma_e ||
+      tab.F != static_cast<size_t>(F)) {
+    tab = Tables();
+    tab.field = &field;
+    tab.du = du;
+    tab.sigma_e = sigma_e;
+    tab.F = F;
+    vector<int32_t> fis, other;
+    for (int64_t r = 0; r < R; ++r) {
+      int32_t m = field.region_material(r);
+      if (m == MATERIAL_VOID)
+        continue;
+      auto& v = model::materials[m]->fissionable() ? fis : other;
+      if (std::find(v.begin(), v.end(), m) == v.end())
+        v.push_back(m);
+    }
+    tab.start.assign(F + 1, 0);
+    tab.bin_group.resize(F);
+    vector<double> S(F, 0.0);
+    for (int i = 0; i < F; ++i) {
+      tab.bin_group[i] = field.group(std::sqrt(fe[i] * fe[i + 1]));
+      double lr = std::log(fe[i + 1] / std::max(fe[i], 1e-11));
+      int n = (fe[i] > 0.0 && du > 0.0)
+                ? std::max(1, static_cast<int>(std::ceil(lr / du)))
+                : 1;
+      n = std::min(n, 4096);
+      double c = 0.0;
+      for (int j = 0; j < n; ++j) {
+        double e0 = (fe[i] > 0.0) ? fe[i] * std::exp(lr * j / n)
+                                  : fe[i] + (fe[i + 1] - fe[i]) * j / n;
+        double e1 = (fe[i] > 0.0) ? fe[i] * std::exp(lr * (j + 1) / n)
+                                  : fe[i] + (fe[i + 1] - fe[i]) * (j + 1) / n;
+        double Em = 0.5 * (e0 + e1);
+        double pf = 0.0, stf = 0.0;
+        for (int32_t m : fis) {
+          probe.total(m, Em, sqrtkT0, 1.0);
+          double st = probe.particle().macro_xs().total;
+          pf += std::max(0.0, loss_xs(m, 1.0)) / (st + sigma_e);
+          stf += st;
+        }
+        if (!fis.empty()) {
+          pf /= fis.size();
+          stf /= fis.size();
+        }
+        double po = 0.0;
+        for (int32_t m : other) {
+          probe.total(m, Em, sqrtkT0, 1.0);
+          double st = probe.particle().macro_xs().total;
+          po += (st > 0.0) ? std::max(0.0, loss_xs(m, 1.0)) / st : 0.0;
+        }
+        if (!other.empty())
+          po /= other.size();
+        double pj = pf + (fis.empty() ? 1.0 : sigma_e / (stf + sigma_e)) * po + 1e-9;
+        c += pj * (e1 - e0);
+        tab.e_lo.push_back(e0);
+        tab.e_hi.push_back(e1);
+        tab.p.push_back(pj);
+        tab.cum.push_back(c);
+      }
+      S[i] = c;
+      tab.start[i + 1] = tab.start[i] + n;
+    }
+    tab.wr.assign(R, 0.0);
+    tab.cdf.resize(R);
+    for (int64_t r = 0; r < R; ++r) {
+      if (field.region_material(r) == MATERIAL_VOID)
+        continue;
+      tab.cdf[r].resize(F);
+      double c = 0.0;
+      for (int i = 0; i < F; ++i) {
+        int g = tab.bin_group[i];
+        double Em = std::sqrt(std::max(fe[i], 1e-11) * fe[i + 1]);
+        double q = (g >= 0) ? field.evaluate(r, Tag::s, Em) +
+                                field.evaluate(r, Tag::f, Em)
+                            : 0.0;
+        c += std::max(0.0, q) * S[i];
+        tab.cdf[r][i] = c;
+      }
+      tab.wr[r] = c * field.volume(r);
+    }
+  }
+  KernelScratch scratch;
+  const double survive = 0.25;
+  struct Xs {
+    int32_t mat {-2};
+    double total, ratio[2];
+  };
+  vector<double> E(n_E), wE(n_E), T(n_E), acc(2 * n_E);
+  vector<int> live(n_E);
+  vector<Xs> xs(4 * n_E);
+  // One ray: its region and its four scores
+  auto ray = [&](const VoxelProposal& voxel, uint64_t s, int64_t& region,
+               double sc[4]) {
+    auto rd = voxel.sample(&s, region);
+    int32_t mat0;
+    double kT0, dm0;
+    if (!locate_point(field, rd.value, region, mat0, kT0, dm0) || region < 0)
+      fatal_error("RMC first-flight rates: point outside the field.");
+    const auto& c = tab.cdf[region];
+    const double tot = c[F - 1];
+    double share[2][64];
+    for (int k = 0; k < n_E; ++k) {
+      double x = prn(&s) * tot;
+      int b = static_cast<int>(std::upper_bound(c.begin(), c.end(), x) - c.begin());
+      b = std::min(b, F - 1);
+      int j0 = tab.start[b], j1 = tab.start[b + 1];
+      double top = tab.cum[j1 - 1];
+      double y = prn(&s) * top;
+      int j = static_cast<int>(
+        std::upper_bound(tab.cum.begin() + j0, tab.cum.begin() + j1, y) -
+        tab.cum.begin());
+      j = std::min(j, j1 - 1);
+      E[k] = tab.e_lo[j] + (tab.e_hi[j] - tab.e_lo[j]) * prn(&s);
+      double qs = std::max(0.0, field.evaluate(region, Tag::s, E[k]));
+      double qf = std::max(0.0, field.evaluate(region, Tag::f, E[k]));
+      // Proposal density per unit energy given the region, from the bin's
+      // tabulated emission (at its midpoint) and the sub-bin's factor
+      double Em = std::sqrt(std::max(fe[b], 1e-11) * fe[b + 1]);
+      double qb = std::max(0.0, field.evaluate(region, Tag::s, Em) +
+                                  field.evaluate(region, Tag::f, Em));
+      double dens = qb * tab.p[j] / tot;
+      // 4 pi Q_t(r, E) / (spatial density * energy density * n_E)
+      double w = (dens > 0.0) ? 4.0 * PI / (rd.density * dens * n_E) : 0.0;
+      share[0][k] = w * qs;
+      share[1][k] = w * qf;
+      wE[k] = w;
+      T[k] = 1.0;
+      live[k] = 1;
+      acc[2 * k] = acc[2 * k + 1] = 0.0;
+      for (int a = 0; a < 4; ++a)
+        xs[4 * k + a].mat = -2;
+    }
+    double mu = 2.0 * prn(&s) - 1.0, ph = 2.0 * PI * prn(&s);
+    double st = std::sqrt(std::max(0.0, 1.0 - mu * mu));
+    Direction u {st * std::cos(ph), st * std::sin(ph), mu};
+    Particle& g = scratch.scratch();
+    g.r() = rd.value;
+    g.u() = u;
+    g.r_last() = rd.value;
+    g.u_last() = u;
+    g.wgt() = 1.0;
+    g.surface() = SURFACE_NONE;
+    g.n_coord() = 1;
+    if (!exhaustive_find_cell(g))
+      fatal_error("RMC first-flight rates: source point not in a cell.");
+    int n_live = n_E;
+    for (int64_t crossings = 0; crossings < tail.max_segments && n_live > 0;
+         ++crossings) {
+      const Cell& cell = *model::cells[g.lowest_coord().cell()];
+      int32_t inst = g.cell_instance();
+      int32_t m = cell.material(inst);
+      g.boundary() = distance_to_boundary(g);
+      double len = g.boundary().distance();
+      if (m != MATERIAL_VOID) {
+        for (int k = 0; k < n_E; ++k) {
+          if (!live[k])
+            continue;
+          Xs* e = nullptr;
+          for (int a = 0; a < 4; ++a) {
+            Xs& cand = xs[4 * k + a];
+            if (cand.mat == m) {
+              e = &cand;
+              break;
+            }
+            if (cand.mat == -2 || a == 3) {
+              cand.mat = m;
+              probe.total(m, E[k], cell.sqrtkT(inst), cell.density_mult(inst));
+              const auto& mx = probe.particle().macro_xs();
+              cand.total = mx.total;
+              cand.ratio[0] = (mx.total > 0.0) ? mx.nu_fission / mx.total : 0.0;
+              cand.ratio[1] = (mx.total > 0.0)
+                                ? loss_xs(m, cell.density_mult(inst)) / mx.total
+                                : 0.0;
+              e = &cand;
+              break;
+            }
+          }
+          double t_out = T[k] * std::exp(-e->total * len);
+          double d = T[k] - t_out;
+          acc[2 * k] += e->ratio[0] * d;
+          acc[2 * k + 1] += e->ratio[1] * d;
+          T[k] = t_out;
+          if (std::abs(T[k]) < tail.cutoff) {
+            if (prn(&s) < survive)
+              T[k] /= survive;
+            else {
+              live[k] = 0;
+              --n_live;
+            }
+          }
+        }
+      }
+      if (n_live == 0)
+        break;
+      for (int lev = 0; lev < g.n_coord(); ++lev)
+        g.coord(lev).r() += len * g.coord(lev).u();
+      g.event_cross_surface();
+      if (!g.alive())
+        break;
+    }
+    for (int a = 0; a < 4; ++a)
+      sc[a] = 0.0;
+    for (int k = 0; k < n_E; ++k)
+      for (int t = 0; t < 2; ++t)
+        for (int x = 0; x < 2; ++x)
+          sc[2 * t + x] += share[t][k] * acc[2 * k + x];
+  };
+  // Pilot, once per field: the root mean square of the total loss score by
+  // region. Regions are then drawn in proportion to their emission-based
+  // weight times that, which is the best allocation for the loss
+  if (tab.wr_opt.empty()) {
+    VoxelOptions vo;
+    vo.mode = VoxelMode::tabulated;
+    vo.weights = tab.wr;
+    VoxelProposal voxel(field, vo);
+    vector<double> s2(R, 0.0);
+    vector<int64_t> cnt(R, 0);
+    const int64_t n_pilot = 20 * R + 20000;
+    for (int64_t i = 0; i < n_pilot; ++i) {
+      int64_t region;
+      double sc[4];
+      ray(voxel, future_seed(static_cast<uint64_t>(i) * 1000003ULL + 17, 987654321ULL),
+        region, sc);
+      double v = sc[1] + sc[3];
+      s2[region] += v * v;
+      ++cnt[region];
+    }
+    double mean_rms = 0.0;
+    int64_t n_r = 0;
+    for (int64_t r = 0; r < R; ++r)
+      if (cnt[r] > 0) {
+        mean_rms += std::sqrt(s2[r] / cnt[r]);
+        ++n_r;
+      }
+    mean_rms = (n_r > 0) ? mean_rms / n_r : 1.0;
+    tab.wr_opt = tab.wr;
+    for (int64_t r = 0; r < R; ++r) {
+      // Regions with few pilot rays keep the average factor; a floor keeps
+      // every region's density positive
+      double f = (cnt[r] >= 20) ? std::sqrt(s2[r] / cnt[r]) : mean_rms;
+      tab.wr_opt[r] *= std::max(f, 0.05 * mean_rms);
+    }
+  }
+  VoxelOptions vo;
+  vo.mode = VoxelMode::tabulated;
+  vo.weights = tab.wr_opt;
+  VoxelProposal voxel(field, vo);
+  double sum[4] = {0.0, 0.0, 0.0, 0.0}, sq[4] = {0.0, 0.0, 0.0, 0.0};
+  for (int64_t i = 0; i < n_rays; ++i) {
+    int64_t region;
+    double sc[4];
+    ray(voxel, future_seed(static_cast<uint64_t>(i) * 1000003ULL + 13, seed), region, sc);
+    for (int a = 0; a < 4; ++a) {
+      sum[a] += sc[a];
+      sq[a] += sc[a] * sc[a];
+    }
+  }
+  for (int a = 0; a < 4; ++a) {
+    rate[a] = sum[a] / n_rays;
+    var[a] = (n_rays > 1)
+               ? (sq[a] / n_rays - rate[a] * rate[a]) / (n_rays - 1)
+               : 0.0;
+  }
+}
+
 void field_reaction_tally(const FrozenField& field, int64_t n_points,
   int n_E, const TailOptions& tail, uint64_t seed, FieldTallyResult& out,
   const MGTables* mg)

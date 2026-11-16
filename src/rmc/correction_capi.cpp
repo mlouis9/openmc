@@ -67,6 +67,23 @@ extern "C" int openmc_rmc_field_production(int64_t n_points, int n_E,
   return 0;
 }
 
+extern "C" int openmc_rmc_field_first_flight_rates(int64_t n_rays, int n_E,
+  double cutoff, uint64_t seed, double du, double sigma_e, double* rate,
+  double* var)
+{
+  if (int err = prepare())
+    return err;
+  if (n_E < 1 || n_E > 64) {
+    set_errmsg("n_E must be between 1 and 64.");
+    return OPENMC_E_INVALID_ARGUMENT;
+  }
+  rmc::TailOptions opt;
+  opt.cutoff = cutoff;
+  rmc::field_first_flight_rates(
+    *rmc::loaded_field, n_rays, n_E, opt, seed, du, sigma_e, rate, var);
+  return 0;
+}
+
 extern "C" int openmc_rmc_fission_chi(int32_t material_id, int i_nuclide,
   double E_in, int64_t n, const double* E_out, double* chi)
 {

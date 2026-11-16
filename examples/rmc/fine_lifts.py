@@ -27,7 +27,18 @@ def fine_grid(group_edges, bins):
     return np.concatenate(out + [[group_edges[-1]]])
 
 
-def fine_lift_files(work, bins, lifts=LIFTS):
+def fine_lift_files(work, bins, lifts=LIFTS, base=None):
+    """(problem, files, k_MG) with the fine lifts. base, if given, is such a
+    triple for another field of the same CE model and groups (a different
+    source-region mesh, say): the lifts are per material, so the same file
+    serves it."""
+    if base is not None:
+        _, fine_files, _ = fine_lift_files(work, bins, lifts)
+        Fb = fld.FieldFile.load(base[1]['field'])
+        Ff = fld.FieldFile.load(fine_files['field'])
+        if not np.allclose(Fb.edges, Ff.edges):
+            raise ValueError('The fine lifts need the group structure of the default field.')
+        return base[0], dict(base[1], lifts=fine_files['lifts']), base[2]
     w, files, k = cs.exact_volume_files(work)
     tag = '_'.join(str(b) for b in bins)
     d = Path(files['work']) / f'fine_lifts_{tag}'

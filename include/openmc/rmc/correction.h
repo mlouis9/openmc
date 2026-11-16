@@ -78,6 +78,14 @@ bool grouped_fission_weight(const FrozenField& field,
   const vector<EmissionRecord>& group, Position x, int l, double E_f,
   double d_max, double k, KernelScratch& tracer, XsProbe& probe, double& W);
 
+//! First-collision rates of the field's emission by forward rays integrated
+//! analytically: rate[2 * tag + x], x = 0 nu-fission production, 1 net loss
+//! (absorption less the gain of multiplying scatterings). n_E energies per
+//! ray; n_E <= 64. var: variance of each mean.
+void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
+  int n_E, const TailOptions& tail, uint64_t seed, double du, double sigma_e,
+  double rate[4], double var[4]);
+
 //! CE nu-fission production of the field's first-flight flux per source tag,
 //! X_y = <nu Sigma_f, G Q_y>, by backward points drawn from the field's own
 //! lifted MG fission rate (region, group, energy within the group), n_E
