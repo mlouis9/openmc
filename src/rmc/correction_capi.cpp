@@ -53,6 +53,19 @@ extern "C" int openmc_rmc_field_tally(int64_t n_points, int n_E, int tail,
   return 0;
 }
 
+extern "C" int openmc_rmc_field_production(int64_t n_points, int n_E,
+  int tail, double cutoff, uint64_t seed, double* X, double* var)
+{
+  if (int err = prepare())
+    return err;
+  rmc::TailOptions opt;
+  opt.mode = static_cast<rmc::Tail>(tail);
+  opt.cutoff = cutoff;
+  rmc::field_fission_production(*rmc::loaded_field, rmc::loaded_mg_tables(),
+    n_points, n_E, opt, seed, X, var);
+  return 0;
+}
+
 extern "C" int openmc_rmc_fission_chi(int32_t material_id, int i_nuclide,
   double E_in, int64_t n, const double* E_out, double* chi)
 {

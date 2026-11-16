@@ -69,6 +69,9 @@ public:
   int64_t locate(const GeometryState& p) const override;
   double evaluate(int64_t region, Tag t, double E) const override;
 
+  //! Edges of the lifts' fine energy grid [eV], ascending
+  const vector<double>& fine_edges() const { return fine_edges_; }
+
   //! Region of every mesh bin of a meshed cell instance (-1 where none), or
   //! nullptr for an instance without a mesh
   const vector<int64_t>* dense_regions(int32_t cell_id, int32_t instance) const;

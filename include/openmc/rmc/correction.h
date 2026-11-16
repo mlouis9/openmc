@@ -43,6 +43,14 @@ struct FieldTallyResult {
   vector<double> diff_sq;       //!< [R][2] (with MG tables)
 };
 
+//! CE nu-fission production of the field's first-flight flux per source tag,
+//! X_y = <nu Sigma_f, G Q_y>, by backward points drawn from the field's own
+//! lifted MG fission rate (region, group, energy within the group), n_E
+//! energies per point on one isotropic path. var: variance of each mean.
+void field_fission_production(const FrozenField& field, const MGTables& mg,
+  int64_t n_points, int n_E, const TailOptions& tail, uint64_t seed,
+  double X[2], double var[2]);
+
 void field_reaction_tally(const FrozenField& field, int64_t n_points,
   int n_E, const TailOptions& tail, uint64_t seed, FieldTallyResult& out,
   const MGTables* mg = nullptr);

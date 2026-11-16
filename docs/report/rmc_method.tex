@@ -130,9 +130,10 @@ eigenvalue calculation. Section~\ref{sec:res:stage8} reports it, with its follow
 
 \paragraph{Verdict.} The method is unbiased within about 80~pcm, and its $k$ figure of merit is
 $0.09$--$0.16$ of analog Monte Carlo's on this problem: not a speedup. The limit is no longer the
-scattering residual. It is one scalar, the CE fission production of the field's first-flight flux,
-which is estimated at analog-like cost. A correlated control for it, or MG fission cross sections
-condensed so that the field carries it, is the next step.
+scattering residual, nor the CE fission production of the field's first-flight flux, which a new
+importance-sampled estimator gives 150--230 times more efficiently (Section~\ref{sec:res:X}). It
+is the eigenvalue update $k_{n+1}=k_nf_n$, which corrects itself only after a neutron lifetime. An
+eigenvalue estimate without memory is the next step.
 \clearpage
 
 \input{part1_method}

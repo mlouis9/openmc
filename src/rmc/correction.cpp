@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 #include "openmc/cell.h"
 #include "openmc/constants.h"
@@ -36,6 +37,108 @@ bool locate_point(const FrozenField& field, Position r, int64_t& region,
 }
 
 } // namespace
+
+void field_fission_production(const FrozenField& field, const MGTables& mg,
+  int64_t n_points, int n_E, const TailOptions& tail, uint64_t seed,
+  double X[2], double var[2])
+{
+  // X_y = int dr dE' dOmega nu Sigma_f(r, E') psi_y(r, E', Omega), sampled
+  // with the density of the field's own lifted fission rate on the lifts'
+  // fine grid: region r and fine bin i with probability
+  //   V_r phi_{r,g(i)} h_phi(r, E_i) dE_i nuSigma_f(m_r, E_i),
+  // the energy uniform in the bin, and the direction isotropic. The score
+  // is then the total of those weights times two ratios near one: the CE
+  // nu-fission cross section at E' to its value at the bin's midpoint, and
+  // the path's CE angular flux to the region's lifted scalar flux per unit
+  // solid angle. (mg is not used: the proposal needs no MG cross sections.)
+  (void)mg;
+  const int64_t R = field.n_regions();
+  const auto& fe = field.fine_edges();
+  const int F = static_cast<int>(fe.size()) - 1;
+  const double sqrtkT0 = std::sqrt(K_BOLTZMANN * 293.6);
+  XsProbe probe;
+  // nu Sigma_f at the fine-bin midpoints, per fissionable material
+  std::unordered_map<int32_t, vector<double>> nsf;
+  vector<int64_t> regions; //!< fissionable regions
+  vector<double> wr(R, 0.0);
+  vector<vector<double>> cdf(R);
+  for (int64_t r = 0; r < R; ++r) {
+    int32_t m = field.region_material(r);
+    if (m == MATERIAL_VOID || !model::materials[m]->fissionable())
+      continue;
+    auto it = nsf.find(m);
+    if (it == nsf.end()) {
+      vector<double> v(F);
+      for (int i = 0; i < F; ++i) {
+        probe.total(m, std::sqrt(fe[i] * fe[i + 1]), sqrtkT0, 1.0);
+        v[i] = probe.particle().macro_xs().nu_fission;
+      }
+      it = nsf.emplace(m, std::move(v)).first;
+    }
+    cdf[r].resize(F);
+    double c = 0.0;
+    for (int i = 0; i < F; ++i) {
+      double Em = std::sqrt(fe[i] * fe[i + 1]);
+      int g = field.group(Em);
+      double phi = (g >= 0) ? field.flux(r, g) *
+                                field.shape(FrozenField::Shape::phi, r, Em)
+                            : 0.0;
+      c += field.volume(r) * phi * (fe[i + 1] - fe[i]) * it->second[i];
+      cdf[r][i] = c;
+    }
+    wr[r] = c;
+  }
+  VoxelOptions vo;
+  vo.mode = VoxelMode::tabulated;
+  vo.weights = wr;
+  VoxelProposal voxel(field, vo);
+  BackwardFlux backward(field);
+  vector<double> E(n_E), q(n_E), psi_s, psi_f, mg_s, mg_f;
+  double sum[2] = {0.0, 0.0}, sq[2] = {0.0, 0.0};
+  for (int64_t i = 0; i < n_points; ++i) {
+    uint64_t s = future_seed(static_cast<uint64_t>(i) * 1000003ULL + 11, seed);
+    int64_t region;
+    auto rd = voxel.sample(&s, region);
+    int32_t mat;
+    double kT, dm;
+    if (!locate_point(field, rd.value, region, mat, kT, dm) || region < 0)
+      fatal_error("RMC field production: point outside the field.");
+    const auto& c = cdf[region];
+    for (int k = 0; k < n_E; ++k) {
+      double x = prn(&s) * wr[region];
+      int b = static_cast<int>(std::upper_bound(c.begin(), c.end(), x) - c.begin());
+      b = std::min(b, F - 1);
+      double mass = c[b] - (b > 0 ? c[b - 1] : 0.0);
+      E[k] = fe[b] + (fe[b + 1] - fe[b]) * prn(&s);
+      q[k] = mass / wr[region] / (fe[b + 1] - fe[b]);
+    }
+    double mu = 2.0 * prn(&s) - 1.0, ph = 2.0 * PI * prn(&s);
+    double st = std::sqrt(std::max(0.0, 1.0 - mu * mu));
+    Direction u {st * std::cos(ph), st * std::sin(ph), mu};
+    backward.evaluate_all(
+      rd.value, u, E, nullptr, tail, &s, psi_s, psi_f, mg_s, mg_f);
+    double sc[2] = {0.0, 0.0};
+    for (int k = 0; k < n_E; ++k) {
+      if (!(q[k] > 0.0))
+        continue;
+      probe.total(mat, E[k], kT, dm);
+      double f = probe.particle().macro_xs().nu_fission * 4.0 * PI /
+                 (rd.density * q[k] * n_E);
+      sc[0] += f * psi_s[k];
+      sc[1] += f * psi_f[k];
+    }
+    for (int y = 0; y < 2; ++y) {
+      sum[y] += sc[y];
+      sq[y] += sc[y] * sc[y];
+    }
+  }
+  for (int y = 0; y < 2; ++y) {
+    X[y] = sum[y] / n_points;
+    var[y] = (n_points > 1)
+               ? (sq[y] / n_points - X[y] * X[y]) / (n_points - 1)
+               : 0.0;
+  }
+}
 
 void field_reaction_tally(const FrozenField& field, int64_t n_points,
   int n_E, const TailOptions& tail, uint64_t seed, FieldTallyResult& out,

@@ -749,6 +749,112 @@ candidates:
   construction, and $X-X^{MG}$ would be a second-order quantity.
 \end{itemize}
 
+\subsection{The field's fission production, the eigenvalue update, and exact cancellation}\label{sec:res:X}
+
+Section~\ref{sec:res:lifts} left one scalar as the limit: $X$, the CE fission production of the
+field's first-flight flux. This subsection removes that limit, finds the next one in the eigenvalue
+update itself, and answers two questions about cancellation. The runs are in
+\code{examples/rmc/results/speedup3}.
+
+\paragraph{An importance-sampled estimator of $X$.} The estimators so far drew backward points
+uniformly in space and incident energies from the lifted flux. The score
+$\nu\Sigma_f(E')\,\psi(E')/p$ then varies by orders of magnitude, with the $1/v$ cross section and
+the fission resonances. The new estimator (\code{field\_fission\_production}) draws from the field's
+own lifted fission rate on the lifts' fine grid:
+\begin{equation}
+p(\mathbf r,E')\;\propto\;\phi_{R,g(E')}\,h_\phi(E')\;\nu\Sigma_f(E'_i),\qquad \mathbf r\in R,\ E'\in\text{fine bin }i,
+\end{equation}
+with an isotropic direction. The score is then the total of those weights times two ratios near
+one: the CE $\nu\Sigma_f$ at $E'$ to its value at the bin's midpoint, and the path's CE angular
+flux to the region's lifted scalar flux per unit solid angle. It is unbiased for any lifts, because
+the density is evaluated exactly.
+
+\begin{center}\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+estimator of $X$ & relative error $\times\sqrt{\text{seconds}}$ & variance $\times$ time\\
+\midrule
+uniform points, energies from the lifted flux & 0.87\% & 1\\
+the same with the MG control on the path & 0.61\% & 0.5\\
+lifted fission rate, 4 energies per point & 0.071\% & 1/150\\
+lifted fission rate, 16 energies per point & 0.057\% & 1/230\\
+\bottomrule
+\end{tabular}
+\end{center}
+With the resonance-resolved lifts, the reference's $0.077\%$ is reached in about one second. With
+the 200-bin lifts the gain is only about 9 in variance: the fission resonances must be resolved by
+the proposal. In the iteration, $X$ is estimated with 5000 points per generation and averaged over
+the generations (0.13~s per generation).
+
+\paragraph{The white noise is gone; a long memory remains.} With this estimate, the per-generation
+spread of $k_n$ falls from $0.0095$ to $0.0024$. But the spread of the replica means is also
+$0.0024$ (six replicas, 60 active generations each): within a replica, the deviation of $k_n$
+persists for the whole active phase. The lag-1 autocorrelation is $0.6$--$0.7$.
+
+The cause is the eigenvalue update, not an estimator. In the emission-source form
+$k_{n+1}=k_nf_n$, and the fission emission is rebuilt with $1/k_{n+1}$. An error in $k_n$
+therefore changes the fission-born source at once, but the production $f$ responds only when
+those neutrons have slowed down and caused fission, about one neutron lifetime (37 collision
+generations) later. The loop that corrects $k$ has a delay of a lifetime, so $k_n$ carries every
+past fluctuation for tens of generations. A 60-generation active phase then holds only two or
+three independent values of $k$. With $\sigma(\bar k)=0.0024$ in 118~s, the figure of merit
+is about $0.06$--$0.4$ of OpenMC's, depending on the error estimate, and no better than before on
+the replica estimate.
+
+\paragraph{History-based flights, revisited.} A fission-to-fission generation closes that loop within
+one generation, and its bank is small. With the present estimators the history-based iteration is
+stable at $N=2000$ (it needed $N=64000$ in Section~\ref{sec:res:followup}), with
+$\Wabs\approx1.1$. But $k_n$ now oscillates with a period of about six generations and an amplitude
+of $\pm15\%$ (autocorrelation $+0.5$, $-0.4$, $-0.8$ at lags 1--3), and the replica means scatter by
+$0.005$. Two normalization variants were tried:
+\begin{itemize}
+\item fixed amplitudes $b=(1,1)$: fails within four generations, as before;
+\item damped normalization ($\lambda=0.3$): the per-generation spread falls from $0.10$ to $0.033$,
+  but the oscillation and the replica spread ($0.006$) remain.
+\end{itemize}
+The oscillation comes from the same update. With following amplitudes, $a_{s}$ and $a_f$ are
+integrators ($a_{s,n+1}=a_{s,n}/f_n$, $a_{f,n+1}=a_{f,n}/f_n^2$), and $k_n$ is a third. In history
+mode their restoring forces act with a delay of one or two generations and a gain near one: an
+underdamped loop. So the fission-to-fission bank is cleaner, as expected, but the per-tag
+normalization of Section~\ref{sec:iteration} is the wrong controller for it.
+
+\paragraph{The deferred-record cancellation.} The companion proposal describes an exact cancellation
+for existing bank records: records that still hold an unsampled emission law are grouped, a fission
+candidate $y$ is drawn through one member, and every member's density of producing that fission is
+evaluated, giving the weight $\sum_jw_j\pi_j(y)/\sum_j\pi_j(y)$. It was not implemented, for
+three measured reasons:
+\begin{itemize}
+\item \textbf{It can only act at fission births.} Two members arrive at $y$ with different incident
+  states. Their scattering laws at $y$ lie on different kinematic surfaces and cannot be combined;
+  only the fission law is common. Fission children are $3.4\%$ of the absolute weight of a
+  generation's children (447 fissions per 48\,200 scatterings).
+\item \textbf{Netting already cancels them, and its bias is gone.} Netting takes the candidate bank
+  from $7.3$ to $0.9$ in absolute weight each generation. With resonance-resolved lifts the bias is
+  $-86\pm58$~pcm, so an exact method has at most that to remove.
+\item \textbf{The bank does not set the variance.} A bank four times larger left the error unchanged
+  (Section~\ref{sec:res:lifts}).
+\end{itemize}
+The regional point kernel of Section~\ref{sec:cancellation} is the special case with isotropic
+fission-born members; it was eligible for $1.5\%$ of fission births. Extending the members to
+deferred elastic records would make nearly all fission births eligible, at the cost of one traced
+path per member and image for every candidate, for the $3.4\%$ above.
+
+\paragraph{What to change next.} The estimators are no longer the limit: the scattering residual,
+$X$ and the bank are each well below the present error. The limit is the controller that turns
+them into $k$:
+\begin{itemize}
+\item \textbf{An eigenvalue estimate without memory.} A balance estimate per generation,
+  $k=\langle\nu\Sigma_f\phi\rangle/\langle\Sigma_a\phi\rangle$ over the field's flux and the bank's
+  flights, is a ratio of two linear tallies of one generation. The fundamental-mode amplitude
+  cancels in it, and it does not integrate past noise. The field's absorption is a constant like
+  $X$ and can use the same importance-sampled estimator.
+\item \textbf{A gain matched to the loop.} $k_{n+1}=k_n\,(1+\gamma(f_n-1))$ with $\gamma$ of the order
+  of the number of collisions per lifetime responds within a few generations in the collision
+  iteration; a decreasing gain (Robbins--Monro) removes the residual jitter.
+\item \textbf{One normalization for history flights.} A single common factor and a slowly updated
+  $k$ remove two of the three integrators.
+\end{itemize}
+
 \subsection{What optimization could recover}\label{sec:s8:projection}
 
 \begin{table}[t]\centering\small
@@ -837,12 +943,14 @@ within the present precision:
   in the first measurement. It is not a speedup.
 \end{itemize}
 
-What limits it has changed. It is no longer the scattering residual. It is one scalar: the CE
-fission production $X$ of the field's first-flight flux, which enters every $k_n$ and is estimated
-without effective variance reduction. The next stage should:
+What limits it has changed twice. It is no longer the scattering residual, and no longer the field's
+fission production $X$, for which an importance-sampled estimator is 150--230 times more efficient
+(Section~\ref{sec:res:X}). It is the eigenvalue update: $k_{n+1}=k_nf_n$ corrects itself only after a
+neutron lifetime, so each replica's $k_n$ keeps one deviation for the whole active phase. The next
+stage should:
 \begin{enumerate}
-\item build a correlated control for $X$ (same incident energies on the same paths), with
-  importance sampling in the thermal range;
-\item condense the MG fission cross sections so that the field carries $X$ to first order;
+\item replace the update by an estimate without memory (a per-generation balance ratio) or give it a
+  gain matched to the loop;
+\item give the history-based iteration a single normalization, and compare it again;
 \item then remeasure, with enough replicas to resolve a figure of merit to 20\%.
 \end{enumerate}

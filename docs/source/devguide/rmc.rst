@@ -1424,3 +1424,36 @@ Findings
 Not done
     - A correlated control for :math:`X`; MG fission cross sections
       condensed with the field's own first-flight CE flux.
+
+The field's fission production and the eigenvalue update
+--------------------------------------------------------
+
+**Commit:** "rmc: importance-sampled field fission production; history and
+normalization variants". Report section "The field's fission production, the
+eigenvalue update, and exact cancellation".
+
+Added
+    - ``field_fission_production`` (``openmc_rmc_field_production``, binding
+      ``field_production``): :math:`X_s, X_f` from backward points drawn from
+      the field's lifted fission rate on the lifts' fine grid.
+      ``FrozenField::fine_edges``. ``stage8.py --field-production`` uses it,
+      averaged over the generations.
+    - Test G8.9 in ``test_cancellation.py``.
+
+Findings
+    - :math:`X` to 0.071 % per root second (0.87 % before): 150-230 times
+      less variance per unit time with resonance-resolved lifts, 9 times with
+      200-bin lifts.
+    - With it the per-generation spread of :math:`k_n` is 0.0024, and so is
+      the spread of replica means: :math:`k_{n+1} = k_n f_n` corrects itself
+      only after a neutron lifetime.
+    - History flights are now stable at N = 2000 but :math:`k_n` oscillates
+      (period about 6 generations); fixed amplitudes fail, damping 0.3
+      reduces the amplitude only.
+    - The deferred-record grouped cancellation was not implemented: it can
+      act only at fission births (3.4 % of the children's absolute weight),
+      which netting already cancels without measurable bias.
+
+Not done
+    - A per-generation balance estimate of k, a matched gain for the k
+      update, and a single normalization for history flights.

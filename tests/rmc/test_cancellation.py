@@ -268,3 +268,18 @@ def test_history_flights_match_collision_generations(lib):
     hist, coll = np.array(hist), np.array(coll)
     sem = math.hypot(hist.std(ddof=1), coll.std(ddof=1)) / 2
     assert abs(hist.mean() - coll.mean()) < 5 * sem, (hist, coll)
+
+
+@pytest.mark.slow
+def test_field_production_matches_field_tally(lib):
+    """G8.9: the field's CE nu-fission production per source tag from points
+    drawn from its lifted fission rate (field_production) equals the sum over
+    regions of the uniform-point field tally, and is less noisy (much less
+    with lifts that resolve the fission resonances)."""
+    rmc, _ = lib
+    X, var = rmc.field_production(20_000, 4, seed=3)
+    ref = np.array([rmc.field_tally(20_000, 4, seed=10 + i)[1].sum(axis=0)
+                    for i in range(6)])
+    mean, sem = ref.mean(axis=0), ref.std(axis=0, ddof=1) / math.sqrt(len(ref))
+    assert np.all(np.abs(X - mean) < 5 * np.hypot(sem, np.sqrt(var))), (X, mean, sem)
+    assert np.sqrt(var.sum()) < 0.5 * ref.sum(axis=1).std(ddof=1)

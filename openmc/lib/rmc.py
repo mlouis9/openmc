@@ -73,7 +73,8 @@ for _name in ('openmc_rmc_field_groups', 'openmc_rmc_residual_sample',
               'openmc_rmc_sweep_field_region', 'openmc_rmc_bank_create',
               'openmc_rmc_bank_size', 'openmc_rmc_bank_get', 'openmc_rmc_bank_free',
               'openmc_rmc_propagate', 'openmc_rmc_residual_records_aux',
-              'openmc_rmc_flight_children', 'openmc_rmc_propagate_aux'):
+              'openmc_rmc_flight_children', 'openmc_rmc_propagate_aux',
+              'openmc_rmc_field_production'):
     _fn = getattr(_dll, _name)
     _fn.restype, _fn.errcheck = c_int, _error_handler
 
@@ -782,6 +783,17 @@ def near_kernel(x, xp, E, d_max):
     out = np.empty(len(x))
     _dll.openmc_rmc_near_kernel(len(x), x, xp, E, float(d_max), out)
     return out
+
+
+def field_production(n_points, n_E=4, tail='roulette', cutoff=math.exp(-4.0), seed=1):
+    """CE nu-fission production of the field's first-flight flux per source
+    tag, X[2], and the variance of each estimate, from backward points drawn
+    from the field's own lifted MG fission rate (needs the MG tables)."""
+    X, var = np.zeros(2), np.zeros(2)
+    _dll.openmc_rmc_field_production(c_int64(int(n_points)), c_int(int(n_E)),
+                                     c_int(TAILS[tail]), c_double(cutoff),
+                                     c_uint64(int(seed)), _dp(X), _dp(var))
+    return X, var
 
 
 def propagate_aux(bank, n, k, seed=1, out=None, children=True, region_tally=True,

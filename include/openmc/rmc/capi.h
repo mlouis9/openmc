@@ -288,6 +288,11 @@ int openmc_rmc_fission_chi(int32_t material_id, int i_nuclide, double E_in,
 //! Near point kernel of an isotropic parent's next collision (correction.h)
 int openmc_rmc_near_kernel(int64_t n, const double* x, const double* xp,
   const double* E, double d_max, double* out);
+//! CE nu-fission production of the field's first-flight flux per source
+//! tag (X[2]) and the variance of each estimate (var[2]), from n_points
+//! backward points drawn from the field's lifted MG fission rate.
+int openmc_rmc_field_production(int64_t n_points, int n_E, int tail,
+  double cutoff, uint64_t seed, double* X, double* var);
 //! Flights as openmc_rmc_propagate, optionally recording each child's
 //! parent, path length, and nuclide (read with openmc_rmc_flight_children)
 //! and a collision estimate of the fission and nu-fission rates by field

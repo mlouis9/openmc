@@ -135,24 +135,18 @@ class Stage8Backend(driver.OpenMCBackend):
 
     def field_production(self, a, seed):
         """a_s X_s + a_f X_f: the CE nu-fission production of the field's
-        flux per source tag, as the exact MG production (k_MG <Q_f>, split by
-        tag in proportion to a one-off MG estimate) plus the CE - MG
-        difference on fresh backward paths (low variance: both share each
-        path)."""
+        first-flight flux per source tag."""
         rmc = self.rmc
-        if self._X_mg is None:
-            f, nf, sq, nm, dq = rmc.field_tally(200_000, 1, seed=123456789, mg=True)
-            split = nm.sum(axis=0) / nm.sum()
-            self._X_mg = self.k_mg * rmc.field_mass('f') * split
-        f, nf, sq, nm, dq = rmc.field_tally(self.fp_points, self.fp_energies, seed=seed,
-                                            mg=True)
         # X_s and X_f are constants of the frozen field, so every
-        # generation's estimate of the CE - MG difference is averaged with
-        # the earlier ones: the estimate's noise falls with the number of
-        # generations instead of entering each k_n afresh
-        self._fp_sum = self._fp_sum + (nf - nm).sum(axis=0)
+        # generation's estimate is averaged with the earlier ones: the
+        # estimate's noise falls with the number of generations instead of
+        # entering each k_n afresh. Points are drawn from the field's own
+        # lifted fission rate (rmc.field_production).
+        X, _ = rmc.field_production(self.fp_points, self.fp_energies, seed=seed,
+                                    cutoff=math.exp(-3))
+        self._fp_sum = self._fp_sum + X
         self._fp_n += 1
-        X = self._X_mg + self._fp_sum / self._fp_n
+        X = self._fp_sum / self._fp_n
         return float(a[0] * X[0] + a[1] * X[1])
 
     def tally(self, a, f, seed):
