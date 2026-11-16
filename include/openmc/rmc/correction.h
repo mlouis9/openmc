@@ -84,7 +84,8 @@ bool grouped_fission_weight(const FrozenField& field,
 //! energies per point on one isotropic path. var: variance of each mean.
 void field_fission_production(const FrozenField& field, const MGTables& mg,
   int64_t n_points, int n_E, const TailOptions& tail, uint64_t seed,
-  double X[2], double var[2], int score = 0);
+  double X[2], double var[2], int score = 0,
+  double du = 0.0, double sigma_e = 1.0, int classes = 16);
 
 void field_reaction_tally(const FrozenField& field, int64_t n_points,
   int n_E, const TailOptions& tail, uint64_t seed, FieldTallyResult& out,

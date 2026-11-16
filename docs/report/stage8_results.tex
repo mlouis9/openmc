@@ -989,6 +989,104 @@ parts:
   are the untested suspects.
 \end{itemize}
 
+\subsection{The field's constants, and where the figure of merit stands}\label{sec:res:constants}
+
+Section~\ref{sec:res:grouped} named two limits, and this subsection measures both. The run data are
+in \code{examples/rmc/results/speedup5}.
+
+\paragraph{How much of the error is the constants.} A balance run estimates the field's production
+$X$ and net loss $L$ as running means. The final running mean of each replica can be recovered
+from its rows, and the replica estimates recomputed with the mean over all replicas in its place:
+\begin{center}\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+ & replicas & spread as run & with pooled $X$, $L$ & spread of $\hat L_s$ (relative)\\
+\midrule
+$N=1000$ & 18 & 0.00107 & 0.00080 & 0.063\%\\
+$N=2000$ & 10 & 0.00102 & 0.00062 & 0.073\%\\
+$N=8000$ & 6 & 0.00092 & 0.00020 & 0.091\%\\
+\bottomrule
+\end{tabular}
+\end{center}
+The net loss of the field is most of a replica's error at $N=8000$ and a large part at
+$N=2000$. Its relative error is $-\delta L/L$ in $k$, because the field carries $99\%$ of the
+absorption.
+
+\paragraph{The loss estimator cannot be improved by a better energy proposal.} The estimator's error
+is $0.28\%\cdot\sqrt{\text s}$, and its variance per point is $0.06+0.85/n_E$ with $n_E$ energies
+per path: the energies are already at their optimum. The loss is $69\%$ in the group from 4~eV to
+5.5~keV and $24\%$ in the next one. At a resonance peak the path's flux over the lifted flux is
+$0.3$ for a path from inside the fuel and $12$ for a path that enters through the rim. Two proposals
+that follow this structure were implemented (\code{field\_production(hyperfine=...)}):
+\begin{itemize}
+\item energies from bins of lethargy width $10^{-4}$ (or $3\times10^{-5}$) weighted with the
+  narrow-resonance flux $\Sigma/(\Sigma_t+\sigma_e)$;
+\item the same bins sorted into 16 classes of $\Sigma_t$, with the class chosen by the flux that a
+  path with $d$ cm of fuel behind it would see,
+  $W_c\,[(1-e^{-S_cd})/S_c+e^{-S_cd}/\sigma_e]$.
+\end{itemize}
+Neither changes the error ($0.28$--$0.30\%\cdot\sqrt{\text s}$), and the roulette cutoff does not
+either ($e^{-3}$, $e^{-5}$, $e^{-8}$). The proposal's tables are now built once per field instead of
+at every call. So the constants are computed before the run (\code{field\_constants.py},
+\code{stage8.py --field-constants}): $L_s=1.5293$ and $X_s=0.9336$ to $0.01\%$, in about 1100~s for
+$L$ and 150~s for $X$; two independent sets with hashed seeds agree ($1.5292\pm0.0003$,
+$1.5297\pm0.0003$).
+
+\paragraph{With the constants fixed.} Table~\ref{tab:res:constants} gives the balance iteration at
+$N=8000$ with $J=4$, 8 and 16 directions per destination. With six replicas the spread is uncertain, so the
+error of a replica is also estimated from batch means of 20 generations pooled over the replicas.
+
+\begin{table}[t]\centering\small
+\caption{The balance iteration with precomputed constants, $N=8000$, $N_f=2000$, six replicas.
+FOM relative to the analog reference; the time of the constants is not included.}\label{tab:res:constants}
+\setlength{\tabcolsep}{4pt}\footnotesize
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+ & $\Delta k$ (pcm) & spread & FOM & batch means & FOM & lag-1 & $T$ (s)\\
+\midrule
+$J=4$ & $-42\pm33$ & 0.00081 & 0.27 (0.11--0.43) & 0.00111 & 0.14 & 0.70 & 206\\
+$J=8$ & $-46\pm13$ & 0.00033 & 0.93 (0.39--1.48) & 0.00060 & 0.28 & 0.56 & 366\\
+$J=16$ & $-38\pm19$ & 0.00046 & 0.25 (0.10--0.40) & 0.00051 & 0.21 & 0.47 & 698\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+\item \textbf{About 0.3 of analog; no speedup.} With $J=8$ the figure of merit is $0.93$
+  ($0.39$--$1.48$) on the replica spread but $0.28$ on batch means. The row for $J=16$ decides
+  between them: twice the directions cannot have a larger error, and both of its estimates are
+  $0.0005$. So the spread of $0.00033$ at $J=8$ is a low draw, the error there is near $0.0006$, and
+  the figure of merit is about $0.3$, with $J=8$ the best of the three. The time of the constants
+  is not counted: with the present loss estimator, the best split of time between the constants and
+  the run lowers the figure of merit by a further factor of $0.6$.
+\item \textbf{Residual sampling is the whole cost.} It takes $5.85$ of the $6.1$~s of a generation;
+  flights take $0.15$~s and cancellation $0.07$~s. A stack profile gives $73\%$ of it to the
+  backward flux: $25\%$ tracing, $30\%$ the loop over segments and energies, $10\%$ cross sections.
+\item \textbf{The sampler's knobs are flat in the single-generation measure and not in the
+  iteration.} The variance of the residual's fission yield times its time is $3.3$--$4.1\times10^{-3}$ for
+  roulette cutoffs $e^{-3}$, $e^{-2}$, $e^{-1.5}$ and for $J=8$ or $4$. But in the iteration
+  $J=4$ triples the variance for $1.8$ times less time, and $J=16$ lowers it by a third for $1.9$ times more. The single-generation measure also predicts
+  an error of $0.002$ at $N=8000$, four times what the iteration has: netting removes most of the
+  sampled noise before it reaches fission, so that measure no longer ranks configurations.
+\item \textbf{A bias of about $-40$~pcm remains} at $N=8000$: $-42\pm11$ over the three rows, with
+  $\pm25$ from the reference's four replicas. With the precise constants the earlier rows of
+  Table~\ref{tab:res:balance} move down: their running means of $L_s$ were $0.04$--$0.1\%$ below
+  the precise value, which raised $k$ by $26$--$64$~pcm.
+\end{itemize}
+
+\paragraph{Where this leaves the method.} On the graphite pincell the method is at about $0.3$ of
+analog Monte Carlo for $k$ once the field's constants are known, and no tested change of the
+sampler's parameters moves it. Three things would:
+\begin{itemize}
+\item a faster backward flux: the paths cross about a hundred mesh cells of graphite each, and a
+  coarser source mesh in the moderator, or a tracer that integrates a flat source over a whole
+  cell, would cut most of the tracing and of the segment loop;
+\item an estimator of the field's net loss that follows the rim paths in the resonances, so that
+  the constants cost seconds;
+\item a single-generation measure that includes netting, so that the sampler can be tuned without a
+  forty-minute run per configuration.
+\end{itemize}
+
 \subsection{What optimization could recover}\label{sec:s8:projection}
 
 \begin{table}[t]\centering\small
@@ -1073,9 +1171,9 @@ within the present precision:
 \item \textbf{The correction.} The scattering residual is about 15 times more efficient than in the
   first measurement (proposal, tracer, several energies per trace, lifts). The bank's absolute
   weight is below the fission production ($\Wabs\approx0.85$), from 4.4.
-\item \textbf{Figure of merit.} For $k$, on the spread of replica estimates, it is $0.26$
-  ($0.14$--$0.38$) of analog Monte Carlo's with the balance eigenvalue of
-  Section~\ref{sec:res:grouped}; it was $0.05$ on the same measure with the update
+\item \textbf{Figure of merit.} For $k$ it is about $0.3$ of analog Monte Carlo's, with the balance
+  eigenvalue of Section~\ref{sec:res:grouped} and the field's constants computed beforehand
+  (Section~\ref{sec:res:constants}); it was $0.05$ on the same measure with the update
   $k_{n+1}=k_nf_n$, and $0.005$ in the first measurement. It is not a speedup.
 \end{itemize}
 
@@ -1085,11 +1183,10 @@ lifetime-long memory the balance estimate removes. Exact grouped cancellation at
 implemented and verified, but it is not sufficient for weight cancellation: the weight that must
 cancel is scattering weight, and netting remains necessary. The next stage should:
 \begin{enumerate}
-\item give the field's net loss rate an estimator as good as the one for $X$ (resonance absorption
-  is $69\%$ of the loss and carries its noise);
-\item find the correlated part of the bank's production and loss that neither $N$ nor the
-  normalization changes ($N_\delta$, $N_B$ and the netting are untested), and the origin of the
-  bias proportional to $1/N$ ($-113\pm25$~pcm at $N=1000$);
-\item net the bank of the history-based iteration, which the balance estimate has otherwise made
-  usable.
+\item make the backward flux faster, which is $70\%$ of the cost (a coarser source mesh in the
+  moderator, or a tracer that integrates a flat source over a whole cell);
+\item give the field's net loss rate an estimator that follows the rim paths in the resonances
+  (two energy proposals did not help);
+\item build a single-generation efficiency measure that includes netting, so that the sampler can be
+  tuned again; and find the origin of the bias of about $-40$~pcm.
 \end{enumerate}

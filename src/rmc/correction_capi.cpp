@@ -54,7 +54,8 @@ extern "C" int openmc_rmc_field_tally(int64_t n_points, int n_E, int tail,
 }
 
 extern "C" int openmc_rmc_field_production(int64_t n_points, int n_E,
-  int tail, double cutoff, uint64_t seed, double* X, double* var, int score)
+  int tail, double cutoff, uint64_t seed, double* X, double* var, int score,
+  double du, double sigma_e, int classes)
 {
   if (int err = prepare())
     return err;
@@ -62,7 +63,7 @@ extern "C" int openmc_rmc_field_production(int64_t n_points, int n_E,
   opt.mode = static_cast<rmc::Tail>(tail);
   opt.cutoff = cutoff;
   rmc::field_fission_production(*rmc::loaded_field, rmc::loaded_mg_tables(),
-    n_points, n_E, opt, seed, X, var, score);
+    n_points, n_E, opt, seed, X, var, score, du, sigma_e, classes);
   return 0;
 }
 

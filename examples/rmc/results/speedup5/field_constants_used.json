@@ -1,0 +1,11 @@
+{
+ "X": [
+  0.9335867805414023,
+  0.06486725511355416
+ ],
+ "L": [
+  1.5293156031997182,
+  0.02724669978381357
+ ],
+ "note": "means of three calls (seeds 101, 202, 303; 2e6 points for X, 1.3e7 for L each, about 50 s and 340 s per call). These seeds give related streams, so the three calls are not independent; field_constants_A/B.json are independent checks."
+}

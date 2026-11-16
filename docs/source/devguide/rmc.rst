@@ -1506,3 +1506,41 @@ Findings
       second, against 0.066 % for the production): most of the loss is
       resonance absorption, where the path's angular flux differs from the
       lifted flux by a factor of order one.
+
+The field's constants and the state of the figure of merit
+-----------------------------------------------------------
+
+**Commit:** "rmc: precomputed field constants; cached proposal tables;
+hyperfine loss proposal". Report section "The field's constants, and where the
+figure of merit stands".
+
+Added
+    - ``examples/rmc/field_constants.py``: X and L of the frozen field from
+      independent calls with hashed seeds; ``stage8.py --field-constants``
+      reads the file instead of estimating them every generation.
+    - ``field_fission_production`` keeps its proposal tables between calls,
+      and takes ``du``, ``sigma_e``, ``classes``: energies in the resonance
+      groups from hyperfine bins sorted into classes of the total cross
+      section, the class chosen by the length of the point's material behind
+      it on the path (binding ``field_production(hyperfine=...)``).
+    - ``balance_analysis.py`` also gives a batch-means error.
+
+Findings
+    - The running mean of the field's net loss was a third (N = 2000) to most
+      (N = 8000) of a replica's variance.
+    - The hyperfine and class proposals do not improve the loss estimator
+      (0.28 % per root second either way; variance per point 0.06 + 0.85 / n_E).
+    - With precomputed constants at N = 8000: figure of merit 0.93
+      (0.39-1.48) on the spread of six replicas, 0.28 on batch means, not
+      counting the constants. Four directions per destination instead of
+      eight triple the variance.
+    - Residual sampling is 96 % of a generation; 73 % of that is the backward
+      flux.
+    - Small consecutive integer seeds give related streams (seeds 101, 202,
+      303 agreed to six digits); independent calls need hashed seeds.
+
+Not done
+    - A coarser source mesh in the moderator or a tracer that integrates
+      whole cells; a loss estimator that follows rim paths; a
+      single-generation efficiency measure that includes netting.
+

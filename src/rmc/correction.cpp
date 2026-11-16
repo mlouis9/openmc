@@ -41,7 +41,8 @@ bool locate_point(const FrozenField& field, Position r, int64_t& region,
 
 void field_fission_production(const FrozenField& field, const MGTables& mg,
   int64_t n_points, int n_E, const TailOptions& tail, uint64_t seed,
-  double X[2], double var[2], int score)
+  double X[2], double var[2], int score, double du, double sigma_e,
+  int classes)
 {
   // score 0: nu Sigma_f. score 1: the net loss cross section, Sigma_t minus
   // the production of every non-fission channel (absorption less the gain
@@ -73,37 +74,147 @@ void field_fission_production(const FrozenField& field, const MGTables& mg,
         loss -= ChannelRegistry::production(c, dm, probe);
     return loss;
   };
-  // The score's cross section at the fine-bin midpoints, per material
-  std::unordered_map<int32_t, vector<double>> nsf;
-  vector<int64_t> regions; //!< fissionable regions
-  vector<double> wr(R, 0.0);
-  vector<vector<double>> cdf(R);
-  for (int64_t r = 0; r < R; ++r) {
-    int32_t m = field.region_material(r);
-    if (m == MATERIAL_VOID || (score == 0 && !model::materials[m]->fissionable()))
-      continue;
-    auto it = nsf.find(m);
-    if (it == nsf.end()) {
-      vector<double> v(F);
-      for (int i = 0; i < F; ++i) {
-        probe.total(m, std::sqrt(fe[i] * fe[i + 1]), sqrtkT0, 1.0);
-        v[i] = std::max(0.0, score_xs(m, 1.0));
+  // The proposal's tables are constants of the field: built once per
+  // (field, score, hyperfine settings) and kept between calls
+  struct Hyper {
+    double lo, hi;      //!< energy range of the group
+    int n;              //!< hyperfine bins
+    vector<int> order;  //!< bins sorted by class of Sigma_t
+    vector<int> start;  //!< [classes + 1] first position of each class
+    vector<double> cum; //!< cumulative weights in sorted order
+    vector<double> Wc;  //!< weight of each class
+    vector<double> Sc;  //!< weight-averaged Sigma_t of each class
+  };
+  struct Tables {
+    const FrozenField* field {nullptr};
+    int score {-1};
+    double du {0.0};
+    int classes {0};
+    size_t F {0};
+    vector<double> wr;
+    vector<vector<double>> cdf;
+    vector<int> bin_group;                //!< group of each fine bin
+    vector<vector<double>> gmass;         //!< [region][group] proposal mass
+    std::unordered_map<int64_t, Hyper> hyper; //!< key material * 1024 + group
+  };
+  static Tables tab;
+  classes = std::min(classes, 64);
+  if (tab.field != &field || tab.score != score || tab.du != du ||
+      tab.classes != classes || tab.F != static_cast<size_t>(F)) {
+    tab = Tables();
+    tab.field = &field;
+    tab.score = score;
+    tab.du = du;
+    tab.classes = classes;
+    tab.F = F;
+    tab.wr.assign(R, 0.0);
+    tab.cdf.resize(R);
+    tab.gmass.resize(R);
+    tab.bin_group.resize(F);
+    const int G = field.n_groups();
+    for (int i = 0; i < F; ++i)
+      tab.bin_group[i] = field.group(std::sqrt(fe[i] * fe[i + 1]));
+    // The score's cross section at the fine-bin midpoints, per material
+    std::unordered_map<int32_t, vector<double>> nsf;
+    for (int64_t r = 0; r < R; ++r) {
+      int32_t m = field.region_material(r);
+      if (m == MATERIAL_VOID ||
+          (score == 0 && !model::materials[m]->fissionable()))
+        continue;
+      auto it = nsf.find(m);
+      if (it == nsf.end()) {
+        vector<double> v(F);
+        for (int i = 0; i < F; ++i) {
+          probe.total(m, std::sqrt(fe[i] * fe[i + 1]), sqrtkT0, 1.0);
+          v[i] = std::max(0.0, score_xs(m, 1.0));
+        }
+        it = nsf.emplace(m, std::move(v)).first;
+        // Hyperfine tables of the groups inside the resonance range: bins
+        // of lethargy width du with the weight of the narrow-resonance flux,
+        // du Sigma(E) / (Sigma_t(E) + sigma_e)
+        if (du > 0.0) {
+          for (int g = 0; g < G; ++g) {
+            double lo = 0.0, hi = 0.0;
+            for (int i = 0; i < F; ++i)
+              if (tab.bin_group[i] == g) {
+                if (lo == 0.0)
+                  lo = fe[i];
+                hi = fe[i + 1];
+              }
+            if (!(lo >= 0.5 && hi <= 2.0e5))
+              continue;
+            int n = std::max(1, static_cast<int>(std::ceil(std::log(hi / lo) / du)));
+            Hyper h;
+            h.lo = lo;
+            h.hi = hi;
+            h.n = n;
+            vector<double> v(n), st(n);
+            double s_lo = INFTY, s_hi = 0.0;
+            for (int j = 0; j < n; ++j) {
+              double Em = lo * std::exp(std::log(hi / lo) * (j + 0.5) / n);
+              probe.total(m, Em, sqrtkT0, 1.0);
+              st[j] = probe.particle().macro_xs().total;
+              v[j] = std::max(0.0, score_xs(m, 1.0)) + 1e-12;
+              s_lo = std::min(s_lo, st[j]);
+              s_hi = std::max(s_hi, st[j]);
+            }
+            // Classes of Sigma_t, equal in its logarithm
+            const int C = std::max(1, classes);
+            vector<int> cls(n);
+            h.start.assign(C + 1, 0);
+            h.Wc.assign(C, 0.0);
+            h.Sc.assign(C, 0.0);
+            double span = std::log(s_hi / s_lo);
+            for (int j = 0; j < n; ++j) {
+              int c = (span > 0.0)
+                        ? std::min(C - 1, static_cast<int>(C * std::log(st[j] / s_lo) / span))
+                        : 0;
+              cls[j] = c;
+              ++h.start[c + 1];
+              h.Wc[c] += v[j];
+              h.Sc[c] += v[j] * st[j];
+            }
+            for (int c = 0; c < C; ++c) {
+              if (h.Wc[c] > 0.0)
+                h.Sc[c] /= h.Wc[c];
+              h.start[c + 1] += h.start[c];
+            }
+            h.order.resize(n);
+            h.cum.resize(n);
+            vector<int> fill(h.start.begin(), h.start.end() - 1);
+            for (int j = 0; j < n; ++j)
+              h.order[fill[cls[j]]++] = j;
+            for (int c = 0; c < C; ++c) {
+              double acc = 0.0;
+              for (int q = h.start[c]; q < h.start[c + 1]; ++q) {
+                acc += v[h.order[q]];
+                h.cum[q] = acc;
+              }
+            }
+            tab.hyper.emplace(static_cast<int64_t>(m) * 1024 + g, std::move(h));
+          }
+        }
       }
-      it = nsf.emplace(m, std::move(v)).first;
+      tab.cdf[r].resize(F);
+      tab.gmass[r].assign(G, 0.0);
+      double c = 0.0;
+      for (int i = 0; i < F; ++i) {
+        double Em = std::sqrt(fe[i] * fe[i + 1]);
+        int g = tab.bin_group[i];
+        double phi = (g >= 0) ? field.flux(r, g) *
+                                  field.shape(FrozenField::Shape::phi, r, Em)
+                              : 0.0;
+        double mass = field.volume(r) * phi * (fe[i + 1] - fe[i]) * it->second[i];
+        c += mass;
+        if (g >= 0)
+          tab.gmass[r][g] += mass;
+        tab.cdf[r][i] = c;
+      }
+      tab.wr[r] = c;
     }
-    cdf[r].resize(F);
-    double c = 0.0;
-    for (int i = 0; i < F; ++i) {
-      double Em = std::sqrt(fe[i] * fe[i + 1]);
-      int g = field.group(Em);
-      double phi = (g >= 0) ? field.flux(r, g) *
-                                field.shape(FrozenField::Shape::phi, r, Em)
-                            : 0.0;
-      c += field.volume(r) * phi * (fe[i + 1] - fe[i]) * it->second[i];
-      cdf[r][i] = c;
-    }
-    wr[r] = c;
   }
+  const auto& wr = tab.wr;
+  const auto& cdf = tab.cdf;
   VoxelOptions vo;
   vo.mode = VoxelMode::tabulated;
   vo.weights = wr;
@@ -120,17 +231,63 @@ void field_fission_production(const FrozenField& field, const MGTables& mg,
     if (!locate_point(field, rd.value, region, mat, kT, dm) || region < 0)
       fatal_error("RMC field production: point outside the field.");
     const auto& c = cdf[region];
+    double mu = 2.0 * prn(&s) - 1.0, ph = 2.0 * PI * prn(&s);
+    double st = std::sqrt(std::max(0.0, 1.0 - mu * mu));
+    Direction u {st * std::cos(ph), st * std::sin(ph), mu};
+    // Length of this cell's material behind the point, along the path
+    double d_first = 0.0;
+    if (du > 0.0) {
+      GeometryState gs;
+      gs.init_from_r_u(rd.value, u);
+      if (exhaustive_find_cell(gs))
+        d_first = distance_to_boundary(gs).distance();
+    }
     for (int k = 0; k < n_E; ++k) {
       double x = prn(&s) * wr[region];
       int b = static_cast<int>(std::upper_bound(c.begin(), c.end(), x) - c.begin());
       b = std::min(b, F - 1);
       double mass = c[b] - (b > 0 ? c[b - 1] : 0.0);
-      E[k] = fe[b] + (fe[b + 1] - fe[b]) * prn(&s);
-      q[k] = mass / wr[region] / (fe[b + 1] - fe[b]);
+      int g = tab.bin_group[b];
+      auto hy = (du > 0.0 && g >= 0)
+                  ? tab.hyper.find(static_cast<int64_t>(mat) * 1024 + g)
+                  : tab.hyper.end();
+      if (hy != tab.hyper.end()) {
+        // The group by its lifted mass; the class of Sigma_t by the flux a
+        // path with d_first cm of this material behind it would see,
+        //   W_c [(1 - exp(-S_c d)) / S_c + exp(-S_c d) / sigma_e];
+        // the energy within the class by the score's cross section
+        const Hyper& h = hy->second;
+        const int C = static_cast<int>(h.Wc.size());
+        double pc[64], tot = 0.0;
+        for (int c = 0; c < C; ++c) {
+          double S = h.Sc[c], t = std::exp(-S * d_first);
+          pc[c] = (h.Wc[c] > 0.0) ? h.Wc[c] * ((1.0 - t) / S + t / sigma_e) : 0.0;
+          tot += pc[c];
+        }
+        double y = prn(&s) * tot;
+        int c = 0;
+        for (; c < C - 1; ++c) {
+          if (y < pc[c])
+            break;
+          y -= pc[c];
+        }
+        while (c > 0 && !(pc[c] > 0.0))
+          --c;
+        double z = prn(&s) * h.Wc[c];
+        auto first = h.cum.begin() + h.start[c], last = h.cum.begin() + h.start[c + 1];
+        int pos = static_cast<int>(std::upper_bound(first, last, z) - h.cum.begin());
+        pos = std::min(pos, h.start[c + 1] - 1);
+        int j = h.order[pos];
+        double wj = h.cum[pos] - (pos > h.start[c] ? h.cum[pos - 1] : 0.0);
+        double lr = std::log(h.hi / h.lo);
+        double e0 = h.lo * std::exp(lr * j / h.n), e1 = h.lo * std::exp(lr * (j + 1) / h.n);
+        E[k] = e0 + (e1 - e0) * prn(&s);
+        q[k] = tab.gmass[region][g] / wr[region] * (pc[c] / tot) * wj / h.Wc[c] / (e1 - e0);
+      } else {
+        E[k] = fe[b] + (fe[b + 1] - fe[b]) * prn(&s);
+        q[k] = mass / wr[region] / (fe[b + 1] - fe[b]);
+      }
     }
-    double mu = 2.0 * prn(&s) - 1.0, ph = 2.0 * PI * prn(&s);
-    double st = std::sqrt(std::max(0.0, 1.0 - mu * mu));
-    Direction u {st * std::cos(ph), st * std::sin(ph), mu};
     backward.evaluate_all(
       rd.value, u, E, nullptr, tail, &s, psi_s, psi_f, mg_s, mg_f);
     double sc[2] = {0.0, 0.0};

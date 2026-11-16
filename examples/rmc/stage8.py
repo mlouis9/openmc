@@ -93,6 +93,9 @@ class Stage8Backend(driver.OpenMCBackend):
         self._fp_sum, self._fp_n = np.zeros(2), 0
         self._fl_sum, self._fl_n, self.fl_points = np.zeros(2), 0, 5000
         self._flight_stats = None
+        # Precomputed (X_s, X_f) and (L_s, L_f) of the frozen field, if given:
+        # they replace the per-generation estimates
+        self.constants = None
         self.net_every = 1   # netting every net_every generations
         self.fp_points, self.fp_energies, self.k_mg = 10_000, 4, None
 
@@ -173,6 +176,9 @@ class Stage8Backend(driver.OpenMCBackend):
         # estimate's noise falls with the number of generations instead of
         # entering each k_n afresh. Points are drawn from the field's own
         # lifted fission rate (rmc.field_production).
+        if self.constants is not None:
+            X = self.constants['X']
+            return float(a[0] * X[0] + a[1] * X[1])
         X, _ = rmc.field_production(self.fp_points, self.fp_energies, seed=seed,
                                     cutoff=math.exp(-3))
         self._fp_sum = self._fp_sum + X
@@ -184,6 +190,9 @@ class Stage8Backend(driver.OpenMCBackend):
         """a_s L_s + a_f L_f: the net loss rate (absorption less the gain of
         multiplying scatterings) of the field's first-flight flux per source
         tag, a running mean like field_production."""
+        if self.constants is not None:
+            L = self.constants['L']
+            return float(a[0] * L[0] + a[1] * L[1])
         L, _ = self.rmc.field_production(self.fl_points, self.fp_energies, seed=seed,
                                          cutoff=math.exp(-3), score='loss')
         self._fl_sum = self._fl_sum + L
@@ -306,6 +315,10 @@ def main():
     ap.add_argument('--field-loss', type=int, default=5000,
                     help="backward points per generation of the field's net loss rate "
                          '(balance update)')
+    ap.add_argument('--field-constants', default=None,
+                    help="JSON file with the field's production X and net loss L per "
+                         'source tag (field_constants.py); replaces the per-generation '
+                         'estimates')
     ap.add_argument('--collision-production', action='store_true',
                     help="the bank's fission production from the flights' collision "
                          'estimator')
@@ -374,6 +387,9 @@ def main():
             backend.grouped.g, backend.grouped.d_max = args.group_size, args.group_dmax
         backend.fp_points = max(args.field_production, 1)
         backend.fl_points = args.field_loss
+        if args.field_constants:
+            c = json.loads(Path(args.field_constants).read_text())
+            backend.constants = dict(X=np.array(c['X']), L=np.array(c['L']))
         ein_table = None
         if args.res_ein is not None:
             import residual_efficiency as reff

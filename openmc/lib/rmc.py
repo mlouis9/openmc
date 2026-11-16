@@ -787,17 +787,25 @@ def near_kernel(x, xp, E, d_max):
 
 
 def field_production(n_points, n_E=4, tail='roulette', cutoff=math.exp(-4.0), seed=1,
-                     score='nu-fission'):
+                     score='nu-fission', hyperfine=0.0, sigma_e=1.0, classes=16):
     """CE nu-fission production of the field's first-flight flux per source
     tag, X[2], and the variance of each estimate, from backward points drawn
     from the field's own lifted MG fission rate (needs the MG tables). With
     score='loss', the net loss rate instead: absorption less the gain of
-    multiplying scatterings, in every material."""
+    multiplying scatterings, in every material. With hyperfine > 0, energies
+    in the groups inside the resonance range (0.5 eV to 200 keV) are drawn
+    from bins of that lethargy width instead of the lifts' fine bins: the
+    bins are sorted into classes of Sigma_t, a class is chosen with the
+    weight W_c [(1 - exp(-S_c d)) / S_c + exp(-S_c d) / sigma_e] for a path
+    with d cm of the point's material behind it, and the energy within the
+    class by the score's cross section. (On the graphite pincell this
+    proposal gave no gain over the lifts' bins.)"""
     X, var = np.zeros(2), np.zeros(2)
     _dll.openmc_rmc_field_production(c_int64(int(n_points)), c_int(int(n_E)),
                                      c_int(TAILS[tail]), c_double(cutoff),
                                      c_uint64(int(seed)), _dp(X), _dp(var),
-                                     c_int({'nu-fission': 0, 'loss': 1}[score]))
+                                     c_int({'nu-fission': 0, 'loss': 1}[score]),
+                                     c_double(hyperfine), c_double(sigma_e), c_int(int(classes)))
     return X, var
 
 

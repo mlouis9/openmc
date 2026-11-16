@@ -293,7 +293,7 @@ int openmc_rmc_near_kernel(int64_t n, const double* x, const double* xp,
 //! backward points drawn from the field's lifted MG fission rate.
 int openmc_rmc_field_production(int64_t n_points, int n_E, int tail,
   double cutoff, uint64_t seed, double* X, double* var,
-  int score);
+  int score, double du, double sigma_e, int classes);
 //! Flights as openmc_rmc_propagate, optionally recording each child's
 //! parent, path length, and nuclide (read with openmc_rmc_flight_children)
 //! and a collision estimate of the fission and nu-fission rates by field
