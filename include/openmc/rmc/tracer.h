@@ -31,6 +31,8 @@ struct SegmentList {
   vector<double> sqrtkT;       //!< sqrt(kT) [sqrt(eV)] of the cell instance
   vector<double> density_mult; //!< density multiplier of the cell instance
   vector<int64_t> region;      //!< field region, or -1 where the field is 0
+  vector<Position> start;      //!< global position at the start of each segment
+  vector<Direction> direction; //!< global direction, including reflections
   bool ends_in_vacuum {false}; //!< the path left through a vacuum boundary
 
   int size() const { return static_cast<int>(length.size()); }
@@ -43,16 +45,21 @@ struct SegmentList {
     sqrtkT.clear();
     density_mult.clear();
     region.clear();
+    start.clear();
+    direction.clear();
     ends_in_vacuum = false;
   }
 
-  void push_back(double l, int32_t m, double kT, double dm, int64_t r)
+  void push_back(double l, int32_t m, double kT, double dm, int64_t r,
+    Position x, Direction u)
   {
     length.push_back(l);
     material.push_back(m);
     sqrtkT.push_back(kT);
     density_mult.push_back(dm);
     region.push_back(r);
+    start.push_back(x);
+    direction.push_back(u);
   }
 };
 

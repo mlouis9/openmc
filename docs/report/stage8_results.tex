@@ -1469,6 +1469,85 @@ that such a cancellation can act on all of its particles. The next gains are in 
 $\bar D$ (its source energies and positions, amplified by $\Lambda$) and in the iteration's own
 noise, which is the other half of the variance.
 
+\subsection{Continuous forward points, better partners, and a band closure}\label{sec:res:continuous}
+
+This subsection asks whether the residual can be paired on forward rays \emph{pointwise}, without
+bins, and what the partner must be for that to pay. The code is \code{rmc::forward\_points}
+(\code{src/rmc/forward.cpp}), \code{examples/rmc/resolve\_basis.py} and
+\code{examples/rmc/forward\_partner\_study.py}; the run data are in
+\code{examples/rmc/results/speedup8}.
+
+\paragraph{The estimator.} A source neutron is drawn from the field (region by emission mass, source
+tag and group, energy from the source lift, isotropic direction) and flown to a collision, with CE
+or multigroup $\Sigma_t$ chosen by a mixture. An outgoing state $z=(d,E',\vO')$ is drawn from the
+chosen component's emission law and banked with weight $[k_{CE}(z\mid\xi)-k_0(z\mid\xi)]/q(z)$: the CE
+density of the ray's first-collision emission at $z$ (elastic: the incident energy integrated out
+through the images; fission: conditional on the sampled energy) minus a \emph{partner} density
+$k_0$, over the mixture's density $q$. Its expectation per ray is the forward bins' difference before
+the analytic integration over the bin (gate G8.16, \code{tests/rmc/test\_forward\_points\_and\_band\_partner.py}).
+Non-elastic scattering has no CE density yet, so it is a separate unpaired part, as is the
+remainder of the multigroup matrix; at the bin level both are paired (Figure~\ref{fig:cont:channels}).
+
+\begin{figure}[t]\centering
+\includegraphics[width=0.92\textwidth]{figures/continuous_channels.pdf}
+\caption{First-collision emission, CE minus multigroup, by outgoing group and channel class. The
+multigroup matrix holds inelastic scattering; split by one elastic share per incident group, the
+elastic and non-elastic parts of the fuel's fast groups differ by about $0.25$ with opposite signs,
+and their sum is small.}\label{fig:cont:channels}
+\end{figure}
+
+\paragraph{The measure.} One generation's importance-weighted residual, with the importance tabulated
+by field region and 60 energy bins, split into a \emph{bin part} (the residual's bin totals times the
+bins' mean importance) and a \emph{within-bin part} (the rest), as noise per root second. The split
+reproduces the ordering of the eigenvalue figures of merit: the control variate of
+Section~\ref{sec:res:bcv} has bin part $0.0097$ (forward bins) and within-bin part $0.024$ (backward
+records), $85\%$ of its variance (Figure~\ref{fig:cont:cvbins}).
+
+\begin{figure}[t]\centering
+\includegraphics[width=0.92\textwidth]{figures/continuous_cv_bins.pdf}
+\caption{Bin totals of the scattering residual's physics part over ten generations: backward records
+(blue) and forward rays (red), summed over the zones of each material.}\label{fig:cont:cvbins}
+\end{figure}
+
+\paragraph{Partners.} The ray-wise mismatch $\rho=\E\!\int|k_{CE}-k_0|/\E\!\int k_{CE}$ sets the weights:
+\begin{center}\footnotesize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+partner & lanes or bands & $\rho$ elastic & $\rho$ fission\\ \midrule
+multigroup & 1 & 0.255 & 0.74\\
+CE law applied to the multigroup flux & 1 & 0.125 & 0.153\\
+RESOLVE lanes, generic starting block with the field's lifts & 64 & 0.017 & 0.033\\
+RESOLVE lanes, starting block tuned to the problem & 32 & 0.002 & 0.003\\
+bands (subgroup limit), $\log\Sigma_t$ levels, $128\times16$ & 2048 & 0.012 & 0.018\\
+\bottomrule
+\end{tabular}
+\end{center}
+The multigroup partner's floor is the in-group attenuation along the ray; RESOLVE lanes remove it.
+Truncating the partner's angular law to P$_1$, P$_3$ or P$_7$ leaves $0.11$, $0.08$, $0.065$.
+
+\paragraph{Bounded weights.} With the CE and multigroup proposals alone, $90\%$ of the variance sat in
+$0.1\%$ of the samples, at the $^{238}$U resonance minima where the partner and CE disagree and neither
+proposal puts mass. A third component drawn from a band library (band by source mass, collision with
+the band's $\Sigma_t$, incident energy by $\Sigma_{el}$ within the band) bounds the weights of a band
+partner. RESOLVE lanes ring with both signs at the resonance peaks and keep their tails.
+
+\paragraph{Noise.} Scattering, per root second (total; within-bin): multigroup partner $0.119$; $0.028$;
+band partner $128\times16$ with the band proposal $0.0064$; $0.0025$, at 20~$\mu$s per sample. Fission
+with that partner: $0.0018$ (backward records $0.0098$).
+
+\paragraph{The closure.} The partner's expectation must be added back. Its bin totals come from a band
+first-flight sweep (\code{rmc.band\_sweep}: long random rays carry the uncollided flux in every band,
+the local part of each segment integral replaced by its exact expectation) and elastic transfer
+tables. Gate G8.17 checks them against the partner's own forward points. Its noise per root second is
+$0.004$--$0.016$ depending on the number of bands, so that points plus closure total about $0.018$
+($32\times16$ bands), against $0.034$ for the control variate: about $3.6$ times in variance $\times$
+time, from one generation; the eigenvalue is not yet measured.
+
+\paragraph{What remains.} With the multigroup field, the closure also has structure inside the bins
+(the partner's exact-kinematics emission against the multigroup lift), which the points do not carry.
+A band field, the band fluxes times tabulated CE emission spectra, removes the energy part; what
+remains is the flat-source and angular structure, as for any low order.
+
 \subsection{What optimization could recover}\label{sec:s8:projection}
 
 \begin{table}[t]\centering\small
@@ -1557,7 +1636,8 @@ within the present precision:
   residual is unbiased, it is $1$--$2$ times analog Monte Carlo's for $k$ on the spread of six
   replicas and $2$--$3$ on batch means; with residual samples from backward points it was about
   $0.4$. A biased form that holds the residual only in the netting bins reached $5.5$
-  (Section~\ref{sec:res:correlated}).
+  (Section~\ref{sec:res:correlated}). Pointwise forward points with a band partner and its closure
+  project to about $3.6$ times the control variate (Section~\ref{sec:res:continuous}).
 \end{itemize}
 
 What limits it has changed three times. It is no longer the scattering residual, no longer the

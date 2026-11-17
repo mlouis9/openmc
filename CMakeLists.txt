@@ -393,6 +393,7 @@ list(APPEND libopenmc_SOURCES
   src/rmc/capi.cpp
   src/rmc/field.cpp
   src/rmc/flight.cpp
+  src/rmc/forward.cpp
   src/rmc/correction.cpp
   src/rmc/correction_capi.cpp
   src/rmc/kinematics.cpp

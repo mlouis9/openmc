@@ -76,6 +76,8 @@ for _name in ('openmc_rmc_field_groups', 'openmc_rmc_residual_sample',
               'openmc_rmc_flight_children', 'openmc_rmc_propagate_aux',
               'openmc_rmc_field_production', 'openmc_rmc_flight_children_incident',
               'openmc_rmc_field_first_flight_rates', 'openmc_rmc_forward_residual_bins',
+              'openmc_rmc_forward_points', 'openmc_rmc_forward_points_get', 'openmc_rmc_forward_channels', 'openmc_rmc_resolve_clear', 'openmc_rmc_resolve_select', 'openmc_rmc_band_sweep', 'openmc_rmc_resolve_set_bands',
+              'openmc_rmc_resolve_set_block', 'openmc_rmc_resolve_set_cross', 'openmc_rmc_resolve_set_source',
               'openmc_rmc_grouped_fission_weights'):
     _fn = getattr(_dll, _name)
     _fn.restype, _fn.errcheck = c_int, _error_handler
@@ -871,6 +873,105 @@ def forward_residual_bins(n_rays, tables, n_E=8, n_out=1, cutoff=math.exp(-4.0),
                                           c_int(int(bool(mg_only))), _dp(diff), _dp(low),
                                           c_int(int(n_out_f)))
     return diff.reshape(2, nb), low.reshape(2, nb)
+
+
+def forward_points(tag, part, n, a=(1.0, 1.0), k=1.0, lam=0.5, seed=1):
+    """The continuous correlated forward residual: the field's first-
+    collision emission of one tag, CE minus a multigroup reconstruction, as
+    signed points (rmc::forward_points). part 0: the density part (CE
+    stationary elastic or fission against the paired multigroup emission),
+    1: CE non-elastic scattering, unpaired, 2: the unpaired share of the
+    multigroup scattering. lam: probability of the CE component of the
+    mixture proposal. Returns (dict of r, u, E, region, material, w_ce, w_mg,
+    g_in; diagnostics [16], see forward.h); the signed weight is w_ce - w_mg."""
+    a = np.ascontiguousarray(a, dtype=np.float64)
+    diag = np.zeros(24)
+    m = c_int64()
+    _dll.openmc_rmc_forward_points(c_int(TAGS[tag]), c_int(int(part)), c_int64(int(n)),
+                                   _dp(a), c_double(k), c_double(lam), c_uint64(int(seed)),
+                                   byref(m), _dp(diag))
+    m = m.value
+    out = dict(r=np.empty((max(m, 1), 3)), u=np.empty((max(m, 1), 3)), E=np.empty(max(m, 1)),
+               region=np.empty(max(m, 1), dtype=np.int64),
+               material=np.empty(max(m, 1), dtype=np.int32),
+               w_ce=np.empty(max(m, 1)), w_mg=np.empty(max(m, 1)),
+               g_in=np.empty(max(m, 1), dtype=np.int32))
+    _dll.openmc_rmc_forward_points_get(_dp(out['r']), _dp(out['u']), _dp(out['E']),
+                                       out['region'].ctypes.data_as(POINTER(c_int64)),
+                                       out['material'].ctypes.data_as(POINTER(c_int32)),
+                                       _dp(out['w_ce']), _dp(out['w_mg']),
+                                       out['g_in'].ctypes.data_as(POINTER(c_int32)))
+    return {key: v[:m] for key, v in out.items()}, diag
+
+
+def resolve_load(n_mat, n_groups, blocks, cross, sources, slot=0, bands=None):
+    """Load a RESOLVE library for forward_points part 5. blocks: {(m, g):
+    (edges [n+1], U [n, L], D [L])}; cross: {(m_from, m_to, g): R [L_to,
+    L_from]}; sources: {(region, tag, g): c [L]}. m are material indices.
+    slot 0 is the partner, slot 1 the proposal bands of part 8; bands:
+    {(m, g): (band of every bin, band lethargy widths[, per-bin draw weight])}."""
+    _dll.openmc_rmc_resolve_select(c_int(slot))
+    _dll.openmc_rmc_resolve_clear(c_int(n_mat), c_int(n_groups))
+    for (m, g), (edges, U, D) in blocks.items():
+        edges = np.ascontiguousarray(edges, dtype=np.float64)
+        D = np.ascontiguousarray(D, dtype=np.float64)
+        if U is None:   # band library: the lanes come with bands
+            _dll.openmc_rmc_resolve_set_block(c_int(m), c_int(g), c_int(edges.size - 1), c_int(D.size),
+                                              _dp(edges), None, _dp(D))
+            continue
+        U = np.ascontiguousarray(U, dtype=np.float64)
+        _dll.openmc_rmc_resolve_set_block(c_int(m), c_int(g), c_int(U.shape[0]), c_int(U.shape[1]),
+                                          _dp(edges), _dp(U), _dp(D))
+    for (a, b, g), R in cross.items():
+        R = np.ascontiguousarray(R, dtype=np.float64)
+        _dll.openmc_rmc_resolve_set_cross(c_int(a), c_int(b), c_int(g), c_int(R.shape[0]),
+                                          c_int(R.shape[1]), _dp(R))
+    for (r, t, g), c in sources.items():
+        c = np.ascontiguousarray(c, dtype=np.float64)
+        _dll.openmc_rmc_resolve_set_source(c_int64(int(r)), c_int(t), c_int(g), c_int(c.size), _dp(c))
+    for (m, g), bd in (bands or {}).items():
+        band = np.ascontiguousarray(bd[0], dtype=np.int32)
+        mass = np.ascontiguousarray(bd[1], dtype=np.float64)
+        weight = np.ascontiguousarray(bd[2] if len(bd) > 2 else np.ones(band.size), dtype=np.float64)
+        _dll.openmc_rmc_resolve_set_bands(c_int(m), c_int(g), band.ctypes.data_as(POINTER(c_int32)),
+                                          _dp(mass), _dp(weight))
+    _dll.openmc_rmc_resolve_select(c_int(0))
+
+
+def band_sweep(n_rays, dead=20.0, active=60.0, seed=1, slot=1, n_sample=0):
+    """Region-integrated uncollided flux of the field's emission in every band
+    of the band library in slot: (Phi [regions, bands], offset [groups + 1]).
+    n_sample > 0: each ray carries n_sample bands per group (stratified by
+    source mass, weighted), unbiased."""
+    m = c_int64()
+    _dll.openmc_rmc_band_sweep(c_int(slot), c_int64(int(n_rays)), c_double(dead),
+                               c_double(active), c_uint64(int(seed)), c_int(int(n_sample)),
+                               byref(m), None, None)
+    R = field_n_regions()
+    G = len(field_groups()) - 1
+    phi = np.empty(max(R * m.value, 1))
+    off = np.empty(G + 1, dtype=np.int32)
+    _dll.openmc_rmc_band_sweep(c_int(slot), c_int64(0), c_double(0), c_double(0), c_uint64(0),
+                               c_int(0), byref(m), _dp(phi), off.ctypes.data_as(POINTER(c_int32)))
+    return phi[:R * m.value].reshape(R, m.value), off
+
+
+def forward_channels():
+    """Channel sums of the last forward_points call, as a dict
+    {(nuclide, MT, material index, outgoing group): sum of weights}. CE
+    nuclide indices are OpenMC's; nuclide -1 is the multigroup partner with
+    MT 990 (elastic share), 991 (remainder) or 992 (fission)."""
+    m = c_int64()
+    _dll.openmc_rmc_forward_channels(byref(m), None, None)
+    n = m.value
+    keys = np.empty(max(n, 1), dtype=np.int64)
+    sums = np.empty(max(n, 1))
+    _dll.openmc_rmc_forward_channels(byref(m), keys.ctypes.data_as(POINTER(c_int64)), _dp(sums))
+    out = {}
+    for k_, v in zip(keys[:n], sums[:n]):
+        k_ = int(k_)
+        out[(k_ // 100000 - 2, (k_ // 100) % 1000, (k_ // 10) % 10, k_ % 10)] = float(v)
+    return out
 
 
 def grouped_fission_weights(x, nuclide, E_f, offset, member, records, d_max, k):

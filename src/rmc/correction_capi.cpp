@@ -9,6 +9,7 @@
 #include "openmc/material.h"
 #include "openmc/nuclide.h"
 #include "openmc/rmc/capi.h"
+#include "openmc/rmc/forward.h"
 #include "openmc/rmc/correction.h"
 #include "openmc/rmc/mg_control.h"
 #include "openmc/rmc/flight.h"
@@ -51,6 +52,10 @@ extern "C" int openmc_rmc_field_tally(int64_t n_points, int n_E, int tail,
   std::copy(res.nu_fission.begin(), res.nu_fission.end(), nu_fission);
   std::copy(res.fission_sq.begin(), res.fission_sq.end(), fission_sq);
   return 0;
+}
+
+namespace {
+openmc::rmc::ForwardPoints last_forward;
 }
 
 extern "C" int openmc_rmc_field_production(int64_t n_points, int n_E,
@@ -103,6 +108,151 @@ extern "C" int openmc_rmc_forward_residual_bins(int64_t n_rays, int n_E,
   fb.frac = frac;
   rmc::forward_residual_bins(*rmc::loaded_field, rmc::loaded_mg_tables(), n_rays,
     n_E, n_out, cutoff, seed, fb, mg_only != 0, diff, low, n_out_f);
+  return 0;
+}
+
+extern "C" int openmc_rmc_forward_points(int tag, int part, int64_t n,
+  const double* a, double k, double lambda, uint64_t seed, int64_t* n_out,
+  double* diagnostics)
+{
+  if (int err = prepare())
+    return err;
+  try {
+    rmc::forward_points(*rmc::loaded_field, rmc::loaded_mg_tables(),
+      static_cast<rmc::Tag>(tag), part, n, a, k, lambda, seed, last_forward,
+      diagnostics);
+  } catch (const std::exception& e) {
+    set_errmsg(e.what());
+    return OPENMC_E_UNASSIGNED;
+  }
+  *n_out = static_cast<int64_t>(last_forward.E.size());
+  return 0;
+}
+
+extern "C" int openmc_rmc_band_sweep(int slot, int64_t n_rays, double dead,
+  double active, uint64_t seed, int n_sample, int64_t* n_out, double* phi, int32_t* offset)
+{
+  if (int err = prepare())
+    return err;
+  static vector<double> Phi;
+  static vector<int> off;
+  if (!phi) {
+    try {
+      rmc::band_sweep(*rmc::loaded_field, slot, n_rays, dead, active, seed, Phi, off, n_sample);
+    } catch (const std::exception& e) {
+      set_errmsg(e.what());
+      return OPENMC_E_UNASSIGNED;
+    }
+    *n_out = static_cast<int64_t>(off.empty() ? 0 : off.back());
+    return 0;
+  }
+  std::copy(Phi.begin(), Phi.end(), phi);
+  std::copy(off.begin(), off.end(), offset);
+  return 0;
+}
+
+extern "C" int openmc_rmc_resolve_select(int slot)
+{
+  if (slot < 0 || slot > 1)
+    return OPENMC_E_INVALID_ARGUMENT;
+  rmc::resolve_select(slot);
+  return 0;
+}
+
+extern "C" int openmc_rmc_resolve_set_bands(int m, int g, const int32_t* band,
+  const double* mass, const double* weight)
+{
+  auto& lib = rmc::resolve_library();
+  if (m < 0 || m >= lib.n_mat || g < 0 || g >= lib.n_groups)
+    return OPENMC_E_INVALID_ARGUMENT;
+  auto& b = lib.block[static_cast<size_t>(m) * lib.n_groups + g];
+  b.band.assign(band, band + b.n);
+  b.band_mass.assign(mass, mass + b.L);
+  b.band_bins.assign(b.L, {});
+  b.band_cdf.assign(b.L, {});
+  for (int j = 0; j < b.n; ++j) {
+    int k = b.band[j];
+    double w = std::log(b.edges[j + 1] / b.edges[j]) * (weight ? weight[j] : 1.0);
+    b.band_bins[k].push_back(j);
+    b.band_cdf[k].push_back((b.band_cdf[k].empty() ? 0.0 : b.band_cdf[k].back()) + w);
+  }
+  return 0;
+}
+
+extern "C" int openmc_rmc_resolve_clear(int n_mat, int n_groups)
+{
+  auto& lib = rmc::resolve_library();
+  lib.clear();
+  lib.n_mat = n_mat;
+  lib.n_groups = n_groups;
+  lib.block.assign(static_cast<size_t>(n_mat) * n_groups, rmc::ResolveBlock());
+  return 0;
+}
+
+extern "C" int openmc_rmc_resolve_set_block(int m, int g, int n, int L,
+  const double* edges, const double* U, const double* D)
+{
+  auto& lib = rmc::resolve_library();
+  if (m < 0 || m >= lib.n_mat || g < 0 || g >= lib.n_groups)
+    return OPENMC_E_INVALID_ARGUMENT;
+  auto& b = lib.block[static_cast<size_t>(m) * lib.n_groups + g];
+  b.n = n;
+  b.L = L;
+  b.edges.assign(edges, edges + n + 1);
+  if (U)
+    b.U.assign(U, U + static_cast<size_t>(n) * L);
+  else
+    b.U.clear(); // band library: lanes given by set_bands
+  b.D.assign(D, D + L);
+  return 0;
+}
+
+extern "C" int openmc_rmc_resolve_set_cross(int from, int to, int g, int L_to,
+  int L_from, const double* R)
+{
+  rmc::resolve_library().cross[rmc::ResolveLibrary::cross_key(from, to, g)].assign(
+    R, R + static_cast<size_t>(L_to) * L_from);
+  return 0;
+}
+
+extern "C" int openmc_rmc_resolve_set_source(int64_t region, int tag, int g, int L,
+  const double* c)
+{
+  rmc::resolve_library().source[rmc::ResolveLibrary::source_key(region, tag, g)].assign(c, c + L);
+  return 0;
+}
+
+extern "C" int openmc_rmc_forward_channels(int64_t* n, int64_t* keys, double* sums)
+{
+  *n = static_cast<int64_t>(last_forward.channel.size());
+  if (keys) {
+    int64_t i = 0;
+    for (const auto& kv : last_forward.channel) {
+      keys[i] = kv.first;
+      sums[i++] = kv.second;
+    }
+  }
+  return 0;
+}
+
+extern "C" int openmc_rmc_forward_points_get(double* r, double* u, double* E,
+  int64_t* region, int32_t* material, double* w_ce, double* w_mg, int32_t* g_in)
+{
+  const auto& f = last_forward;
+  for (size_t i = 0; i < f.E.size(); ++i) {
+    r[3 * i] = f.r[i].x;
+    r[3 * i + 1] = f.r[i].y;
+    r[3 * i + 2] = f.r[i].z;
+    u[3 * i] = f.u[i].x;
+    u[3 * i + 1] = f.u[i].y;
+    u[3 * i + 2] = f.u[i].z;
+    E[i] = f.E[i];
+    region[i] = f.region[i];
+    material[i] = f.material[i];
+    w_ce[i] = f.w_ce[i];
+    w_mg[i] = f.w_mg[i];
+    g_in[i] = f.group_in[i];
+  }
   return 0;
 }
 

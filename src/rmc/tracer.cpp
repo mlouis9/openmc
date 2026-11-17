@@ -137,7 +137,7 @@ void CharacteristicTracer::step()
   if (mesh_idx < 0) {
     // No mesh on this instance (or an instance the field never reached)
     int64_t region = (mesh_idx == -1) ? field_.region(cell.id_, inst, 0) : -1;
-    pending_.push_back(d, material, sqrtkT, dm, region);
+    pending_.push_back(d, material, sqrtkT, dm, region, p_.r(), p_.u());
   } else {
     // Split at mesh bin crossings, as RandomRay::attenuate_flux() does
     Position start = p_.r();
@@ -151,7 +151,7 @@ void CharacteristicTracer::step()
     double covered = 0.0;
     for (size_t b = 0; b < bins_.size(); ++b) {
       pending_.push_back(d * fractions_[b], material, sqrtkT, dm,
-        region_of(bins_[b]));
+        region_of(bins_[b]), start + d * covered * p_.u(), p_.u());
       covered += fractions_[b];
     }
     // Round-off in the mesh crossing (very short or grazing segments): give
@@ -165,7 +165,7 @@ void CharacteristicTracer::step()
       }
       int bin = model::meshes[mesh_idx]->get_bin(start + 0.5 * d * p_.u());
       pending_.push_back(d * gap, material, sqrtkT, dm,
-        bin >= 0 ? region_of(bin) : -1);
+        bin >= 0 ? region_of(bin) : -1, start + d * covered * p_.u(), p_.u());
     }
   }
 
@@ -185,7 +185,8 @@ void CharacteristicTracer::extend(int max_segments, SegmentList& out)
     if (next_ < pending_.size()) {
       int k = next_++;
       out.push_back(pending_.length[k], pending_.material[k],
-        pending_.sqrtkT[k], pending_.density_mult[k], pending_.region[k]);
+        pending_.sqrtkT[k], pending_.density_mult[k], pending_.region[k],
+        pending_.start[k], pending_.direction[k]);
     } else if (ended_) {
       out.ends_in_vacuum = true;
       return;

@@ -294,6 +294,28 @@ int openmc_rmc_near_kernel(int64_t n, const double* x, const double* xp,
 int openmc_rmc_field_production(int64_t n_points, int n_E, int tail,
   double cutoff, uint64_t seed, double* X, double* var,
   int score, double du, double sigma_e, int classes);
+int openmc_rmc_forward_points(int tag, int part, int64_t n, const double* a,
+  double k, double lambda, uint64_t seed, int64_t* n_out, double* diagnostics);
+//! A preliminary RESOLVE library for forward_points part 5 (see forward.h)
+int openmc_rmc_resolve_select(int slot);
+//! Band first-flight sweep: call with phi null to run (n_out = bands per
+//! region), then with arrays [regions * n_out] and [groups + 1] to read.
+int openmc_rmc_band_sweep(int slot, int64_t n_rays, double dead, double active,
+  uint64_t seed, int n_sample, int64_t* n_out, double* phi, int32_t* offset);
+//! band of every bin, band lethargy widths, and a per-bin weight (the draw of
+//! an incident energy in a band is by lethargy width times weight)
+int openmc_rmc_resolve_set_bands(int m, int g, const int32_t* band, const double* mass,
+  const double* weight);
+int openmc_rmc_resolve_clear(int n_mat, int n_groups);
+int openmc_rmc_resolve_set_block(int m, int g, int n, int L, const double* edges,
+  const double* U, const double* D);
+int openmc_rmc_resolve_set_cross(int from, int to, int g, int L_to, int L_from,
+  const double* R);
+int openmc_rmc_resolve_set_source(int64_t region, int tag, int g, int L, const double* c);
+//! Channel sums of the last forward_points call (see ForwardPoints)
+int openmc_rmc_forward_channels(int64_t* n, int64_t* keys, double* sums);
+int openmc_rmc_forward_points_get(double* r, double* u, double* E,
+  int64_t* region, int32_t* material, double* w_ce, double* w_mg, int32_t* g_in);
 int openmc_rmc_forward_residual_bins(int64_t n_rays, int n_E, int n_out,
   double cutoff, uint64_t seed, const int32_t* zone, int n_zone, int n_mu,
   int n_phi, const int32_t* fine2e, int n_ebin, const double* frac,
