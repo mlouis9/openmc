@@ -139,9 +139,10 @@ beforehand: not a speedup. Three limits have been removed in turn: the scatterin
 fission production of the field's first-flight flux (Section~\ref{sec:res:X}), and the eigenvalue
 update $k_{n+1}=k_nf_n$, which a balance estimate without memory replaces
 (Section~\ref{sec:res:grouped}). Exact grouped cancellation at fission births is implemented and
-verified, and is not sufficient: the weight that must cancel is scattering weight. What remains is
-the cost of residual sampling, which is $96\%$ of a generation, and the field's net loss rate
-(Section~\ref{sec:res:constants}).
+verified, and is not sufficient: the weight that must cancel is scattering weight. The field's net loss rate now comes from forward rays during the run, so the figure counts
+everything (Section~\ref{sec:res:forward}). A coarser source mesh and a resonance-resolving low order
+do not change it: what remains is the Monte Carlo integration error of the scattering production
+at each of the 37 collisions of a neutron's life.
 \clearpage
 
 \input{part1_method}

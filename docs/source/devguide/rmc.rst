@@ -1544,3 +1544,32 @@ Not done
       whole cells; a loss estimator that follows rim paths; a
       single-generation efficiency measure that includes netting.
 
+Forward rays for the loss, a coarser mesh, and a resonance-resolving low order
+------------------------------------------------------------------------------
+
+**Commits:** "rmc: forward analytic-ray estimator of the field's
+first-collision rates; field variants with fine lifts" and the report commit
+after it. Report section "Coarser mesh, forward rays for the loss, and a
+resonance-resolving low order".
+
+Added
+    - ``field_first_flight_rates`` (``openmc_rmc_field_first_flight_rates``,
+      binding of the same name): production and net loss of the field's
+      emission from forward rays integrated analytically, with a pilot for
+      the region weights. ``stage8.py --loss-estimator forward``;
+      ``field_constants.py --loss-estimator`` (forward by default).
+    - ``fine_lift_files(base=...)``: the fine lifts with a field on another
+      source-region mesh; ``field_constants.py --field-groups --field-mesh``.
+    - Test G8.12.
+
+Findings
+    - Net loss to 0.08-0.11 % per root second (0.28 % with backward points);
+      with it estimated during the run the result equals the one with
+      precomputed constants.
+    - A 4 x 4 source mesh makes a generation 27 % faster and leaves the
+      figure of merit unchanged.
+    - The variance of the residual's fission yield is the same for the
+      8-group field, ring-wise lifts, and a 361-group field, and a 361-group
+      control on the backward paths does not lower it: a resonance-resolving
+      low order (RESOLVE) is not expected to help this method here.
+

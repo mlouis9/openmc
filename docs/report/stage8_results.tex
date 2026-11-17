@@ -1087,6 +1087,104 @@ sampler's parameters moves it. Three things would:
   forty-minute run per configuration.
 \end{itemize}
 
+\subsection{Coarser mesh, forward rays for the loss, and a resonance-resolving low order}\label{sec:res:forward}
+
+Three questions from Section~\ref{sec:res:constants} are answered here. The data are in
+\code{examples/rmc/results/speedup6}.
+
+\paragraph{A coarser source mesh does not help.} The field was solved again on a $4\times4$ mesh
+(and $6\times6$) instead of $12\times12$, with the same lifts and its own constants. With
+$N=8000$, $J=8$ and six replicas:
+\begin{center}\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+mesh & $\Delta k$ (pcm) & spread & batch means & lag-1 & $T$ (s) & FOM (spread; batch means)\\
+\midrule
+$12\times12$ & $-46\pm13$ & 0.00033 & 0.00060 & 0.56 & 366 & 0.93; 0.28\\
+$4\times4$ & $-11\pm16$ & 0.00040 & 0.00069 & 0.76 & 267 & 0.88; 0.29\\
+\bottomrule
+\end{tabular}
+\end{center}
+A generation is $27\%$ faster, not the factor of two hoped for: mesh crossings are a minor part of
+the backward flux. The error per generation is the same and its correlation is longer, so the
+figure of merit does not move. The field's spatial resolution is not what limits the method, in
+cost or in noise.
+
+\paragraph{Forward rays for the field's net loss.} The backward estimator scores
+$\Sigma\,\psi$ at a point, and at a resonance peak that product differs by a factor of forty between
+a point at the rim and one inside the fuel. The new estimator
+(\code{field\_first\_flight\_rates}) removes the point: a source neutron is drawn from the field's
+emission and its ray is integrated analytically,
+\begin{equation}
+A_x(\mathbf r,\Omega,E)=\sum_{\text{segments}}\frac{\Sigma_x}{\Sigma_t}\left(e^{-\tau_{\text{in}}}-e^{-\tau_{\text{out}}}\right),
+\end{equation}
+so where on the ray the collision falls carries no noise, and the ray needs only the material of
+each segment. Energies are drawn from the emission times a rational approximation of the loss
+probability, $\Sigma_{\text{loss}}/(\Sigma_t+\sigma_e)$ in the fuel, on sub-bins of lethargy width
+$10^{-4}$; regions are reweighted once by a pilot.
+\begin{center}\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+estimator of $L_s$ & relative error $\times\sqrt{\text{seconds}}$ & variance $\times$ time\\
+\midrule
+backward points, 4 energies per path & 0.28\% & 1\\
+forward rays, 8 energies per ray & 0.17\% & 1/2.7\\
+forward rays, 2 energies per ray & 0.12\% & 1/5.4\\
+forward rays, 1 energy per ray & 0.08--0.11\% & 1/7 to 1/12\\
+\bottomrule
+\end{tabular}
+\end{center}
+The remaining variance is between rays, not between energies (0.4 relative per ray for any number
+of energies): a ray along a corridor between pins never meets fuel. For the production $X$ the
+backward estimator stays better ($0.066\%$ against $0.29\%$). Gate G8.12 checks the forward rates
+against the backward ones.
+
+With $4\times10^4$ rays per generation ($0.17$~s of $6.1$) and no precomputed constants, four
+replicas give a spread of $0.00046$ and a batch-means error of $0.00059$, with
+$\Delta k=-50$~pcm: the same as with constants computed beforehand. (Two more replicas were lost to
+a restart of the machine.) The figure of merit of about $0.3$ therefore now includes everything.
+
+\paragraph{Would a resonance-resolving low order help?} RESOLVE (Mylotte and Forget) transports the
+coefficients of a data-derived energy basis and decodes a continuous, self-shielded spectrum per
+region. It could enter this method in two ways, and each has a test with the present code.
+\begin{itemize}
+\item \textbf{As a better field.} Its emission would be closer to a fixed point of the CE operator.
+  But the variance of the residual's fission yield does not respond to the field's quality:
+  \begin{center}\small
+  \begin{tabular}{@{}lr@{}}
+  \toprule
+  field & Var$(Y_s)$, $N=2000$\\
+  \midrule
+  8 groups, one within-group shape per material & 0.031\\
+  8 groups, shapes by ring (4 in the fuel, 2 in the graphite) & 0.032\\
+  361 groups (SHEM) & 0.029\\
+  \bottomrule
+  \end{tabular}
+  \end{center}
+  The sampled residual at a destination is the difference between a few samples of
+  $K_s\psi^{CE}$ over direction and incident energy and the field's emission there. Its noise is
+  the noise of those few samples, and it stays when the mean it estimates gets smaller.
+\item \textbf{As a control on the backward path.} A low-order angular flux with resonance structure
+  on the same path, whose integral over directions is the field's own emission, would cancel that
+  noise sample by sample. The multigroup control on backward paths (Section~\ref{sec:impl:components}) is this
+  construction, and with the 361-group field it leaves the variance at $0.030$ (from $0.029$) while
+  the sampling takes 70 times longer. A lane basis would be cheaper per unit of resolution, but
+  the control costs one exponential per lane and segment on every path, about fifteen times the
+  present cost for 245 lanes, so it would have to lower the variance by more than that.
+\end{itemize}
+Neither test is RESOLVE itself: SHEM-361 resolves the resonances below about 23~eV only, and nearly
+half of the noise was above 100~keV in the fuel. But both point the same way. On this problem the
+method's error is the Monte Carlo integration error of the scattering production at each
+destination, and a better low order does not reduce it. RESOLVE is not recommended as the next
+step for this method.
+
+\paragraph{Where this leaves the method.} About $0.3$ of analog Monte Carlo, everything counted,
+with a bias of $-10$ to $-50$~pcm. The estimators, the controller, the constants and the field
+have each been improved or exonerated; what remains is the number of collisions per neutron
+lifetime (37 here), each of which needs its scattering production sampled. A problem with fewer
+collisions per lifetime (a water lattice, a fast system) is the test that would tell whether the
+method has a regime of its own.
+
 \subsection{What optimization could recover}\label{sec:s8:projection}
 
 \begin{table}[t]\centering\small
@@ -1171,10 +1269,10 @@ within the present precision:
 \item \textbf{The correction.} The scattering residual is about 15 times more efficient than in the
   first measurement (proposal, tracer, several energies per trace, lifts). The bank's absolute
   weight is below the fission production ($\Wabs\approx0.85$), from 4.4.
-\item \textbf{Figure of merit.} For $k$ it is about $0.3$ of analog Monte Carlo's, with the balance
-  eigenvalue of Section~\ref{sec:res:grouped} and the field's constants computed beforehand
-  (Section~\ref{sec:res:constants}); it was $0.05$ on the same measure with the update
-  $k_{n+1}=k_nf_n$, and $0.005$ in the first measurement. It is not a speedup.
+\item \textbf{Figure of merit.} For $k$ it is about $0.3$ of analog Monte Carlo's, everything
+  counted: the balance eigenvalue of Section~\ref{sec:res:grouped}, with the field's net loss from
+  forward rays during the run (Section~\ref{sec:res:forward}). It was $0.05$ on the same measure
+  with the update $k_{n+1}=k_nf_n$, and $0.005$ in the first measurement. It is not a speedup.
 \end{itemize}
 
 What limits it has changed three times. It is no longer the scattering residual, no longer the
@@ -1183,10 +1281,9 @@ lifetime-long memory the balance estimate removes. Exact grouped cancellation at
 implemented and verified, but it is not sufficient for weight cancellation: the weight that must
 cancel is scattering weight, and netting remains necessary. The next stage should:
 \begin{enumerate}
-\item make the backward flux faster, which is $70\%$ of the cost (a coarser source mesh in the
-  moderator, or a tracer that integrates a flat source over a whole cell);
-\item give the field's net loss rate an estimator that follows the rim paths in the resonances
-  (two energy proposals did not help);
+\item test a problem with fewer collisions per neutron lifetime (a water lattice or a fast system):
+  a coarser mesh, a better loss estimator and a resonance-resolving low order have all left the
+  figure of merit where it was on the graphite pincell (Section~\ref{sec:res:forward});
 \item build a single-generation efficiency measure that includes netting, so that the sampler can be
-  tuned again; and find the origin of the bias of about $-40$~pcm.
+  tuned again; and find the origin of the bias of $-10$ to $-50$~pcm.
 \end{enumerate}
