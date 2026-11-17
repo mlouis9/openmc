@@ -296,7 +296,8 @@ int openmc_rmc_field_production(int64_t n_points, int n_E, int tail,
   int score, double du, double sigma_e, int classes);
 int openmc_rmc_forward_residual_bins(int64_t n_rays, int n_E, int n_out,
   double cutoff, uint64_t seed, const int32_t* zone, int n_zone, int n_mu,
-  int n_phi, double* diff, double* low);
+  int n_phi, const int32_t* fine2e, int n_ebin, const double* frac,
+  int mg_only, double* diff, double* low, int n_out_f);
 int openmc_rmc_field_first_flight_rates(int64_t n_rays, int n_E, double cutoff,
   uint64_t seed, double du, double sigma_e, double* rate, double* var,
   int control, double* mg_rate, double* diff_var, const double* eta,

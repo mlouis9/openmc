@@ -766,29 +766,71 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
 
 void forward_residual_bins(const FrozenField& field, const MGTables& mg,
   int64_t n_rays, int n_E, int n_out, double cutoff, uint64_t seed,
-  const int32_t* zone, int n_zone, int n_mu, int n_phi, double* diff,
-  double* low)
+  const ForwardBins& fb, bool mg_only, double* diff, double* low, int n_out_f)
 {
-  // The field's residual in a bin basis, from forward rays: a source neutron
-  // is drawn from the field's emission (n_E stratified energies per ray),
-  // its ray is integrated analytically, and the emission of its first
-  // collision is deposited by (outgoing tag, zone, group, direction bin),
-  // once with CE data and once with the multigroup data of the energy's
-  // group. diff[src][bin] is the mean CE deposit minus the multigroup one,
-  // low[src][bin] the mean multigroup deposit, per source tag src; bin =
-  // ((tag * n_zone + zone) * G + group) * D + direction, D = n_mu * n_phi
-  // (direction 0 for tag f). Tag f deposits are productions (no 1 / k), with
-  // the multigroup chi of the material in both. The CE outgoing group and
-  // direction of a scattering come from n_out forced scatterings per
-  // material and energy; the multigroup scattering is isotropic.
+  if (n_out_f <= 0)
+    n_out_f = n_out;
+  // The field's first-collision emission by netting bin, from forward rays.
+  // A source neutron is drawn from the field's emission and its ray is
+  // integrated analytically. The emission of its first collision is
+  // deposited by (outgoing tag, zone, energy bin, direction bin):
+  //
+  // - CE: the collided weight per zone with CE cross sections; the outgoing
+  //   energy bin and direction bin of a scattering, and the outgoing energy
+  //   bin of a fission neutron, from n_out forced collisions (OpenMC's
+  //   scatter(), and sample_fission_neutron() off a nuclide drawn by nu
+  //   sigma_f) per material and source energy;
+  // - multigroup: the collided weight with the multigroup cross sections of
+  //   the source energy's group, nu Sigma_s(g -> g') or chi_g' nu Sigma_f
+  //   out, spread over the energy bins of g' with the lift's mass fractions,
+  //   isotropic.
+  //
+  // diff[src][bin] is the mean CE deposit minus the multigroup one (on the
+  // same rays, energies and roulette), low[src][bin] the mean multigroup
+  // deposit, per source tag src. With mg_only, the CE part is skipped
+  // (diff is zero) and each ray carries every group of the source exactly
+  // (group-integrated emission), so low has no energy noise.
+  // bin = ((tag * n_zone + zone) * NE + e) * D + d, D = n_mu * n_phi (d = 0
+  // for tag f). Tag f deposits are productions (no 1 / k).
   const int64_t R = field.n_regions();
   const int G = field.n_groups();
-  const int D = n_mu * n_phi;
-  const int64_t NB = static_cast<int64_t>(2) * n_zone * G * D;
+  const int D = fb.n_mu * fb.n_phi;
+  const int NE = fb.n_ebin;
+  const int n_zone = fb.n_zone;
+  const int64_t NB = static_cast<int64_t>(2) * n_zone * NE * D;
   const auto& fe = field.fine_edges();
   const int F = static_cast<int>(fe.size()) - 1;
+  const int n_mat = static_cast<int>(model::materials.size());
   std::fill(diff, diff + 2 * NB, 0.0);
   std::fill(low, low + 2 * NB, 0.0);
+  // Energy bins of each group
+  vector<vector<int>> bins_of(G);
+  {
+    vector<int> e2g(NE, -1);
+    for (int i = 0; i < F; ++i) {
+      int g = field.group(std::sqrt(std::max(fe[i], 1e-11) * fe[i + 1]));
+      int e = fb.fine2e[i];
+      if (g >= 0 && e >= 0 && e < NE)
+        e2g[e] = g;
+    }
+    for (int e = 0; e < NE; ++e)
+      if (e2g[e] >= 0)
+        bins_of[e2g[e]].push_back(e);
+  }
+  auto ebin = [&](double E) {
+    int i = static_cast<int>(std::upper_bound(fe.begin(), fe.end(), E) - fe.begin()) - 1;
+    return (i >= 0 && i < F) ? fb.fine2e[i] : -1;
+  };
+  auto dbin = [&](Direction uo) {
+    int imu = std::min(fb.n_mu - 1,
+      std::max(0, static_cast<int>((uo.z + 1.0) * 0.5 * fb.n_mu)));
+    double phi = std::atan2(uo.y, uo.x);
+    if (phi < 0.0)
+      phi += 2.0 * PI;
+    int iph = std::min(fb.n_phi - 1,
+      std::max(0, static_cast<int>(phi / (2.0 * PI) * fb.n_phi)));
+    return imu * fb.n_phi + iph;
+  };
   XsProbe probe;
   ChannelRegistry registry;
   struct Tables {
@@ -826,24 +868,99 @@ void forward_residual_bins(const FrozenField& field, const MGTables& mg,
   SegmentList seg;
   const double survive = 0.25;
   struct Out {
-    int g, d;
+    int e, d;
     double w;
   };
   struct Xs {
     int32_t mat {-2};
     double total, r_nf, r_scat;
     double mg_total, mg_nf;
-    vector<Out> out; //!< CE outgoing states of a scattering (weights sum 1)
+    vector<Out> out;  //!< CE outgoing states of a scattering (weights sum 1)
+    vector<Out> fout; //!< CE outgoing energy bins of a fission neutron
   };
-  vector<double> E(n_E), T(n_E), Tm(n_E), share(2 * n_E);
-  vector<int> live(n_E), gin(n_E);
-  vector<Xs> xs(4 * n_E);
-  // Collided weight per (energy, zone), CE and multigroup
-  vector<double> cce(static_cast<size_t>(n_E) * n_zone), cmg(cce.size());
+  const int K = mg_only ? G : n_E;
+  vector<double> E(K), T(K), Tm(K), share(2 * K);
+  vector<int> live(K), gin(K);
+  vector<Xs> xs(4 * K);
+  vector<double> cce(static_cast<size_t>(K) * n_zone), cmg(cce.size());
   vector<int32_t> zone_mat(n_zone, MATERIAL_VOID);
   for (int64_t r = 0; r < R; ++r)
-    zone_mat[zone[r]] = field.region_material(r);
+    zone_mat[fb.zone[r]] = field.region_material(r);
   const double sqrtkT0 = std::sqrt(K_BOLTZMANN * 293.6);
+
+  // Forced collisions at the probe's state: n_out outgoing states
+  auto forced = [&](Xs& cand, int32_t m, double Ein, Direction u, double sqrtkT,
+                  double dm, uint64_t* sd) {
+    cand.out.clear();
+    cand.fout.clear();
+    const Material& mat = *model::materials[m];
+    for (int pass = 0; pass < 2; ++pass) {
+      // pass 0: scattering, nuclide by its scattering cross section;
+      // pass 1: fission, nuclide by nu sigma_f
+      if (pass == 1 && !(cand.r_nf > 0.0))
+        break;
+      double wsum = 0.0;
+      auto& dst = (pass == 0) ? cand.out : cand.fout;
+      // Cross sections once per material and energy; every forced collision
+      // restarts from the incident state
+      probe.total(m, Ein, sqrtkT, dm);
+      const int n_o = (pass == 0) ? n_out : n_out_f;
+      for (int o = 0; o < n_o; ++o) {
+        Particle& p = probe.scratch();
+        double ts = 0.0;
+        for (size_t n = 0; n < mat.nuclide_.size(); ++n) {
+          const auto& nx = p.neutron_xs(mat.nuclide_[n]);
+          double x = (pass == 0) ? nx.total - nx.absorption : nx.nu_fission;
+          ts += mat.atom_density(n, dm) * x;
+        }
+        if (!(ts > 0.0))
+          break;
+        double x = prn(sd) * ts;
+        int i_nuc = mat.nuclide_.back();
+        for (size_t n = 0; n < mat.nuclide_.size(); ++n) {
+          const auto& nx = p.neutron_xs(mat.nuclide_[n]);
+          x -= mat.atom_density(n, dm) *
+               ((pass == 0) ? nx.total - nx.absorption : nx.nu_fission);
+          if (x < 0.0) {
+            i_nuc = mat.nuclide_[n];
+            break;
+          }
+        }
+        p.u() = u;
+        p.E() = probe.E();
+        p.E_last() = probe.E();
+        p.wgt() = 1.0;
+        p.stream() = STREAM_TRACKING;
+        p.seeds(STREAM_TRACKING) = *sd;
+        p.local_secondary_bank().clear();
+        p.n_secondaries() = 0;
+        double y = 1.0;
+        double Eo;
+        Direction uo {0.0, 0.0, 1.0};
+        if (pass == 0) {
+          scatter(p, i_nuc);
+          y = p.wgt() * (1.0 + static_cast<double>(p.local_secondary_bank().size()));
+          Eo = p.E();
+          uo = p.u();
+        } else {
+          const Reaction& rx = sample_fission(i_nuc, p);
+          SourceSite site;
+          sample_fission_neutron(i_nuc, rx, &site, p);
+          Eo = site.E;
+        }
+        *sd = p.seeds(STREAM_TRACKING);
+        p.local_secondary_bank().clear();
+        p.n_secondaries() = 0;
+        int e = ebin(Eo);
+        if (e >= 0)
+          dst.push_back({e, (pass == 0) ? dbin(uo) : 0, y});
+        wsum += y;
+      }
+      for (auto& o : dst)
+        o.w /= (wsum > 0.0) ? wsum : 1.0;
+    }
+  };
+
   for (int64_t i = 0; i < n_rays; ++i) {
     uint64_t s = future_seed(static_cast<uint64_t>(i) * 1000003ULL + 19, seed);
     int64_t region;
@@ -857,30 +974,44 @@ void forward_residual_bins(const FrozenField& field, const MGTables& mg,
     double mu = 2.0 * prn(&s) - 1.0, ph = 2.0 * PI * prn(&s);
     double st = std::sqrt(std::max(0.0, 1.0 - mu * mu));
     Direction u {st * std::cos(ph), st * std::sin(ph), mu};
-    double shift = prn(&s);
-    for (int k = 0; k < n_E; ++k) {
-      double x = (k + shift) / n_E * tot;
-      int b = static_cast<int>(std::upper_bound(c.begin(), c.end(), x) - c.begin());
-      b = std::min(b, F - 1);
-      E[k] = fe[b] + (fe[b + 1] - fe[b]) * prn(&s);
-      double qs = std::max(0.0, field.evaluate(region, Tag::s, E[k]));
-      double qf = std::max(0.0, field.evaluate(region, Tag::f, E[k]));
-      double Em = 0.5 * (fe[b] + fe[b + 1]);
-      double qb = std::max(0.0, field.evaluate(region, Tag::s, Em) +
-                                  field.evaluate(region, Tag::f, Em));
-      double dens = qb / tot;
-      double w = (dens > 0.0) ? 4.0 * PI / (rd.density * dens * n_E) : 0.0;
-      share[2 * k] = w * qs;
-      share[2 * k + 1] = w * qf;
+    if (mg_only) {
+      // Every group of the source, exactly: share = Q_t,g / density
+      for (int g = 0; g < G; ++g) {
+        E[g] = 0.0;
+        gin[g] = g;
+        share[2 * g] = field.emission(region, Tag::s, g) / rd.density;
+        share[2 * g + 1] = field.emission(region, Tag::f, g) / rd.density;
+      }
+    } else {
+      double shift = prn(&s);
+      for (int k = 0; k < K; ++k) {
+        double x = (k + shift) / K * tot;
+        int b = static_cast<int>(std::upper_bound(c.begin(), c.end(), x) - c.begin());
+        b = std::min(b, F - 1);
+        E[k] = fe[b] + (fe[b + 1] - fe[b]) * prn(&s);
+        double qs = std::max(0.0, field.evaluate(region, Tag::s, E[k]));
+        double qf = std::max(0.0, field.evaluate(region, Tag::f, E[k]));
+        double Em = 0.5 * (fe[b] + fe[b + 1]);
+        double qb = std::max(0.0, field.evaluate(region, Tag::s, Em) +
+                                    field.evaluate(region, Tag::f, Em));
+        double dens = qb / tot;
+        double w = (dens > 0.0) ? 4.0 * PI / (rd.density * dens * K) : 0.0;
+        share[2 * k] = w * qs;
+        share[2 * k + 1] = w * qf;
+        gin[k] = field.group(E[k]);
+      }
+    }
+    for (int k = 0; k < K; ++k) {
       T[k] = Tm[k] = 1.0;
-      live[k] = 1;
-      gin[k] = field.group(E[k]);
+      live[k] = (gin[k] >= 0 && (share[2 * k] != 0.0 || share[2 * k + 1] != 0.0));
       for (int a = 0; a < 4; ++a)
         xs[4 * k + a].mat = -2;
     }
+    int n_live = 0;
+    for (int k = 0; k < K; ++k)
+      n_live += live[k];
     std::fill(cce.begin(), cce.end(), 0.0);
     std::fill(cmg.begin(), cmg.end(), 0.0);
-    int n_live = n_E;
     tracer.begin(rd.value, u);
     while (n_live > 0) {
       tracer.extend(32, seg);
@@ -891,8 +1022,8 @@ void forward_residual_bins(const FrozenField& field, const MGTables& mg,
         if (m == MATERIAL_VOID)
           continue;
         double len = seg.length[q];
-        int z = (seg.region[q] >= 0) ? zone[seg.region[q]] : -1;
-        for (int k = 0; k < n_E; ++k) {
+        int z = (seg.region[q] >= 0) ? fb.zone[seg.region[q]] : -1;
+        for (int k = 0; k < K; ++k) {
           if (!live[k])
             continue;
           Xs* e = nullptr;
@@ -904,84 +1035,41 @@ void forward_residual_bins(const FrozenField& field, const MGTables& mg,
             }
             if (cand.mat == -2 || a == 3) {
               cand.mat = m;
-              probe.total(m, E[k], seg.sqrtkT[q], seg.density_mult[q]);
-              const auto& mx = probe.particle().macro_xs();
-              cand.total = mx.total;
-              cand.r_nf = (mx.total > 0.0) ? mx.nu_fission / mx.total : 0.0;
-              double prod = 0.0;
-              if (E[k] < 1.0e6)
-                prod = mx.total - mx.absorption;
-              else
-                for (const auto& ch : registry.channels(m))
-                  if (ch.kind != ChannelKind::fission)
-                    prod += ChannelRegistry::production(ch, seg.density_mult[q], probe);
-              cand.r_scat = (mx.total > 0.0) ? prod / mx.total : 0.0;
               cand.mg_total = mg.sigma_t(m, seg.sqrtkT[q], gin[k]);
               cand.mg_nf = (cand.mg_total > 0.0)
                              ? mg.nu_sigma_f(m, seg.sqrtkT[q], gin[k]) / cand.mg_total
                              : 0.0;
-              // Forced scatterings: outgoing group and direction bin
-              cand.out.clear();
-              const Material& mat = *model::materials[m];
-              double wsum = 0.0;
-              for (int o = 0; o < n_out; ++o) {
+              if (!mg_only) {
                 probe.total(m, E[k], seg.sqrtkT[q], seg.density_mult[q]);
-                Particle& p = probe.scratch();
-                double ts = 0.0;
-                for (size_t n = 0; n < mat.nuclide_.size(); ++n) {
-                  const auto& nx = p.neutron_xs(mat.nuclide_[n]);
-                  ts += mat.atom_density(n, seg.density_mult[q]) * (nx.total - nx.absorption);
-                }
-                if (!(ts > 0.0))
-                  break;
-                double x = prn(&s) * ts;
-                int i_nuc = mat.nuclide_.back();
-                for (size_t n = 0; n < mat.nuclide_.size(); ++n) {
-                  const auto& nx = p.neutron_xs(mat.nuclide_[n]);
-                  x -= mat.atom_density(n, seg.density_mult[q]) * (nx.total - nx.absorption);
-                  if (x < 0.0) {
-                    i_nuc = mat.nuclide_[n];
-                    break;
-                  }
-                }
-                p.u() = u;
-                p.E() = probe.E();
-                p.wgt() = 1.0;
-                p.stream() = STREAM_TRACKING;
-                p.seeds(STREAM_TRACKING) = s;
-                p.local_secondary_bank().clear();
-                p.n_secondaries() = 0;
-                scatter(p, i_nuc);
-                double y = p.wgt() * (1.0 + static_cast<double>(p.local_secondary_bank().size()));
-                s = p.seeds(STREAM_TRACKING);
-                p.local_secondary_bank().clear();
-                p.n_secondaries() = 0;
-                int go = field.group(p.E());
-                Direction uo = p.u();
-                int imu = std::min(n_mu - 1, std::max(0, static_cast<int>((uo.z + 1.0) * 0.5 * n_mu)));
-                double phi = std::atan2(uo.y, uo.x);
-                if (phi < 0.0)
-                  phi += 2.0 * PI;
-                int iph = std::min(n_phi - 1, std::max(0, static_cast<int>(phi / (2.0 * PI) * n_phi)));
-                if (go >= 0)
-                  cand.out.push_back({go, imu * n_phi + iph, y});
-                wsum += y;
+                const auto& mx = probe.particle().macro_xs();
+                cand.total = mx.total;
+                cand.r_nf = (mx.total > 0.0) ? mx.nu_fission / mx.total : 0.0;
+                double prod = 0.0;
+                if (E[k] < 1.0e6)
+                  prod = mx.total - mx.absorption;
+                else
+                  for (const auto& ch : registry.channels(m))
+                    if (ch.kind != ChannelKind::fission)
+                      prod += ChannelRegistry::production(ch, seg.density_mult[q], probe);
+                cand.r_scat = (mx.total > 0.0) ? prod / mx.total : 0.0;
+                forced(cand, m, E[k], u, seg.sqrtkT[q], seg.density_mult[q], &s);
+              } else {
+                cand.total = 0.0;
               }
-              for (auto& o : cand.out)
-                o.w /= wsum;
               e = &cand;
               break;
             }
           }
-          double t_out = T[k] * std::exp(-e->total * len);
           double tm = Tm[k] * std::exp(-e->mg_total * len);
+          double t_out = mg_only ? 0.0 : T[k] * std::exp(-e->total * len);
           if (z >= 0) {
-            cce[static_cast<size_t>(k) * n_zone + z] += T[k] - t_out;
+            if (!mg_only)
+              cce[static_cast<size_t>(k) * n_zone + z] += T[k] - t_out;
             cmg[static_cast<size_t>(k) * n_zone + z] += Tm[k] - tm;
           }
           T[k] = t_out;
           Tm[k] = tm;
-          if (T[k] < cutoff && Tm[k] < cutoff) {
+          if ((mg_only || T[k] < cutoff) && Tm[k] < cutoff) {
             if (prn(&s) < survive) {
               T[k] /= survive;
               Tm[k] /= survive;
@@ -994,7 +1082,7 @@ void forward_residual_bins(const FrozenField& field, const MGTables& mg,
       }
     }
     // Deposit the first-collision emission of every (energy, zone)
-    for (int k = 0; k < n_E; ++k) {
+    for (int k = 0; k < K; ++k) {
       if (gin[k] < 0)
         continue;
       for (int z = 0; z < n_zone; ++z) {
@@ -1007,37 +1095,46 @@ void forward_residual_bins(const FrozenField& field, const MGTables& mg,
         for (int a = 0; a < 4; ++a)
           if (xs[4 * k + a].mat == m)
             e = &xs[4 * k + a];
-        if (!e)
+        if (!e || m < 0 || m >= n_mat)
           continue;
+        const double* frac_s = fb.frac + (static_cast<int64_t>(0) * n_mat + m) * NE;
+        const double* frac_f = fb.frac + (static_cast<int64_t>(1) * n_mat + m) * NE;
         for (int src = 0; src < 2; ++src) {
           double w = share[2 * k + src];
           if (w == 0.0)
             continue;
           double* dd = diff + src * NB;
           double* ll = low + src * NB;
-          int64_t base_s = (static_cast<int64_t>(z)) * G * D;
-          int64_t base_f = (static_cast<int64_t>(n_zone) + z) * G * D;
-          // CE scattering
-          for (const auto& o : e->out)
-            dd[base_s + static_cast<int64_t>(o.g) * D + o.d] += w * cc * e->r_scat * o.w;
-          // Multigroup scattering (isotropic) and both fissions
+          int64_t base_s = static_cast<int64_t>(z) * NE * D;
+          int64_t base_f = (static_cast<int64_t>(n_zone) + z) * NE * D;
+          if (!mg_only) {
+            for (const auto& o : e->out)
+              dd[base_s + static_cast<int64_t>(o.e) * D + o.d] += w * cc * e->r_scat * o.w;
+            for (const auto& o : e->fout)
+              dd[base_f + static_cast<int64_t>(o.e) * D] += w * cc * e->r_nf * o.w;
+          }
           for (int go = 0; go < G; ++go) {
             double ms = (e->mg_total > 0.0)
-                          ? w * cm * mg.nu_sigma_s(m, sqrtkT0, gin[k], go) / e->mg_total / D
+                          ? w * cm * mg.nu_sigma_s(m, sqrtkT0, gin[k], go) / e->mg_total
                           : 0.0;
-            for (int d = 0; d < D; ++d) {
-              dd[base_s + static_cast<int64_t>(go) * D + d] -= ms;
-              ll[base_s + static_cast<int64_t>(go) * D + d] += ms;
+            double mf = w * cm * e->mg_nf * mg.chi(m, sqrtkT0, go);
+            for (int eb : bins_of[go]) {
+              double xs_ = ms * frac_s[eb] / D;
+              for (int d = 0; d < D; ++d) {
+                dd[base_s + static_cast<int64_t>(eb) * D + d] -= xs_;
+                ll[base_s + static_cast<int64_t>(eb) * D + d] += xs_;
+              }
+              double xf = mf * frac_f[eb];
+              dd[base_f + static_cast<int64_t>(eb) * D] -= xf;
+              ll[base_f + static_cast<int64_t>(eb) * D] += xf;
             }
-            double chi = mg.chi(m, sqrtkT0, go);
-            double pf_ce = w * cc * e->r_nf * chi, pf_mg = w * cm * e->mg_nf * chi;
-            dd[base_f + static_cast<int64_t>(go) * D] += pf_ce - pf_mg;
-            ll[base_f + static_cast<int64_t>(go) * D] += pf_mg;
           }
         }
       }
     }
   }
+  if (mg_only)
+    std::fill(diff, diff + 2 * NB, 0.0);
   for (int64_t j = 0; j < 2 * NB; ++j) {
     diff[j] /= n_rays;
     low[j] /= n_rays;

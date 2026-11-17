@@ -63,6 +63,15 @@ VARIANTS = {
     # multigroup deposits on the same rays), accumulated over the
     # generations; no residual particles are sampled
     'forward': dict(opts={}, netting=True, forward=True),
+    # Binned control variate: the residual records of 'combined' (unbiased,
+    # with their own within-bin structure), whose bin totals are replaced by
+    # the forward rays' correlated totals; the difference is placed with the
+    # field's shape. Unbiased as a measure for any placement shape.
+    'bcv': dict(opts={'s': DENSITY_ROUTE, 'f': DENSITY_FREE_F}, pooling=True,
+                regional=True, netting=True, forward=True, records=True),
+    # The same without the regional cancellation of fission children
+    'bcv_nr': dict(opts={'s': DENSITY_ROUTE, 'f': DENSITY_FREE_F}, pooling=True,
+                   netting=True, forward=True, records=True),
     'history': dict(opts={'s': DENSITY_ROUTE, 'f': DENSITY_FREE_F}, pooling=True,
                     netting=True, history=True),
 }
@@ -103,24 +112,46 @@ class Stage8Backend(driver.OpenMCBackend):
         self.loss_estimator = 'backward'
         # Forward residual in the bin basis: running sums over generations
         self.fwd_rays, self.fwd_energies = 40_000, 8
-        self._fwd_d = self._fwd_low = 0.0
-        self._fwd_n = 0
+        self._fwd_d = self._fwd_m = 0.0
+        self._fwd_n = self._fwd_mn = 0
+        self.fwd_mg_rays = 10_000
+        self.n_control = 4000
         self._F = None
+        self._P_s = None
+        self._M_fixed = None
+        self.fwd_n_out, self.fwd_n_out_f = 1, 0
         self.net_every = 1   # netting every net_every generations
         self.fp_points, self.fp_energies, self.k_mg = 10_000, 4, None
 
     def residual(self, t, n, a, b, k, seed):
-        rmc = self.rmc
-        if self.v.get('forward'):
-            if t == 's':
-                d, low = rmc.forward_residual_bins(self.fwd_rays, self.rep.zone, self.rep.Z,
-                                                   n_mu=self.rep.n_mu, n_phi=self.rep.n_phi,
-                                                   n_E=self.fwd_energies, seed=seed)
-                self._fwd_d = self._fwd_d + d
-                self._fwd_low = self._fwd_low + low
-                self._fwd_n += 1
-                self._abk = (a, b, k)
+        if not self.v.get('forward'):
+            return self._records(t, n, a, b, k, seed)
+        if t == 's':
+            self._forward_step(seed)
+            self._abk = (a, b, k)
+        if not self.v.get('records'):
+            # Biased form: the bin totals are injected at netting with the
+            # field's shape (_forward_residual)
             return self.empty()
+        out = self._records(t, n, a, b, k, seed)
+        if t == 's':
+            self._P_s = out
+            return out
+        # Binned control variate: the records' bin totals are replaced by
+        # the forward totals c; the difference has zero expectation in every
+        # bin and is placed with the field's shape
+        rep = self.rep
+        P = self.concat(self._P_s, out)
+        key = rep.bins(P)
+        ok = key >= 0
+        delta = self._forward_control() - np.bincount(key[ok], weights=P['w'][ok],
+                                                      minlength=rep.n_bins())
+        ctrl, info = self._control_particles(delta, seed)
+        self.info['control'] = info
+        return self.concat(out, ctrl)
+
+    def _records(self, t, n, a, b, k, seed):
+        rmc = self.rmc
         rec = rmc.residual_sample(t, n, seed=seed, **{**self.v['opts'][t],
                                                       **self.res_opts.get(t, {})})
         bb = list(b)
@@ -134,6 +165,59 @@ class Stage8Backend(driver.OpenMCBackend):
         keep = w != 0.0
         return self._rec(dict(r=rec['r'][keep], u=rec['u'][keep], E=rec['E'][keep],
                               w=w[keep], tag=rec['tag'][keep].astype(np.int32)))
+
+    def _forward_step(self, seed):
+        """One generation's forward rays: the CE-minus-multigroup deposits
+        (fwd_rays rays of fwd_energies energies) and the multigroup-only
+        deposits (fwd_mg_rays rays), each added to its running sum. Both are
+        constants of the frozen field."""
+        rmc = self.rmc
+        tb = self.rep.forward_tables()
+        d, _ = rmc.forward_residual_bins(self.fwd_rays, tb, n_E=self.fwd_energies,
+                                         n_out=self.fwd_n_out, n_out_f=self.fwd_n_out_f,
+                                         seed=seed)
+        self._fwd_d = self._fwd_d + d
+        self._fwd_n += 1
+        if self.fwd_mg_rays > 0 and self._M_fixed is None:
+            _, m = rmc.forward_residual_bins(self.fwd_mg_rays, tb, seed=seed + 7,
+                                             mg_only=True)
+            self._fwd_m = self._fwd_m + m
+            self._fwd_mn += 1
+
+    def _forward_control(self):
+        """Bin totals of the residual for the current amplitudes, from the
+        running means D (CE minus multigroup deposits) and M (multigroup
+        deposits) per source tag; F_t is the field's own emission by bin:
+          tag s: a . (D + M) - b_s F_s,    tag f: a . (D + M) / k - b_f F_f.
+        Without multigroup-only rays, M is replaced by the multigroup
+        identities of the field (M_s + M_f = F_s in tag s, k_MG F_f in tag f),
+        which hold only as far as the field is converged."""
+        rep = self.rep
+        if self._F is None:
+            self._F = (-rep.low_term((1.0, 0.0)), -rep.low_term((0.0, 1.0)))
+        a, b, k = self._abk
+        h = rep.n_bins() // 2
+        D = self._fwd_d / self._fwd_n
+        c = np.empty(rep.n_bins())
+        if self._M_fixed is not None or self._fwd_mn > 0:
+            M = self._M_fixed if self._M_fixed is not None else self._fwd_m / self._fwd_mn
+            tot = a[0] * (D[0] + M[0]) + a[1] * (D[1] + M[1])
+            c[:h] = tot[:h] - b[0] * self._F[0][:h]
+            c[h:] = tot[h:] / k - b[1] * self._F[1][h:]
+        else:
+            # M_f from the identities is not available separately: use the
+            # biased form of the earlier 'forward' variant with M_f = 0
+            tot = a[0] * D[0] + a[1] * D[1]
+            c[:h] = tot[:h] + (a[0] - b[0]) * self._F[0][:h]
+            c[h:] = tot[h:] / k + (a[0] * self.k_mg / k - b[1]) * self._F[1][h:]
+        return c
+
+    def _control_particles(self, delta, seed):
+        out = canc.control_particles(self.rep, delta, self.n_control,
+                                     np.random.default_rng(seed + 11))
+        if out is None:
+            return self.empty(), dict(W=0.0)
+        return self._rec(out), dict(W=float(np.abs(delta).sum()), n=int(len(out['w'])))
 
     def _rec(self, bank):
         """Fresh residual particles are directional (no emission record)."""
@@ -188,27 +272,11 @@ class Stage8Backend(driver.OpenMCBackend):
         return out, info
 
     def _forward_residual(self):
-        """The unnormalized residual of the field by netting bin, from the
-        running means D (CE minus multigroup deposits) and M (multigroup
-        deposits) per source tag. With F_t the field's own bins and the
-        multigroup identities M_s + M_f = F_s (tag s) and = k_MG F_f (tag f,
-        as productions):
-          tag s: a_s D_s + a_f D_f + (a_s - b_s) F_s + (a_f - a_s) M_f,
-          tag f: [a_s D_s + a_f D_f + (a_f - a_s) M_f] / k
-                 + (a_s k_MG / k - b_f) F_f."""
-        if not self.v.get('forward') or self._fwd_n == 0:
+        """The biased form (variant 'forward'): the forward bin totals are
+        added at netting and placed with the field's shape."""
+        if not self.v.get('forward') or self.v.get('records') or self._fwd_n == 0:
             return None
-        rep = self.rep
-        if self._F is None:
-            self._F = (-rep.low_term((1.0, 0.0)), -rep.low_term((0.0, 1.0)))
-        a, b, k = self._abk
-        D, M = self._fwd_d / self._fwd_n, self._fwd_low / self._fwd_n
-        h = rep.n_bins() // 2
-        core = a[0] * D[0] + a[1] * D[1] + (a[1] - a[0]) * M[1]
-        R = np.empty(rep.n_bins())
-        R[:h] = core[:h] + (a[0] - b[0]) * self._F[0][:h]
-        R[h:] = core[h:] / k + (a[0] * self.k_mg / k - b[1]) * self._F[1][h:]
-        return R
+        return self._forward_control()
 
     def field_production(self, a, seed):
         """a_s X_s + a_f X_f: the CE nu-fission production of the field's
@@ -276,7 +344,8 @@ def fuel_regions(files):
     return idx, cell[idx], mb[idx]
 
 
-def reference(model, mesh, files, workdir, particles, batches, inactive, replicas):
+def reference(model, mesh, files, workdir, particles, batches, inactive, replicas,
+              seed_base=101):
     """CE eigenvalue replicas: k and fission by fuel region, with run times."""
     idx, cells, mbins = fuel_regions(files)
     out = []
@@ -285,7 +354,7 @@ def reference(model, mesh, files, workdir, particles, batches, inactive, replica
                          settings=model.settings)
         m.settings.particles, m.settings.batches = particles, batches
         m.settings.inactive = inactive
-        m.settings.seed = 101 + rep
+        m.settings.seed = seed_base + rep
         t = openmc.Tally(name='fuel_fission')
         t.filters = [openmc.CellFilter([problems.CELL_FUEL]), openmc.MeshFilter(mesh)]
         t.scores = ['fission', 'nu-fission']
@@ -366,6 +435,19 @@ def main():
                     help='rays per generation of the forward residual (variant forward)')
     ap.add_argument('--forward-energies', type=int, default=8,
                     help='energies per ray of the forward residual')
+    ap.add_argument('--forward-n-out', type=int, nargs=2, default=[1, 0],
+                    help='forced scatterings and fissions per material and source energy '
+                         '(0 fissions: as many as scatterings)')
+    ap.add_argument('--forward-mg-rays', type=int, default=10_000,
+                    help='multigroup-only rays per generation (0: the multigroup '
+                         'identities of the field, biased by its convergence)')
+    ap.add_argument('--mg-flux', nargs='+', default=None,
+                    help='files of multigroup_deposits.py (the uncollided multigroup '
+                         'fluxes of the field from random ray sweeps); replica r uses '
+                         'file r modulo their number, for M instead of multigroup-only '
+                         'rays, and its time is added to the replica time')
+    ap.add_argument('--n-control', type=int, default=4000,
+                    help='particles per generation carrying the control term (bcv)')
     ap.add_argument('--loss-estimator', choices=['backward', 'forward'], default='backward',
                     help="estimator of the field's net loss: backward points "
                          '(rmc.field_production) or forward rays integrated analytically '
@@ -390,6 +472,8 @@ def main():
     ap.add_argument('--ref-particles', type=int, default=20_000)
     ap.add_argument('--ref-batches', type=int, default=120)
     ap.add_argument('--ref-inactive', type=int, default=20)
+    ap.add_argument('--ref-seed-base', type=int, default=101,
+                    help='reference replica r uses seed ref-seed-base + r')
     ap.add_argument('--out', default=None)
     ap.add_argument('--field-groups', default=None,
                     help='field of field_variants.field_files with this group structure '
@@ -420,9 +504,9 @@ def main():
         import zone_lifts as zl
         w, files, k_mg = zl.zone_lift_files(args.work, tuple(args.zone_lifts))
     if args.reference:
-        res = reference(w.model, w.mesh, files, files['work'] / 'stage8_reference',
+        res = reference(w.model, w.mesh, files, files['work'] / f"stage8_reference{'_' + args.run_name if args.run_name else ''}",
                         args.ref_particles, args.ref_batches, args.ref_inactive,
-                        args.replicas)
+                        args.replicas, seed_base=args.ref_seed_base)
         Path(args.out or 'stage8_reference.json').write_text(json.dumps(res, indent=1))
         return
 
@@ -446,6 +530,8 @@ def main():
         backend.fl_points = args.field_loss
         backend.loss_estimator = args.loss_estimator
         backend.fwd_rays, backend.fwd_energies = args.forward_rays, args.forward_energies
+        backend.fwd_mg_rays, backend.n_control = args.forward_mg_rays, args.n_control
+        backend.fwd_n_out, backend.fwd_n_out_f = args.forward_n_out
         if args.field_constants:
             c = json.loads(Path(args.field_constants).read_text())
             backend.constants = dict(X=np.array(c['X']), L=np.array(c['L']))
@@ -472,8 +558,13 @@ def main():
         for rep in range(args.replicas):
             backend._fp_sum, backend._fp_n = np.zeros(2), 0
             backend._fl_sum, backend._fl_n = np.zeros(2), 0
-            backend._fwd_d = backend._fwd_low = 0.0
-            backend._fwd_n = 0
+            backend._fwd_d = backend._fwd_m = 0.0
+            backend._fwd_n = backend._fwd_mn = 0
+            backend._M_fixed, time_mg = None, 0.0
+            if args.mg_flux:
+                mf = np.load(args.mg_flux[rep % len(args.mg_flux)])
+                backend._M_fixed = backend.rep.multigroup_bins(files['field'], mf['phi'])
+                time_mg = float(mf['time'])
             cfg = driver.Config(N={'s': args.N, 'f': args.N_f or args.N}, N_delta=args.N_delta,
                                 N_B=args.N_B, seed=args.seed_base + rep,
                                 damping=args.damping, k_update=args.k_update,
@@ -497,7 +588,7 @@ def main():
             except driver.EstimatorFailure as e:
                 failure = str(e)
                 print('  estimator failure:', failure, flush=True)
-            results.append(dict(replica=rep, rows=rows, failure=failure,
+            results.append(dict(replica=rep, rows=rows, failure=failure, time_mg=time_mg,
                                 time=time.perf_counter() - t0))
         rmc.field_free()
     idx, _, _ = fuel_regions(files)

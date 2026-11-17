@@ -1187,29 +1187,89 @@ method has a regime of its own.
 
 \subsection{A correlated forward residual in the netting bins}\label{sec:res:correlated}
 
-The residual had been sampled as $\hat C-U$: a noisy CE estimate of the production at a destination
-minus the field's exact emission there. Its mean is small, but its noise is the whole noise of
-$\hat C$, so the method never gained from the residual being small. This subsection replaces that
-estimator. The data are in \code{examples/rmc/results/speedup7}.
+Every change of Sections~\ref{sec:res:speedup}--\ref{sec:res:forward} left the figure of merit for
+$k$ near $0.3$ of analog Monte Carlo on this problem. This subsection identifies the structural reason
+and describes a different estimator of the residual that removes it. It reaches several times the
+analog figure of merit, but in the form tested here it is biased at the scale of the netting bins.
+Section~\ref{sec:res:bcv} gives the unbiased form. The data are in
+\code{examples/rmc/results/speedup7}.
 
-\paragraph{The estimator.} A source neutron is drawn from the field's emission and its ray is
-integrated analytically, as for the net loss in Section~\ref{sec:res:forward}. The emission of its
-first collision is deposited by netting bin (tag, zone, group, direction), twice on the same ray
-and at the same energy: with CE data, and with the multigroup data of the energy's group. The
-expectation of the second deposit is the field's own emission, because the field is the fixed
-point of that operator, so the residual by bin is
+\paragraph{Why the backward residual could not gain.} At a destination $(\mathbf x,E,\Omega)$ the
+residual of tag $s$ is estimated as
 \begin{equation}
-r_b=\mathbb E\!\left[A^{CE}_b-A^{MG}_b\right],
+\hat r(\mathbf x,E,\Omega)=\hat C(\mathbf x,E,\Omega)-U(\mathbf x,E),\qquad
+\hat C=\frac1J\sum_{j=1}^{J}\frac{\nu\Sigma_s(E'_j\to E,\mu_j)\,\psi^{CE}(\mathbf x,E'_j,\Omega'_j)}{p(E'_j,\Omega'_j)},
 \end{equation}
-and the two deposits share the ray, the source energy and the roulette. The CE outgoing group and
-direction of a scattering come from a forced scattering per material and energy. The code is
-\code{rmc::forward\_residual\_bins}.
+a few samples of the CE scattering production over incident direction and energy, minus the field's
+exact emission $U$. The mean of $\hat r$ is small ($4.5\%$ of the emission), but its variance is the
+variance of $\hat C$ alone, because $U$ is a constant: $\operatorname{Var}\hat r=\operatorname{Var}\hat C$.
+The method therefore pays for a full Monte Carlo estimate of the scattering production at every
+destination and gains nothing from the field's quality. This explains the null results of
+Section~\ref{sec:res:forward}: a better field shrinks the mean of $\hat r$ and leaves its variance,
+and a multigroup control on the backward path, whose kinematics differ from the CE sample's, is
+barely correlated with it.
 
-\paragraph{Where the correlation is, and where it is not.} For the production and the net loss of
-the field, the difference is as noisy as the CE score alone ($0.003$--$0.006\cdot\sqrt{\text s}$
-either way): CE absorption sits in the resonance peaks and the multigroup score spreads the same
-total over the group, so the two agree only after integrating over energy. For the emission of the
-first collision, weighted with an importance by material and group, it is the opposite:
+\paragraph{Forward rays from the field.} The estimator here starts from the other end. A source
+neutron is drawn from the field's emission: a point $\mathbf x$ with density $\rho(\mathbf x)$
+proportional to the region's volume times its emission, $n_E$ stratified energies $E_k$ from the
+region's emission spectrum on the lifts' fine grid, and an isotropic direction $\Omega$. Its ray
+is traced to the end of the roulette and integrated analytically. On a segment of length $\ell$ in
+material $m$, entered with transmission $T_{\text{in}}$, the expected collided weight is
+$T_{\text{in}}(1-e^{-\Sigma_t\ell})$, so where on the ray the first collision falls carries no
+noise. The collided weight is summed per netting zone $z$:
+\begin{equation}
+c^{CE}_{k,z}=\sum_{\text{segments in }z}T^{CE}_{\text{in}}\left(1-e^{-\Sigma^{CE}_t(E_k)\ell}\right).
+\end{equation}
+The emission of the first collision is then deposited into the netting bins
+$b=(\text{tag},z,e,d)$ (tag, zone, energy bin, direction bin). For a scattering, the outgoing energy
+bin and direction bin come from $n_{\text{out}}$ forced collisions by OpenMC's own \code{scatter()}
+off a nuclide drawn by its scattering cross section, per material and source energy; the deposit is
+the collided weight times $\nu\Sigma_s/\Sigma_t$ (the production of every non-fission channel above
+1~MeV) times the outgoing fractions. For a fission, the outgoing energy bin comes from forced
+fissions (\code{sample\_fission\_neutron}) off a nuclide drawn by $\nu\sigma_f$, and the deposit is
+the collided weight times $\nu\Sigma_f/\Sigma_t$. Every sum is an expected value over the collision
+site and over the outgoing state, except for the $n_{\text{out}}$ forced collisions.
+
+\paragraph{The multigroup partner on the same ray.} On the same ray, at the same source energies and
+with the same roulette, a second deposit is scored with the multigroup cross sections of the group
+$g_k$ of $E_k$: the collided weight $c^{MG}_{k,z}$ with $\Sigma^{MG}_{t,g_k}$, and the outgoing
+emission $\nu\Sigma^{MG}_{s}(g_k\to g')$ and $\chi_{g'}\nu\Sigma^{MG}_{f,g_k}$, spread over the
+energy bins of $g'$ with the lift's mass fractions and isotropically over the direction bins. The
+per-ray difference
+\begin{equation}
+\Delta_b=\sum_k w_k\left(A^{CE}_{k,b}-A^{MG}_{k,b}\right),\qquad w_k=\frac{q(\mathbf x,E_k)}{\rho(\mathbf x)\,p(E_k)\,n_E},
+\end{equation}
+with $q$ the field's emission density per unit volume and energy and $A_{k,b}$ the deposit per unit
+source weight, has as its expectation the CE first-collision emission of the field minus the
+multigroup one, bin by bin. The multigroup deposit's own expectation is, by bin, the field's emission $F_b$ (tag $s$) and
+$k_{MG}F_b$ (tag $f$, as productions): the field is the flat-source fixed point of exactly this
+multigroup operator, the zones are unions of field regions, and both are isotropic. So
+\begin{equation}
+r_b=\mathbb E[\Delta_b]\quad\text{(tag $s$, unit amplitudes)},
+\end{equation}
+which needs neither $U$ nor a density at a destination. The identities hold only as far as the
+field is converged; this is the first approximation of the form tested here.
+
+\paragraph{Where the correlation is.} The two deposits share the ray, the source energy and the
+roulette, so they are correlated wherever the CE and multigroup transmissions and emissions are
+close. They are not close for the reactions that set $k$ directly. For the field's nu-fission
+production and net loss, the difference is as noisy as the CE score alone (absolute error times
+$\sqrt{\text s}$):
+\begin{center}\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+energies per ray & loss, CE & loss, CE $-$ MG & production, CE & production, CE $-$ MG\\
+\midrule
+1 & 0.0019 & 0.0060 & 0.0042 & 0.0039\\
+8 & 0.0028 & 0.0039 & 0.0032 & 0.0027\\
+32 & 0.0046 & 0.0027 & 0.0031 & 0.0029\\
+\bottomrule
+\end{tabular}
+\end{center}
+CE absorption sits in the resonance peaks, and the multigroup score spreads the same total evenly
+over the group: the two agree only after an integral over energy. For the emission of the first
+collision, weighted with an importance by material and group (the fission yield of a neutron born
+there, from history flights), it is the opposite:
 \begin{center}\small
 \begin{tabular}{@{}lrrr@{}}
 \toprule
@@ -1221,43 +1281,193 @@ energies per ray & per-ray spread, CE & per-ray spread, CE $-$ MG & error $\time
 \bottomrule
 \end{tabular}
 \end{center}
-(total 22.8). Thirty-six of 37 collisions are scatterings, mostly off resonance in graphite, where
-the two transmissions nearly coincide; stratified energies average out the within-group
-kinematics. The present backward sampler has $0.058\cdot\sqrt{\text s}$ on the same scale.
+(the total is 22.8). Thirty-six of the 37 collisions of a neutron's life are scatterings, mostly off
+resonance in graphite, where the two transmissions nearly coincide, and the stratified source
+energies average out the within-group kinematics. The backward sampler has
+$0.058\cdot\sqrt{\text s}$ on the same scale: the difference is about 80 times cheaper per unit of
+variance.
 
-\paragraph{The residual is a constant of the field.} In the bin basis the residual per source tag is
-a fixed vector, like $X$ and $L$. It is accumulated over the generations and injected as
-$a_s\bar D_s+a_f\bar D_f$ plus the closed-form multigroup terms, so its noise falls with the whole
-run instead of entering afresh each generation. Its size is $1.2$ in absolute value against an
-emission of $87$ (the sampled residual had $\Wabs=5.5$), and $8\times10^5$ rays give it to $0.014$.
-Gates G8.13 and G8.14 check that the multigroup deposits reproduce the field's balance and its
-bins. No residual particles are sampled: the bank's children and the bin residual are netted
-together and placed with the field's shape.
+\paragraph{The residual is a constant of the frozen field.} In the bin basis, the residual per unit
+amplitude of each source tag is a fixed vector, like the constants $X$ and $L$ of
+Section~\ref{sec:res:grouped}. It is accumulated over the generations as running means $\bar D_s$,
+$\bar D_f$ (per source tag), so its noise falls with the whole run instead of entering every
+generation afresh. With the amplitudes $(a,b)$ and the eigenvalue $k$ of the generation, and the
+multigroup identities, the residual of the field by bin is
+\begin{align}
+\text{tag }s:&\quad a_s\bar D_s+a_f\bar D_f+(a_s-b_s)F_s+(a_f-a_s)M_f,\nonumber\\
+\text{tag }f:&\quad \left[a_s\bar D_s+a_f\bar D_f+(a_f-a_s)M_f\right]/k+(a_sk_{MG}/k-b_f)F_f,
+\end{align}
+with $M_f$ the multigroup deposit of the tag-$f$ source (zero in this form; with following amplitudes
+$a_f-a_s$ is small). Its absolute size is $1.2$ against an emission of $87$; the backward residual
+records carried $\Wabs=5.5$. $8\times10^5$ rays give it to $0.014$ (L2 over the bins).
 
-\paragraph{Result.} Variant \code{forward}, $4\times10^4$ rays of 8 energies per generation, the net
-loss from forward rays, the production from $5000$ backward points, the balance eigenvalue; six
-replicas of 40 inactive and 60 active generations:
+\paragraph{Netting.} No residual particles are sampled. The bin totals of the bank's children and the
+bin residual are summed and re-sampled by the binned netting with the field's shape
+(\code{BinnedNetting(extra=\dots)}, placement \code{'field'}).
+
+\paragraph{Implementation and tests.} \code{rmc::forward\_residual\_bins}
+(\code{openmc\_rmc\_forward\_residual\_bins}) returns the running quantities per call: the
+CE-minus-multigroup deposits and the multigroup deposits per source tag. A CE ray of 8 energies,
+with the forced collisions, costs $73~\mu$s. Variant \code{forward} of \code{stage8.py} (options
+\code{--forward-rays}, \code{--forward-energies}) accumulates them. Gate G8.13 checks that the
+multigroup scores of the rays reproduce the field's balance (net loss $\langle1,Q^{MG}_f\rangle$,
+production $k_{MG}\langle1,Q^{MG}_f\rangle$), and G8.14 that the multigroup deposits reproduce its
+bins.
+
+\paragraph{Result.} Six replicas of 40 inactive and 60 active generations, $4\times10^4$ rays of 8
+energies per generation, the net loss from forward rays, the production from 5000 backward points,
+the balance eigenvalue; against the reference of 14 analog replicas of Section~\ref{sec:res:bcv}:
 \begin{center}\footnotesize\setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
 residual & $\Delta k$ (pcm) & spread & per gen. & $\Wabs$ & $T$ (s) & FOM (spread; batch)\\
 \midrule
-backward samples, $N=8000$ & $-46\pm13$ & 0.00033--0.0006 & 0.00165 & 0.74 & 366 & 0.3--0.9; 0.28\\
-forward bins & $-27\pm8$ & 0.00020 & 0.00028 & 1.27 & 253 & 3.7 (1.5--5.9); 14\\
+backward samples, $N=8000$ & $-39\pm13$ & 0.00033--0.0006 & 0.00165 & 0.74 & 366 & 1.4; 0.41\\
+forward bins & $-19\pm8$ & 0.00020 & 0.00028 & 1.27 & 253 & 5.5 (2.3--8.8); 21\\
 \bottomrule
 \end{tabular}
 \end{center}
-The figure of merit for $k$ is above analog Monte Carlo's for the first time: $3.7$ on the spread
-of the replica estimates, with a 68\% interval of $1.5$--$5.9$ from six replicas. The
-per-generation spread fell six times. The spread between replicas ($0.00020$) is now twice the
-batch-means error ($0.00010$), so it is set by what is accumulated per replica: $X$, $L$ and the
-residual bins.
+The figure of merit for $k$ is above analog Monte Carlo's: $5.5$ on the spread of the replica
+estimates. The per-generation spread fell six times. The spread between replicas ($0.00020$) is twice
+the batch-means error ($0.00010$), so it is set by what each replica accumulates once: $X$, $L$ and
+the residual bins.
 
-\paragraph{What it gives up.} The residual and the net of each bin are placed with the field's shape,
-so the method is exact only at the scale of the bins ($3\times3$ zones per material, 8 groups, 8
-directions). The bias is $-27\pm8$~pcm against a reference known to $\pm25$. The fission emission
-uses the multigroup spectrum in both deposits. The result is six replicas on one problem; it needs
-the 22-replica confirmation, the bin refinement study, and the fission-rate shape.
+\paragraph{Why this form is not acceptable.} The method is meant to correct a biased deterministic
+solution to reference quality. This form keeps three approximations that do not vanish with more
+samples:
+\begin{itemize}
+\item the residual exists only as bin totals, placed with the field's shape: whatever the CE
+  first-collision emission does within a bin (resonance structure within a group, spatial structure
+  within a zone, anisotropy within a direction bin) is replaced by the field's;
+\item the multigroup identities $M_s+M_f=F_s$ and $=k_{MG}F_f$ assume the field is the exact
+  flat-source fixed point. Measured with $4\times10^5$ multigroup-only rays, the deposits differ from
+  the field's bins by $0.154$ in L1 (noise $0.009$), and their tag-$f$ total is $0.999$ instead of
+  $1$: the random-ray solution's own error, which the method must correct and this form does not;
+\item the tag-$f$ deposit used the multigroup fission spectrum for the CE part too.
+\end{itemize}
+Most importantly, the residual has no particle representation, so replacing the netting by an
+exact cancellation later would leave nothing to cancel: this form has no unbiased limit. Its bias
+($-19\pm8$~pcm against a reference known to $\pm17$) is not larger than that of the netting in the
+earlier variants, but it is of a different kind. Section~\ref{sec:res:bcv} also shows that part of
+its gain came from these approximations.
+
+\subsection{An unbiased form: the binned control variate}\label{sec:res:bcv}
+
+\paragraph{The estimator.} Let $P$ be any unbiased particle estimate of the residual as a measure; here
+the backward residual records of the earlier variants, with their exact within-bin structure (each is
+a physical emission record whose density is known or can be made known). Let $P_b$ be its bin totals,
+and $c_b$ any other estimate of the same bin totals: $\mathbb E[c_b]=\mathbb E[P_b]=r_b$. Then, for
+any normalized shape $s_b$ on each bin,
+\begin{equation}
+\hat r=P+\sum_b\left(c_b-P_b\right)s_b
+\end{equation}
+is unbiased for the residual as a measure: the added term has zero expectation in every bin, whatever
+$s_b$ is. This is a control variate in the bin basis. Its bin totals are $c_b$, so the noise of
+$\hat r$ in any functional that is constant on each bin is the noise of $c_b$; $P$ contributes only
+through the variation of the functional within a bin. For $k$, that is the variation of the importance
+within a bin, so few residual records are needed.
+
+\paragraph{The forward totals made exact.} The forward rays supply $c_b$, but only after the three
+approximations above are removed:
+\begin{itemize}
+\item the multigroup term is estimated, not assumed: $M_s$, $M_f$ by bin from multigroup-only rays,
+  which carry every source group exactly (each ray deposits the group-integrated emission of all
+  groups, so they have no energy noise; $43~\mu$s per ray), accumulated over the run:
+  \begin{equation}
+  c_b=\begin{cases}a\cdot(\bar D+\bar M)-b_sF_s & \text{tag }s,\\ a\cdot(\bar D+\bar M)/k-b_fF_f & \text{tag }f;\end{cases}
+  \end{equation}
+\item the CE fission deposit uses the CE fission spectrum (forced fissions);
+\item the deposits are made in any energy sub-bins of the netting, with the lift's mass fractions
+  for the multigroup part.
+\end{itemize}
+$\mathbb E[\bar D_b+\bar M_b]$ is then the CE first-collision emission of the field in bin $b$
+exactly, for any field, converged or not.
+
+\paragraph{The placement.} The control term $(c_b-P_b)$ is carried by particles of the field's shape:
+$n_b$ particles in bin $b$ with $\mathbb E[n_b]\propto|c_b-P_b|$ (stochastic rounding) and weight
+$(c_b-P_b)/\mathbb E[n_b]$ (\code{cancellation.control\_particles}). Their total absolute weight is
+the noise of $P_b$, about 2 per generation with the records below.
+
+\paragraph{Compatibility with an exact cancellation.} Every particle of $\hat r$ is either a residual
+record (as before) or a particle of the field's shape, whose density is the field's own emission and
+is known everywhere. An exact cancellation of the kind of Section~\ref{sec:res:grouped} can therefore
+act on all of them, and the netting remains the only biased step of the iteration, as in every earlier
+variant. When it is replaced, the iteration is unbiased with the forward totals' variance.
+
+\paragraph{Gate G8.15.} The forward totals $c_b$ at unit amplitudes and $k=k_{MG}$ equal the bin
+totals of the backward residual records, aggregated by (tag, material, group): over the 19 non-empty
+aggregates the largest $|z|$ is $2.1$ and the mean $z^2$ is $0.5$. The test
+also checks that the control particles carry their bin amplitudes in expectation.
+
+\paragraph{A better multigroup term: random ray sweeps.} The multigroup-only rays turned out to be as
+noisy as the correlated difference itself: weighted with the importance, $0.0035\cdot\sqrt{\text s}$
+against $0.0047$ for $\bar D$ (tag $s$ bins). But $M_t=S\,T\,Q_t$ is a pure multigroup quantity, and
+one random ray transport sweep with the field's own fixed source is exactly $T\,Q_t$. Its
+track-length estimate of the region fluxes (\code{multigroup\_deposits.py},
+\code{Representation.multigroup\_bins}) agrees with the multigroup rays (largest $|z|=1.6$ over the
+aggregates) and is forty times more precise per root second ($0.00008\cdot\sqrt{\text s}$). Sixty sweeps
+of 500 rays (42~s) make $M$ negligible. More forced collisions per ray do not lower the noise of
+$\bar D$ (with 1, 8 or 16 per material and energy it stays at $0.0044$--$0.0054\cdot\sqrt{\text s}$): it
+comes from the source energies and positions.
+
+\paragraph{Result.} Table~\ref{tab:res:bcv} gives every configuration against a reference of 14 analog
+replicas ($k=0.64195\pm0.00017$, $\sigma=0.00063$ per replica in 139~s; the four replicas of the
+earlier tables gave $\sigma=0.00049$). Each row is six replicas of 40 inactive and 60 active
+generations with the balance eigenvalue, the net loss from forward rays and $N_B=4\times10^4$; the
+records are $N=1000$, $N_f=500$.
+
+\begin{table}[t]\centering\footnotesize\setlength{\tabcolsep}{3pt}
+\caption{The binned control variate against the earlier residuals, six replicas each, against 14
+analog replicas. ``Spread'' is the spread of replica estimates, ``batch'' the batch-means error of
+one replica; the figure of merit is relative to analog, with the 68\% interval of the spread's.
+$T$ includes the multigroup sweeps where they are used.}\label{tab:res:bcv}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lllrrrrrl@{}}
+\toprule
+residual & placement & multigroup term & $\Delta k$ (pcm) & spread & batch & per gen. & $T$ (s) & FOM (spread; batch)\\
+\midrule
+backward records, $N=8000$ & empirical & --- & $-39\pm13$ & 0.00033 & 0.00060 & 0.00165 & 366 & 1.4 (0.6--2.2); 0.41\\
+forward bins (biased) & field & identities & $-19\pm8$ & 0.00020 & 0.00010 & 0.00028 & 253 & 5.5 (2.3--8.8); 21\\
+\midrule
+control variate & empirical & rays, $10^4$/gen. & $+38\pm13$ & 0.00033 & 0.00025 & 0.00075 & 283 & 1.8 (0.7--2.8); 3.0\\
+control variate & field & rays, $2\times10^4$/gen. & $-30\pm12$ & 0.00029 & 0.00024 & 0.00056 & 347 & 1.9 (0.8--3.1); 2.8\\
+\quad $10^4$ CE rays, more for $X$, $L$ & field & rays, $5000$/gen. & $-10\pm17$ & 0.00043 & 0.00031 & 0.00071 & 209 & 1.4 (0.6--2.3); 2.8\\
+\quad energy sub-bins $\times4$ & field & rays, $5000$/gen. & $+42\pm30$ & 0.00075 & 0.00051 & 0.00130 & 255 & 0.4 (0.2--0.6); 0.8\\
+control variate & field & sweeps & $-29\pm15$ & 0.00037 & 0.00027 & 0.00060 & 385 & 1.05 (0.4--1.7); 2.0\\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{itemize}
+\item \textbf{The unbiased form is above analog, by less.} With an unbiased residual the figure of merit
+  for $k$ is $1$--$2$ on the spread of six replicas and $2$--$3$ on batch means, against $0.4$ on batch
+  means for the backward residual (and $0.38$/$0.19$ in a 22-replica run of it on a 12-core machine).
+  With six replicas the spread is known to $\pm30\%$, so the rows with field placement agree with each
+  other.
+\item \textbf{Part of the biased form's gain was its approximations.} The identities give the
+  multigroup term without noise, and the form of Section~\ref{sec:res:correlated} also dropped the
+  term $(a_f-a_s)M_f$: when the amplitudes of the two tags drift apart, the field's fission-born
+  neutrons scatter differently, and that residual was not fed back. Removing both raises the
+  per-generation spread from $0.00028$ to $0.00056$.
+\item \textbf{A constant residual is amplified by a neutron lifetime.} The residual is a source of the
+  iteration, and the bank carries the residuals of the last $\Lambda\approx37$ generations, so an error
+  in $\bar D$ moves $k$ about $\Lambda$ times more than an error of the same relative size in $X$ or $L$.
+  This is why the reallocation (fewer CE rays, more points for $X$ and $L$) did not help, and why
+  about half of a replica's variance is still per-replica ($\text{spread}^2/\text{batch}^2\approx2$).
+\item \textbf{The netting is the remaining bias.} The two placements share the residual, its records
+  and its forward totals, and differ only in where the netting puts each bin's net. They give $k$
+  apart by $68\pm18$~pcm, on either side of the reference ($-30\pm12$ and $+38\pm13$, with $\pm17$
+  from the reference). Finer energy bins did not resolve it: with four sub-bins per group the netting
+  becomes less effective ($\Wabs$ 1.7) and the noise doubles.
+\end{itemize}
+
+\paragraph{Where this leaves the method.} The residual can be estimated without bias and with most of
+the forward estimator's efficiency, and the figure of merit for $k$ is above analog Monte Carlo's
+with it. What remains biased is the netting, which every variant since Section~\ref{sec:cancellation}
+has used and which an exact cancellation is meant to replace; the binned control variate is built so
+that such a cancellation can act on all of its particles. The next gains are in the noise of
+$\bar D$ (its source energies and positions, amplified by $\Lambda$) and in the iteration's own
+noise, which is the other half of the variance.
 
 \subsection{What optimization could recover}\label{sec:s8:projection}
 
@@ -1343,10 +1553,11 @@ within the present precision:
 \item \textbf{The correction.} The scattering residual is about 15 times more efficient than in the
   first measurement (proposal, tracer, several energies per trace, lifts). The bank's absolute
   weight is below the fission production ($\Wabs\approx0.85$), from 4.4.
-\item \textbf{Figure of merit.} With the correlated forward residual of
-  Section~\ref{sec:res:correlated} it is $3.7$ ($1.5$--$5.9$) times analog Monte Carlo's for $k$ on
-  six replicas, with a bias of $-27\pm8$~pcm from the bin representation. With residual samples
-  from backward points it was about $0.3$, everything counted.
+\item \textbf{Figure of merit.} With the binned control variate of Section~\ref{sec:res:bcv}, whose
+  residual is unbiased, it is $1$--$2$ times analog Monte Carlo's for $k$ on the spread of six
+  replicas and $2$--$3$ on batch means; with residual samples from backward points it was about
+  $0.4$. A biased form that holds the residual only in the netting bins reached $5.5$
+  (Section~\ref{sec:res:correlated}).
 \end{itemize}
 
 What limits it has changed three times. It is no longer the scattering residual, no longer the

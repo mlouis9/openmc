@@ -3,11 +3,13 @@
 
     python balance_analysis.py STAGE8_DIR LABEL=FILE[,FILE...] ...
 
-STAGE8_DIR holds reference.json (the analog reference). For each label, the
+STAGE8_DIR holds reference.json (the analog reference), or is the reference file itself. For each label, the
 replicas of its files are pooled. A replica's estimate is sum P / sum L over
 its active generations (P the production, L the net loss of each
 generation's flux). The error of one replica is the spread of the replica
 estimates, and the figure of merit 1 / (spread^2 T) is given relative to the
+(T: the active generations, plus the time of the replica's multigroup
+sweeps when it read them from a file)
 reference's, with its 68 % interval from the chi-square distribution of the
 spread. With few replicas the spread is uncertain, so the error of a replica
 is also estimated from batch means of 20 generations pooled over the
@@ -43,14 +45,17 @@ def replicas(files):
                            for i in range(nb)])
             out.append(dict(k=P.sum() / L.sum(), sd_gen=np.std(P / L, ddof=1),
                             batch_dev=(kb - kb.mean()).tolist(),
-                            T=sum(r['time'] for r in rows),
+                            T=sum(r['time'] for r in rows) + rep.get('time_mg', 0.0),
                             W=np.mean([r['W_abs'] for r in rows]),
                             acf1=np.dot(x[:-1], x[1:]) / np.dot(x, x)))
     return out
 
 
 def main():
-    ref = json.loads((Path(sys.argv[1]) / 'reference.json').read_text())
+    ref_path = Path(sys.argv[1])
+    if ref_path.is_dir():
+        ref_path = ref_path / 'reference.json'
+    ref = json.loads(ref_path.read_text())
     k_ref = np.mean([r['k'] for r in ref['replicas']])
     sd_ref = np.std([r['k'] for r in ref['replicas']], ddof=1)
     T_ref = np.mean([r['time_active'] for r in ref['replicas']])

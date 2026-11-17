@@ -35,6 +35,12 @@
   scatterings; field_production with score='loss') equals the flights'
   collision estimate for a weighted sample of the field, and the flights'
   loss and scattered weight add up to the weight flown.
+- G8.13, G8.14 (forward rays, multigroup scores): the multigroup rates
+  and deposits of the forward rays reproduce the field's balance and its
+  netting bins.
+- G8.15 (binned control variate): the forward bin totals equal the bin
+  totals of the backward residual records, and control particles carry
+  their bin amplitudes in expectation.
 - G8.12 (forward rays): the first-collision rates of the field's emission
   from forward rays integrated analytically (field_first_flight_rates)
   equal the backward estimates of the production and the net loss, per
@@ -403,22 +409,97 @@ def test_multigroup_rates_on_forward_rays_are_the_fixed_point(lib, field_files):
 
 @pytest.mark.slow
 def test_forward_residual_bins_reproduce_the_field(lib, field_files):
-    """G8.14: the multigroup deposits of the forward rays, summed over the
-    source tags, are the field's own emission by netting bin (tag s) and
-    k_MG times it (tag f, as productions); the CE-minus-multigroup deposits
-    are small against them."""
+    """G8.14: the multigroup-only deposits of the forward rays, summed over
+    the source tags, are the field's own emission by netting bin (tag s) and
+    k_MG times it (tag f, as productions), as far as the field is converged;
+    the CE-minus-multigroup deposits are small against them."""
     import field as fld
     rmc, mesh = lib
     rep = canc.Representation(rmc, field_files, mesh)
+    tb = rep.forward_tables()
     k_mg = float(fld.FieldFile.load(field_files['field']).k_mg)
     h = rep.n_bins() // 2
     F_s, F_f = -rep.low_term((1.0, 0.0)), -rep.low_term((0.0, 1.0))
-    diff, low = rmc.forward_residual_bins(300_000, rep.zone, rep.Z, n_E=8, seed=51)
+    _, low = rmc.forward_residual_bins(200_000, tb, seed=51, mg_only=True)
     L = low.sum(axis=0)
     assert L[:h].sum() == pytest.approx(F_s.sum(), rel=3e-3)
     assert L[h:].sum() == pytest.approx(k_mg * F_f.sum(), rel=3e-3)
     assert np.abs(L[:h] - F_s[:h]).max() < 0.02 * F_s[:h].max()
     assert np.abs(L[h:] - k_mg * F_f[h:]).max() < 0.02 * k_mg * F_f[h:].max()
+    diff, _ = rmc.forward_residual_bins(50_000, tb, n_E=8, seed=52)
     D = diff.sum(axis=0)
     assert np.abs(D[:h]).sum() < 0.1 * F_s.sum()
     assert abs(D[:h].sum()) < 0.01 * F_s.sum()
+
+
+@pytest.mark.slow
+def test_forward_control_matches_residual_records(lib, field_files):
+    """G8.15 (binned control variate): the forward bin totals
+    c = (D + M) - F (tag s) and (D + M) / k - F (tag f), from CE-minus-
+    multigroup deposits D and multigroup-only deposits M, equal the bin
+    totals of the backward residual records, aggregated by (tag, material,
+    group); and control particles carry their bin amplitudes in expectation.
+    Together they make records + control particles an unbiased estimate of
+    the residual as a measure."""
+    import field as fld
+    import stage8
+    rmc, mesh = lib
+    rep = canc.Representation(rmc, field_files, mesh)
+    tb = rep.forward_tables()
+    k = float(fld.FieldFile.load(field_files['field']).k_mg)
+    nb, h = rep.n_bins(), rep.n_bins() // 2
+    F_s, F_f = -rep.low_term((1.0, 0.0)), -rep.low_term((0.0, 1.0))
+
+    def batches(fn, n):
+        x = np.array([fn(i) for i in range(n)])
+        return x.mean(axis=0), x.std(axis=0, ddof=1) / math.sqrt(n)
+
+    D, sD = batches(lambda i: rmc.forward_residual_bins(10_000, tb, n_E=8,
+                                                        seed=100 + i)[0], 12)
+    M, sM = batches(lambda i: rmc.forward_residual_bins(20_000, tb, seed=200 + i,
+                                                        mg_only=True)[1], 12)
+    tot, var = (D + M).sum(axis=0), (sD**2 + sM**2).sum(axis=0)
+    c = np.r_[tot[:h] - F_s[:h], tot[h:] / k - F_f[h:]]
+    vc = np.r_[var[:h], var[h:] / k**2]
+
+    def records(i):
+        acc = np.zeros(nb)
+        for t, opts in (('s', stage8.DENSITY_ROUTE), ('f', stage8.DENSITY_FREE_F)):
+            rec = rmc.residual_sample(t, 4000, seed=1000 * i + (1 if t == 's' else 2),
+                                      **opts)
+            w = rmc.residual_weights(rec, 4000, (1.0, 1.0), (1.0, 1.0), k, 0.0, 0.0)
+            bank = dict(r=rec['r'], u=rec['u'], E=rec['E'], w=w,
+                        tag=rec['tag'].astype(np.int32))
+            key = rep.bins(bank)
+            ok = key >= 0
+            acc += np.bincount(key[ok], weights=w[ok], minlength=nb)
+        return acc
+
+    P, sP = batches(records, 24)
+    key = np.arange(nb)
+    e = (key // rep.D) % rep.NE
+    z = (key // (rep.D * rep.NE)) % rep.Z
+    tag = key // (rep.D * rep.NE * rep.Z)
+    n_mat = len(set(rep.material_id.tolist()))
+    agg = (tag * n_mat + z // (rep.Z // n_mat)) * rep.G + rep.e2g[e]
+
+    def A(x):
+        return np.bincount(agg, weights=x, minlength=2 * n_mat * rep.G)
+
+    se = np.sqrt(A(vc) + A(sP**2))
+    live = se > 0
+    zs = (A(c) - A(P))[live] / se[live]
+    print('G8.15 z by (tag, material, group):', np.round(zs, 2))
+    assert np.all(np.abs(zs) < 4.5), zs
+    assert np.mean(zs**2) < 2.5
+    # Control particles: expected bin totals equal the amplitudes
+    rng = np.random.default_rng(3)
+    delta = np.zeros(nb)
+    occupied = np.flatnonzero(np.r_[F_s[:h], F_f[h:]] > 0)
+    delta[rng.choice(occupied, 40, replace=False)] = rng.normal(size=40)
+    acc = np.zeros(nb)
+    for _ in range(200):
+        out = canc.control_particles(rep, delta, 400, rng)
+        kk = rep.bins(out)
+        acc += np.bincount(kk, weights=out['w'], minlength=nb)
+    assert np.allclose(acc / 200, delta, atol=0.25 * np.abs(delta).max())

@@ -133,15 +133,17 @@ eigenvalue calculation. Section~\ref{sec:res:stage8} reports it, with its follow
   replaces $k_{n+1}=k_nf_n$. The replica spread falls from $0.0024$ to $0.0010$ at equal cost.
 \end{itemize}
 
-\paragraph{Verdict.} With residual samples from backward points the method reached about $0.3$ of
+\paragraph{Verdict.} With residual samples from backward points the method reached about $0.4$ of
 analog Monte Carlo's figure of merit for $k$ on this problem, after its scattering residual, the
 field's production and loss, and the eigenvalue update had each been improved in turn. The cause was
 structural: a noisy CE estimate minus an exact low-order term has the noise of the CE estimate,
-however small the difference. A forward estimator that deposits the first-collision emission with
-CE and with multigroup data on the same ray, and holds the residual as a constant vector in the
-netting bins, removes that (Section~\ref{sec:res:correlated}): $3.7$ ($1.5$--$5.9$) times analog on
-six replicas, with a bias of $-27\pm8$~pcm from the bin representation. This first speedup needs
-confirmation with more replicas and a study of the bins.
+however small the difference. A forward estimator that deposits the first-collision emission with CE
+and with multigroup data on the same ray removes most of that noise
+(Section~\ref{sec:res:correlated}). Used as a control variate for the bin totals of the unbiased
+residual records (Section~\ref{sec:res:bcv}), it keeps the residual unbiased and gives $1$--$2$ times
+analog's figure of merit on the spread of six replicas ($2$--$3$ on batch means). The remaining bias,
+of either sign by $30$--$40$~pcm, comes from the netting's placement, which an exact cancellation is
+meant to replace.
 \clearpage
 
 \input{part1_method}

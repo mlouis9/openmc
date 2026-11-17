@@ -78,15 +78,29 @@ bool grouped_fission_weight(const FrozenField& field,
   const vector<EmissionRecord>& group, Position x, int l, double E_f,
   double d_max, double k, KernelScratch& tracer, XsProbe& probe, double& W);
 
-//! The field's residual in a bin basis from forward rays: CE minus
-//! multigroup deposits of the first-collision emission on the same rays
-//! (diff) and the multigroup deposits (low), per source tag;
-//! [2 * n_bins] each, n_bins = 2 * n_zone * G * n_mu * n_phi. zone: [R] zone
-//! of every field region (one material per zone).
+//! Netting bins of the forward residual: zone of every field region; energy
+//! bin of every fine bin of the lifts; the lift's mass fraction of every
+//! energy bin within its group, [2 tags][materials][n_ebin] (tag s for
+//! scattering output, tag f for fission output); direction bins n_mu x n_phi.
+struct ForwardBins {
+  const int32_t* zone {nullptr};
+  int n_zone {0};
+  int n_mu {2}, n_phi {4};
+  const int32_t* fine2e {nullptr};
+  int n_ebin {0};
+  const double* frac {nullptr};
+};
+
+//! The field's first-collision emission by netting bin from forward rays:
+//! CE minus multigroup deposits on the same rays (diff) and the multigroup
+//! deposits (low), per source tag; [2 * n_bins] each, n_bins = 2 * n_zone *
+//! n_ebin * n_mu * n_phi. With mg_only, only the multigroup deposits, with
+//! every source group carried exactly by each ray. n_out forced scatterings
+//! and n_out_f forced fissions (n_out if 0) per material and source energy.
 void forward_residual_bins(const FrozenField& field, const MGTables& mg,
   int64_t n_rays, int n_E, int n_out, double cutoff, uint64_t seed,
-  const int32_t* zone, int n_zone, int n_mu, int n_phi, double* diff,
-  double* low);
+  const ForwardBins& fb, bool mg_only, double* diff, double* low,
+  int n_out_f = 0);
 
 //! First-collision rates of the field's emission by forward rays integrated
 //! analytically: rate[2 * tag + x], x = 0 nu-fission production, 1 net loss

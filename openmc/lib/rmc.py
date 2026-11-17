@@ -842,23 +842,34 @@ def field_first_flight_rates(n_rays, n_E=8, cutoff=math.exp(-4.0), seed=1, du=1e
     return rate[[0, 2]], rate[[1, 3]], var[[0, 2]], var[[1, 3]]
 
 
-def forward_residual_bins(n_rays, zone, n_zone, n_mu=2, n_phi=4, n_E=8, n_out=1,
-                          cutoff=math.exp(-4.0), seed=1):
-    """The field's residual in a bin basis from forward rays: (diff, low),
-    each [2 source tags, n_bins], n_bins = 2 * n_zone * G * n_mu * n_phi with
-    bin = ((tag * n_zone + zone) * G + group) * D + direction. diff is the
-    CE deposit of the first-collision emission minus the multigroup deposit
-    on the same rays, low the multigroup deposit. Tag f deposits are
-    productions (without 1 / k)."""
-    zone = np.ascontiguousarray(zone, dtype=np.int32)
-    nb = 2 * int(n_zone) * (len(field_groups()) - 1) * n_mu * n_phi
+def forward_residual_bins(n_rays, tables, n_E=8, n_out=1, cutoff=math.exp(-4.0), seed=1,
+                          mg_only=False, n_out_f=0):
+    """The field's first-collision emission by netting bin from forward rays:
+    (diff, low), each [2 source tags, n_bins]. diff is the CE deposit minus
+    the multigroup deposit on the same rays, low the multigroup deposit.
+    tables is a dict with zone [R], n_zone, n_mu, n_phi, fine2e [fine bins],
+    n_ebin, and frac [2, materials, n_ebin] (cancellation.Representation.
+    forward_tables()). bin = ((tag * n_zone + zone) * n_ebin + e) * D + d. Tag
+    f deposits are productions (without 1 / k). With mg_only, only the
+    multigroup deposits, with every source group carried by each ray. n_out
+    forced scatterings and n_out_f forced fissions (n_out if 0) per material
+    and source energy."""
+    zone = np.ascontiguousarray(tables['zone'], dtype=np.int32)
+    fine2e = np.ascontiguousarray(tables['fine2e'], dtype=np.int32)
+    frac = np.ascontiguousarray(tables['frac'], dtype=np.float64)
+    n_mu, n_phi = int(tables['n_mu']), int(tables['n_phi'])
+    nb = 2 * int(tables['n_zone']) * int(tables['n_ebin']) * n_mu * n_phi
     diff, low = np.zeros(2 * nb), np.zeros(2 * nb)
     _dll.openmc_rmc_forward_residual_bins(c_int64(int(n_rays)), c_int(int(n_E)),
                                           c_int(int(n_out)), c_double(cutoff),
                                           c_uint64(int(seed)),
                                           zone.ctypes.data_as(POINTER(c_int32)),
-                                          c_int(int(n_zone)), c_int(n_mu), c_int(n_phi),
-                                          _dp(diff), _dp(low))
+                                          c_int(int(tables['n_zone'])), c_int(n_mu),
+                                          c_int(n_phi),
+                                          fine2e.ctypes.data_as(POINTER(c_int32)),
+                                          c_int(int(tables['n_ebin'])), _dp(frac),
+                                          c_int(int(bool(mg_only))), _dp(diff), _dp(low),
+                                          c_int(int(n_out_f)))
     return diff.reshape(2, nb), low.reshape(2, nb)
 
 

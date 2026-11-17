@@ -1606,3 +1606,44 @@ Not done
       deposit; the fission-rate shape; the cost of the rays (75 microseconds
       each).
 
+An unbiased form: the binned control variate
+--------------------------------------------
+
+**Commit:** "rmc: binned control variate: an unbiased residual with the
+forward rays' bin totals". Report section "An unbiased form: the binned
+control variate".
+
+Added
+    - ``forward_residual_bins`` takes the netting's energy bins (any sub-bins,
+      ``Representation.forward_tables``), uses the CE fission spectrum
+      (forced fissions) for the CE deposit, and has a multigroup-only mode in
+      which every ray carries all source groups.
+    - ``Representation.multigroup_bins`` and ``multigroup_deposits.py``: the
+      multigroup term ``M_t = S T Q_t`` by bin from random ray sweeps of the
+      field's own sources (forty times more precise per root second than the
+      multigroup rays).
+    - ``cancellation.control_particles``; variants ``bcv`` and ``bcv_nr``
+      (without the regional kernel) of ``stage8.py``: residual records whose
+      bin totals are replaced by ``c = a.(D + M) - b F`` (tag s) and
+      ``a.(D + M)/k - b_f F_f`` (tag f), the difference carried by particles of
+      the field's shape. Options ``--forward-mg-rays``, ``--mg-flux``,
+      ``--n-control``, ``--forward-n-out``; ``--ref-seed-base`` for more
+      reference replicas.
+    - Test G8.15; G8.14 checks the multigroup-only mode.
+    - ``balance_analysis.py`` takes a reference file and counts the sweeps'
+      time.
+
+Findings
+    - The forward bin totals equal the backward records' bin totals (G8.15:
+      largest z 2.1 over 19 aggregates); the multigroup-only deposits differ
+      from the field's bins by 0.154 in L1 (the field's own convergence
+      error), which the biased form ignored.
+    - Six replicas each, against 14 analog replicas: the unbiased form gives
+      1-2 times analog's figure of merit on the spread (2-3 on batch means);
+      the biased form 5.5, partly because its approximations removed noise.
+    - The same residual with the two netting placements gives k apart by
+      68 +- 18 pcm: the netting is the remaining bias.
+    - A constant residual error moves k about a neutron lifetime (37
+      generations) times more than a relative error in X or L; more forced
+      collisions do not lower the noise of the forward difference.
+

@@ -88,12 +88,21 @@ extern "C" int openmc_rmc_field_first_flight_rates(int64_t n_rays, int n_E,
 
 extern "C" int openmc_rmc_forward_residual_bins(int64_t n_rays, int n_E,
   int n_out, double cutoff, uint64_t seed, const int32_t* zone, int n_zone,
-  int n_mu, int n_phi, double* diff, double* low)
+  int n_mu, int n_phi, const int32_t* fine2e, int n_ebin, const double* frac,
+  int mg_only, double* diff, double* low, int n_out_f)
 {
   if (int err = prepare())
     return err;
+  rmc::ForwardBins fb;
+  fb.zone = zone;
+  fb.n_zone = n_zone;
+  fb.n_mu = n_mu;
+  fb.n_phi = n_phi;
+  fb.fine2e = fine2e;
+  fb.n_ebin = n_ebin;
+  fb.frac = frac;
   rmc::forward_residual_bins(*rmc::loaded_field, rmc::loaded_mg_tables(), n_rays,
-    n_E, n_out, cutoff, seed, zone, n_zone, n_mu, n_phi, diff, low);
+    n_E, n_out, cutoff, seed, fb, mg_only != 0, diff, low, n_out_f);
   return 0;
 }
 

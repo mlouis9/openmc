@@ -109,6 +109,57 @@ class Representation:
     def n_bins(self):
         return 2 * self.Z * self.NE * self.D
 
+    def multigroup_bins(self, field_file, phi):
+        """M_t by bin from the uncollided multigroup fluxes phi [2, R, G]
+        (ascending groups) of the field's sources Q_s and Q_f: the multigroup
+        scattering emission (tag s bins, isotropic over the direction bins,
+        the lift's fractions within each group) and the fission production
+        chi nu Sigma_f phi (tag f bins), per unit volume times the region's
+        volume. Returns [2 source tags, n_bins]."""
+        import field as fld
+        F = fld.FieldFile.load(field_file)
+        row = {int(m): i for i, m in enumerate(F.mat_ids)}
+        out = np.zeros((2, self.n_bins()))
+        for it in range(2):
+            m_s = np.zeros((self.Z, self.G))
+            m_f = np.zeros((self.Z, self.G))
+            for r in range(self.R):
+                i = row[int(self.material_id[r])]
+                p = phi[it, r]
+                m_s[self.zone[r]] += self.V[r] * (F.sigma_s[i] * p[:, None]).sum(axis=0)
+                m_f[self.zone[r]] += self.V[r] * F.chi[i] * (F.nu_sigma_f[i] * p).sum()
+            for z in range(self.Z):
+                if len(self.regions_of[z]) == 0:
+                    continue
+                r0 = self.regions_of[z][0]
+                fs, ff = self._ebin_mass(r0, 's'), self._ebin_mass(r0, 'f')
+                for e in range(self.NE):
+                    g = self.e2g[e]
+                    base_s = ((0 * self.Z + z) * self.NE + e) * self.D
+                    base_f = ((1 * self.Z + z) * self.NE + e) * self.D
+                    out[it, base_s:base_s + self.D] = m_s[z, g] * fs[e] / self.D
+                    out[it, base_f] = m_f[z, g] * ff[e]
+        return out
+
+    def forward_tables(self):
+        """The netting bins in the form rmc.forward_residual_bins takes: zone
+        of every region, energy bin of every fine bin, and the lift's mass
+        fraction of every energy bin within its group per material index and
+        tag."""
+        import openmc.lib
+        if getattr(self, '_ftables', None) is None:
+            ids = list(openmc.lib.materials)
+            frac = np.zeros((2, len(ids), self.NE))
+            for m_id in set(self.material_id.tolist()):
+                r = int(np.flatnonzero(self.material_id == m_id)[0])
+                for it, t in enumerate('sf'):
+                    frac[it, ids.index(int(m_id))] = self._ebin_mass(r, t)
+            self._ftables = dict(zone=self.zone.astype(np.int32), n_zone=self.Z,
+                                 n_mu=self.n_mu, n_phi=self.n_phi,
+                                 fine2e=self.fine2e.astype(np.int32), n_ebin=self.NE,
+                                 frac=frac)
+        return self._ftables
+
     def _lift_mass(self, region, t):
         """Fine-bin masses of the lift h_{t,m,g} of the region's material."""
         key = (int(region), t)
@@ -218,6 +269,24 @@ class Representation:
 # ---------------------------------------------------------------------------
 # Approximate: binned netting
 # ---------------------------------------------------------------------------
+
+def control_particles(rep, delta, n, rng):
+    """Particles carrying the bin amplitudes delta, placed with the
+    representation's (the field's) shape: n_b ~ n |delta_b| / sum |delta| by
+    stochastic rounding, each with weight delta_b / E[n_b], so that the
+    expected total weight of every bin is delta_b."""
+    a = np.abs(delta)
+    W = a.sum()
+    if not W > 0:
+        return None
+    expect = n * a / W
+    nb = np.floor(expect + rng.random(len(expect))).astype(np.int64)
+    live = np.flatnonzero(nb > 0)
+    keys = np.repeat(live, nb[live])
+    out = rep.sample(keys, rng)
+    out['w'] = np.repeat(delta[live] / expect[live], nb[live])
+    return out
+
 
 class BinnedNetting:
     """Net per bin and re-sample n_b ~ N |m_b| / sum |m| particles per bin
