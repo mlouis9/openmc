@@ -84,7 +84,8 @@ bool grouped_fission_weight(const FrozenField& field,
 //! ray; n_E <= 64. var: variance of each mean.
 void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
   int n_E, const TailOptions& tail, uint64_t seed, double du, double sigma_e,
-  double rate[4], double var[4]);
+  double rate[4], double var[4], const MGTables* mg = nullptr,
+  double mg_rate[4] = nullptr, double diff_var[4] = nullptr);
 
 //! CE nu-fission production of the field's first-flight flux per source tag,
 //! X_y = <nu Sigma_f, G Q_y>, by backward points drawn from the field's own

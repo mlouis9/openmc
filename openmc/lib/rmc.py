@@ -811,7 +811,7 @@ def field_production(n_points, n_E=4, tail='roulette', cutoff=math.exp(-4.0), se
 
 
 def field_first_flight_rates(n_rays, n_E=8, cutoff=math.exp(-4.0), seed=1, du=1e-4,
-                             sigma_e=1.0):
+                             sigma_e=1.0, control=False):
     """First-collision rates of the field's emission per source tag, from
     forward rays integrated analytically (no noise from where on the ray
     the collision falls): the nu-fission production X[2] and the net loss
@@ -819,11 +819,17 @@ def field_first_flight_rates(n_rays, n_E=8, cutoff=math.exp(-4.0), seed=1, du=1e
     emission times a rational approximation of the loss probability with
     escape cross section sigma_e, on sub-bins of lethargy width du; n_E
     energies share a ray. Returns (X, L, var_X, var_L)."""
-    rate, var = np.zeros(4), np.zeros(4)
+    rate, var, mg, dvar = np.zeros(4), np.zeros(4), np.zeros(4), np.zeros(4)
     _dll.openmc_rmc_field_first_flight_rates(c_int64(int(n_rays)), c_int(int(n_E)),
                                              c_double(cutoff), c_uint64(int(seed)),
                                              c_double(du), c_double(sigma_e),
-                                             _dp(rate), _dp(var))
+                                             _dp(rate), _dp(var), c_int(int(control)),
+                                             _dp(mg), _dp(dvar))
+    if control:
+        # With control: also the multigroup rates on the same rays and the
+        # variance of the mean difference, as (X, L) pairs
+        return (rate[[0, 2]], rate[[1, 3]], var[[0, 2]], var[[1, 3]],
+                mg[[0, 2]], mg[[1, 3]], dvar[[0, 2]], dvar[[1, 3]])
     return rate[[0, 2]], rate[[1, 3]], var[[0, 2]], var[[1, 3]]
 
 

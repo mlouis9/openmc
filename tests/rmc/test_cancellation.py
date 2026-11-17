@@ -381,3 +381,21 @@ def test_forward_rays_match_backward_estimates(lib):
         assert np.all(np.abs(z) < 5), (name, b, f, z)
         # the comparison resolves one per cent of the larger component
         assert math.sqrt(vb[0] + vf[0]) < 0.01 * b[0]
+
+
+@pytest.mark.slow
+def test_multigroup_rates_on_forward_rays_are_the_fixed_point(lib, field_files):
+    """G8.13: scored with the multigroup cross sections of each energy's
+    group, the forward rays give the field's own balance: its net loss is
+    the fission emission mass <1, Q_f> and its production is k_MG times
+    that."""
+    import field as fld
+    rmc, _ = lib
+    k_mg = float(fld.FieldFile.load(field_files['field']).k_mg)
+    X, L, vX, vL, Xm, Lm, _, _ = rmc.field_first_flight_rates(400_000, n_E=4, seed=41,
+                                                              control=True)
+    M_f = rmc.field_mass('f')
+    # The multigroup scores' own spread is close to the CE one
+    tol = 5 * math.sqrt(vL.sum()) + 2e-3 * M_f
+    assert abs(Lm.sum() - M_f) < tol, (Lm.sum(), M_f)
+    assert abs(Xm.sum() - k_mg * M_f) < 5 * math.sqrt(vX.sum()) + 2e-3 * k_mg * M_f

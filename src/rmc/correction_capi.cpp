@@ -69,7 +69,7 @@ extern "C" int openmc_rmc_field_production(int64_t n_points, int n_E,
 
 extern "C" int openmc_rmc_field_first_flight_rates(int64_t n_rays, int n_E,
   double cutoff, uint64_t seed, double du, double sigma_e, double* rate,
-  double* var)
+  double* var, int control, double* mg_rate, double* diff_var)
 {
   if (int err = prepare())
     return err;
@@ -79,8 +79,9 @@ extern "C" int openmc_rmc_field_first_flight_rates(int64_t n_rays, int n_E,
   }
   rmc::TailOptions opt;
   opt.cutoff = cutoff;
-  rmc::field_first_flight_rates(
-    *rmc::loaded_field, n_rays, n_E, opt, seed, du, sigma_e, rate, var);
+  rmc::field_first_flight_rates(*rmc::loaded_field, n_rays, n_E, opt, seed, du,
+    sigma_e, rate, var, control ? &rmc::loaded_mg_tables() : nullptr, mg_rate,
+    diff_var);
   return 0;
 }
 

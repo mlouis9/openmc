@@ -13,6 +13,7 @@
 #include "openmc/random_lcg.h"
 #include "openmc/reaction.h"
 #include "openmc/rmc/channels.h"
+#include "openmc/rmc/mg_control.h"
 #include "openmc/rmc/production.h"
 #include "openmc/rmc/residual.h"
 
@@ -314,8 +315,14 @@ void field_fission_production(const FrozenField& field, const MGTables& mg,
 
 void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
   int n_E, const TailOptions& tail, uint64_t seed, double du, double sigma_e,
-  double rate[4], double var[4])
+  double rate[4], double var[4], const MGTables* mg, double mg_rate[4],
+  double diff_var[4])
 {
+  // With mg, the same rays are also scored with the multigroup cross
+  // sections of the energy's group (mg_rate), and diff_var is the variance
+  // of the mean of the CE score minus the multigroup score. The multigroup
+  // rates of the field's own emission are known exactly (the field is their
+  // fixed point), so rate - mg_rate + exact is a correlated estimate.
   // rate[2 * tag + x] = int dr dE dOmega Q_tag(r, E) / (4 pi) A_x(r, Omega, E),
   // x = 0 nu-fission, 1 net loss, with A_x the expected first-collision
   // score of a neutron born at r towards Omega at E:
@@ -445,13 +452,15 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
   struct Xs {
     int32_t mat {-2};
     double total, ratio[2];
+    double mg_total, mg_ratio[2];
   };
-  vector<double> E(n_E), wE(n_E), T(n_E), acc(2 * n_E);
+  const int G = field.n_groups();
+  vector<double> E(n_E), wE(n_E), T(n_E), acc(2 * n_E), Tm(n_E), accm(2 * n_E);
   vector<int> live(n_E);
   vector<Xs> xs(4 * n_E);
   // One ray: its region and its four scores
   auto ray = [&](const VoxelProposal& voxel, uint64_t s, int64_t& region,
-               double sc[4]) {
+               double sc[4], double scm[4]) {
     auto rd = voxel.sample(&s, region);
     int32_t mat0;
     double kT0, dm0;
@@ -486,8 +495,10 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
       share[1][k] = w * qf;
       wE[k] = w;
       T[k] = 1.0;
+      Tm[k] = 1.0;
       live[k] = 1;
       acc[2 * k] = acc[2 * k + 1] = 0.0;
+      accm[2 * k] = accm[2 * k + 1] = 0.0;
       for (int a = 0; a < 4; ++a)
         xs[4 * k + a].mat = -2;
     }
@@ -532,6 +543,17 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
               cand.ratio[1] = (mx.total > 0.0)
                                 ? loss_xs(m, cell.density_mult(inst)) / mx.total
                                 : 0.0;
+              if (mg) {
+                int gi = field.group(E[k]);
+                double st = mg->sigma_t(m, cell.sqrtkT(inst), gi);
+                double out = 0.0;
+                for (int go = 0; go < G; ++go)
+                  out += mg->nu_sigma_s(m, cell.sqrtkT(inst), gi, go);
+                cand.mg_total = st;
+                cand.mg_ratio[0] =
+                  (st > 0.0) ? mg->nu_sigma_f(m, cell.sqrtkT(inst), gi) / st : 0.0;
+                cand.mg_ratio[1] = (st > 0.0) ? (st - out) / st : 0.0;
+              }
               e = &cand;
               break;
             }
@@ -541,10 +563,19 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
           acc[2 * k] += e->ratio[0] * d;
           acc[2 * k + 1] += e->ratio[1] * d;
           T[k] = t_out;
-          if (std::abs(T[k]) < tail.cutoff) {
-            if (prn(&s) < survive)
+          if (mg) {
+            double tm = Tm[k] * std::exp(-e->mg_total * len);
+            accm[2 * k] += e->mg_ratio[0] * (Tm[k] - tm);
+            accm[2 * k + 1] += e->mg_ratio[1] * (Tm[k] - tm);
+            Tm[k] = tm;
+          }
+          // The roulette acts on both transmissions with one random number
+          if (std::abs(T[k]) < tail.cutoff &&
+              (!mg || std::abs(Tm[k]) < tail.cutoff)) {
+            if (prn(&s) < survive) {
               T[k] /= survive;
-            else {
+              Tm[k] /= survive;
+            } else {
               live[k] = 0;
               --n_live;
             }
@@ -560,11 +591,13 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
         break;
     }
     for (int a = 0; a < 4; ++a)
-      sc[a] = 0.0;
+      sc[a] = scm[a] = 0.0;
     for (int k = 0; k < n_E; ++k)
       for (int t = 0; t < 2; ++t)
-        for (int x = 0; x < 2; ++x)
+        for (int x = 0; x < 2; ++x) {
           sc[2 * t + x] += share[t][k] * acc[2 * k + x];
+          scm[2 * t + x] += share[t][k] * accm[2 * k + x];
+        }
   };
   // Pilot, once per field: the root mean square of the total loss score by
   // region. Regions are then drawn in proportion to their emission-based
@@ -579,9 +612,9 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
     const int64_t n_pilot = 20 * R + 20000;
     for (int64_t i = 0; i < n_pilot; ++i) {
       int64_t region;
-      double sc[4];
+      double sc[4], scm[4];
       ray(voxel, future_seed(static_cast<uint64_t>(i) * 1000003ULL + 17, 987654321ULL),
-        region, sc);
+        region, sc, scm);
       double v = sc[1] + sc[3];
       s2[region] += v * v;
       ++cnt[region];
@@ -607,15 +640,25 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
   vo.weights = tab.wr_opt;
   VoxelProposal voxel(field, vo);
   double sum[4] = {0.0, 0.0, 0.0, 0.0}, sq[4] = {0.0, 0.0, 0.0, 0.0};
+  double summ[4] = {0.0, 0.0, 0.0, 0.0}, sqd[4] = {0.0, 0.0, 0.0, 0.0};
   for (int64_t i = 0; i < n_rays; ++i) {
     int64_t region;
-    double sc[4];
-    ray(voxel, future_seed(static_cast<uint64_t>(i) * 1000003ULL + 13, seed), region, sc);
+    double sc[4], scm[4];
+    ray(voxel, future_seed(static_cast<uint64_t>(i) * 1000003ULL + 13, seed), region, sc,
+      scm);
     for (int a = 0; a < 4; ++a) {
       sum[a] += sc[a];
       sq[a] += sc[a] * sc[a];
+      summ[a] += scm[a];
+      sqd[a] += (sc[a] - scm[a]) * (sc[a] - scm[a]);
     }
   }
+  if (mg)
+    for (int a = 0; a < 4; ++a) {
+      mg_rate[a] = summ[a] / n_rays;
+      double dm = (sum[a] - summ[a]) / n_rays;
+      diff_var[a] = (n_rays > 1) ? (sqd[a] / n_rays - dm * dm) / (n_rays - 1) : 0.0;
+    }
   for (int a = 0; a < 4; ++a) {
     rate[a] = sum[a] / n_rays;
     var[a] = (n_rays > 1)
