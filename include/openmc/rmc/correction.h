@@ -78,6 +78,16 @@ bool grouped_fission_weight(const FrozenField& field,
   const vector<EmissionRecord>& group, Position x, int l, double E_f,
   double d_max, double k, KernelScratch& tracer, XsProbe& probe, double& W);
 
+//! The field's residual in a bin basis from forward rays: CE minus
+//! multigroup deposits of the first-collision emission on the same rays
+//! (diff) and the multigroup deposits (low), per source tag;
+//! [2 * n_bins] each, n_bins = 2 * n_zone * G * n_mu * n_phi. zone: [R] zone
+//! of every field region (one material per zone).
+void forward_residual_bins(const FrozenField& field, const MGTables& mg,
+  int64_t n_rays, int n_E, int n_out, double cutoff, uint64_t seed,
+  const int32_t* zone, int n_zone, int n_mu, int n_phi, double* diff,
+  double* low);
+
 //! First-collision rates of the field's emission by forward rays integrated
 //! analytically: rate[2 * tag + x], x = 0 nu-fission production, 1 net loss
 //! (absorption less the gain of multiplying scatterings). n_E energies per
@@ -85,7 +95,9 @@ bool grouped_fission_weight(const FrozenField& field,
 void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
   int n_E, const TailOptions& tail, uint64_t seed, double du, double sigma_e,
   double rate[4], double var[4], const MGTables* mg = nullptr,
-  double mg_rate[4] = nullptr, double diff_var[4] = nullptr);
+  double mg_rate[4] = nullptr, double diff_var[4] = nullptr,
+  const double* eta = nullptr, double eta_f = 0.0, int n_out = 1,
+  double worth[4] = nullptr);
 
 //! CE nu-fission production of the field's first-flight flux per source tag,
 //! X_y = <nu Sigma_f, G Q_y>, by backward points drawn from the field's own

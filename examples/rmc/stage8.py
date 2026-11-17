@@ -59,6 +59,10 @@ VARIANTS = {
                     grouped=True),
     'grouped_net': dict(opts={'s': DENSITY_ROUTE, 'f': DENSITY_FREE_F}, pooling=True,
                         grouped=True, netting=True),
+    # The field's residual in the netting bins from forward rays (CE minus
+    # multigroup deposits on the same rays), accumulated over the
+    # generations; no residual particles are sampled
+    'forward': dict(opts={}, netting=True, forward=True),
     'history': dict(opts={'s': DENSITY_ROUTE, 'f': DENSITY_FREE_F}, pooling=True,
                     netting=True, history=True),
 }
@@ -97,11 +101,26 @@ class Stage8Backend(driver.OpenMCBackend):
         # they replace the per-generation estimates
         self.constants = None
         self.loss_estimator = 'backward'
+        # Forward residual in the bin basis: running sums over generations
+        self.fwd_rays, self.fwd_energies = 40_000, 8
+        self._fwd_d = self._fwd_low = 0.0
+        self._fwd_n = 0
+        self._F = None
         self.net_every = 1   # netting every net_every generations
         self.fp_points, self.fp_energies, self.k_mg = 10_000, 4, None
 
     def residual(self, t, n, a, b, k, seed):
         rmc = self.rmc
+        if self.v.get('forward'):
+            if t == 's':
+                d, low = rmc.forward_residual_bins(self.fwd_rays, self.rep.zone, self.rep.Z,
+                                                   n_mu=self.rep.n_mu, n_phi=self.rep.n_phi,
+                                                   n_E=self.fwd_energies, seed=seed)
+                self._fwd_d = self._fwd_d + d
+                self._fwd_low = self._fwd_low + low
+                self._fwd_n += 1
+                self._abk = (a, b, k)
+            return self.empty()
         rec = rmc.residual_sample(t, n, seed=seed, **{**self.v['opts'][t],
                                                       **self.res_opts.get(t, {})})
         bb = list(b)
@@ -162,11 +181,34 @@ class Stage8Backend(driver.OpenMCBackend):
             return cand, info or None
         # Low term per bin only for tags whose records carry none
         bl = tuple(b[i] if t in self.low_exact else 0.0 for i, t in enumerate('sf'))
-        out, ninfo = self.netting(cand, bl, seed)
+        out, ninfo = self.netting(cand, bl, seed, extra=self._forward_residual())
         info['netting'] = ninfo
         if self.grouped is not None and 'rk' not in out:
             out = canc.with_records(out)       # field placement: no records
         return out, info
+
+    def _forward_residual(self):
+        """The unnormalized residual of the field by netting bin, from the
+        running means D (CE minus multigroup deposits) and M (multigroup
+        deposits) per source tag. With F_t the field's own bins and the
+        multigroup identities M_s + M_f = F_s (tag s) and = k_MG F_f (tag f,
+        as productions):
+          tag s: a_s D_s + a_f D_f + (a_s - b_s) F_s + (a_f - a_s) M_f,
+          tag f: [a_s D_s + a_f D_f + (a_f - a_s) M_f] / k
+                 + (a_s k_MG / k - b_f) F_f."""
+        if not self.v.get('forward') or self._fwd_n == 0:
+            return None
+        rep = self.rep
+        if self._F is None:
+            self._F = (-rep.low_term((1.0, 0.0)), -rep.low_term((0.0, 1.0)))
+        a, b, k = self._abk
+        D, M = self._fwd_d / self._fwd_n, self._fwd_low / self._fwd_n
+        h = rep.n_bins() // 2
+        core = a[0] * D[0] + a[1] * D[1] + (a[1] - a[0]) * M[1]
+        R = np.empty(rep.n_bins())
+        R[:h] = core[:h] + (a[0] - b[0]) * self._F[0][:h]
+        R[h:] = core[h:] / k + (a[0] * self.k_mg / k - b[1]) * self._F[1][h:]
+        return R
 
     def field_production(self, a, seed):
         """a_s X_s + a_f X_f: the CE nu-fission production of the field's
@@ -320,6 +362,10 @@ def main():
     ap.add_argument('--field-loss', type=int, default=5000,
                     help="backward points per generation of the field's net loss rate "
                          '(balance update)')
+    ap.add_argument('--forward-rays', type=int, default=40_000,
+                    help='rays per generation of the forward residual (variant forward)')
+    ap.add_argument('--forward-energies', type=int, default=8,
+                    help='energies per ray of the forward residual')
     ap.add_argument('--loss-estimator', choices=['backward', 'forward'], default='backward',
                     help="estimator of the field's net loss: backward points "
                          '(rmc.field_production) or forward rays integrated analytically '
@@ -399,6 +445,7 @@ def main():
         backend.fp_points = max(args.field_production, 1)
         backend.fl_points = args.field_loss
         backend.loss_estimator = args.loss_estimator
+        backend.fwd_rays, backend.fwd_energies = args.forward_rays, args.forward_energies
         if args.field_constants:
             c = json.loads(Path(args.field_constants).read_text())
             backend.constants = dict(X=np.array(c['X']), L=np.array(c['L']))
@@ -425,6 +472,8 @@ def main():
         for rep in range(args.replicas):
             backend._fp_sum, backend._fp_n = np.zeros(2), 0
             backend._fl_sum, backend._fl_n = np.zeros(2), 0
+            backend._fwd_d = backend._fwd_low = 0.0
+            backend._fwd_n = 0
             cfg = driver.Config(N={'s': args.N, 'f': args.N_f or args.N}, N_delta=args.N_delta,
                                 N_B=args.N_B, seed=args.seed_base + rep,
                                 damping=args.damping, k_update=args.k_update,

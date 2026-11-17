@@ -399,3 +399,26 @@ def test_multigroup_rates_on_forward_rays_are_the_fixed_point(lib, field_files):
     tol = 5 * math.sqrt(vL.sum()) + 2e-3 * M_f
     assert abs(Lm.sum() - M_f) < tol, (Lm.sum(), M_f)
     assert abs(Xm.sum() - k_mg * M_f) < 5 * math.sqrt(vX.sum()) + 2e-3 * k_mg * M_f
+
+
+@pytest.mark.slow
+def test_forward_residual_bins_reproduce_the_field(lib, field_files):
+    """G8.14: the multigroup deposits of the forward rays, summed over the
+    source tags, are the field's own emission by netting bin (tag s) and
+    k_MG times it (tag f, as productions); the CE-minus-multigroup deposits
+    are small against them."""
+    import field as fld
+    rmc, mesh = lib
+    rep = canc.Representation(rmc, field_files, mesh)
+    k_mg = float(fld.FieldFile.load(field_files['field']).k_mg)
+    h = rep.n_bins() // 2
+    F_s, F_f = -rep.low_term((1.0, 0.0)), -rep.low_term((0.0, 1.0))
+    diff, low = rmc.forward_residual_bins(300_000, rep.zone, rep.Z, n_E=8, seed=51)
+    L = low.sum(axis=0)
+    assert L[:h].sum() == pytest.approx(F_s.sum(), rel=3e-3)
+    assert L[h:].sum() == pytest.approx(k_mg * F_f.sum(), rel=3e-3)
+    assert np.abs(L[:h] - F_s[:h]).max() < 0.02 * F_s[:h].max()
+    assert np.abs(L[h:] - k_mg * F_f[h:]).max() < 0.02 * k_mg * F_f[h:].max()
+    D = diff.sum(axis=0)
+    assert np.abs(D[:h]).sum() < 0.1 * F_s.sum()
+    assert abs(D[:h].sum()) < 0.01 * F_s.sum()

@@ -133,16 +133,15 @@ eigenvalue calculation. Section~\ref{sec:res:stage8} reports it, with its follow
   replaces $k_{n+1}=k_nf_n$. The replica spread falls from $0.0024$ to $0.0010$ at equal cost.
 \end{itemize}
 
-\paragraph{Verdict.} The method is unbiased within about 50~pcm at $N\ge2000$, and its $k$ figure
-of merit is about $0.3$ of analog Monte Carlo's on this problem, with the field's constants computed
-beforehand: not a speedup. Three limits have been removed in turn: the scattering residual, the CE
-fission production of the field's first-flight flux (Section~\ref{sec:res:X}), and the eigenvalue
-update $k_{n+1}=k_nf_n$, which a balance estimate without memory replaces
-(Section~\ref{sec:res:grouped}). Exact grouped cancellation at fission births is implemented and
-verified, and is not sufficient: the weight that must cancel is scattering weight. The field's net loss rate now comes from forward rays during the run, so the figure counts
-everything (Section~\ref{sec:res:forward}). A coarser source mesh and a resonance-resolving low order
-do not change it: what remains is the Monte Carlo integration error of the scattering production
-at each of the 37 collisions of a neutron's life.
+\paragraph{Verdict.} With residual samples from backward points the method reached about $0.3$ of
+analog Monte Carlo's figure of merit for $k$ on this problem, after its scattering residual, the
+field's production and loss, and the eigenvalue update had each been improved in turn. The cause was
+structural: a noisy CE estimate minus an exact low-order term has the noise of the CE estimate,
+however small the difference. A forward estimator that deposits the first-collision emission with
+CE and with multigroup data on the same ray, and holds the residual as a constant vector in the
+netting bins, removes that (Section~\ref{sec:res:correlated}): $3.7$ ($1.5$--$5.9$) times analog on
+six replicas, with a bias of $-27\pm8$~pcm from the bin representation. This first speedup needs
+confirmation with more replicas and a study of the bins.
 \clearpage
 
 \input{part1_method}

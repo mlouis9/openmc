@@ -75,7 +75,7 @@ for _name in ('openmc_rmc_field_groups', 'openmc_rmc_residual_sample',
               'openmc_rmc_propagate', 'openmc_rmc_residual_records_aux',
               'openmc_rmc_flight_children', 'openmc_rmc_propagate_aux',
               'openmc_rmc_field_production', 'openmc_rmc_flight_children_incident',
-              'openmc_rmc_field_first_flight_rates',
+              'openmc_rmc_field_first_flight_rates', 'openmc_rmc_forward_residual_bins',
               'openmc_rmc_grouped_fission_weights'):
     _fn = getattr(_dll, _name)
     _fn.restype, _fn.errcheck = c_int, _error_handler
@@ -811,7 +811,7 @@ def field_production(n_points, n_E=4, tail='roulette', cutoff=math.exp(-4.0), se
 
 
 def field_first_flight_rates(n_rays, n_E=8, cutoff=math.exp(-4.0), seed=1, du=1e-4,
-                             sigma_e=1.0, control=False):
+                             sigma_e=1.0, control=False, eta=None, eta_f=0.0, n_out=1):
     """First-collision rates of the field's emission per source tag, from
     forward rays integrated analytically (no noise from where on the ray
     the collision falls): the nu-fission production X[2] and the net loss
@@ -820,17 +820,46 @@ def field_first_flight_rates(n_rays, n_E=8, cutoff=math.exp(-4.0), seed=1, du=1e
     escape cross section sigma_e, on sub-bins of lethargy width du; n_E
     energies share a ray. Returns (X, L, var_X, var_L)."""
     rate, var, mg, dvar = np.zeros(4), np.zeros(4), np.zeros(4), np.zeros(4)
+    worth = np.zeros(4)
+    eta_a = None if eta is None else np.ascontiguousarray(eta, dtype=np.float64).ravel()
+    control = control or eta is not None
     _dll.openmc_rmc_field_first_flight_rates(c_int64(int(n_rays)), c_int(int(n_E)),
                                              c_double(cutoff), c_uint64(int(seed)),
                                              c_double(du), c_double(sigma_e),
                                              _dp(rate), _dp(var), c_int(int(control)),
-                                             _dp(mg), _dp(dvar))
+                                             _dp(mg), _dp(dvar),
+                                             None if eta is None else _dp(eta_a),
+                                             c_double(eta_f), c_int(int(n_out)), _dp(worth))
+    if eta is not None:
+        # The importance of the first-collision emission: CE mean, multigroup
+        # mean, variance of the CE mean, variance of the mean difference
+        return worth
     if control:
         # With control: also the multigroup rates on the same rays and the
         # variance of the mean difference, as (X, L) pairs
         return (rate[[0, 2]], rate[[1, 3]], var[[0, 2]], var[[1, 3]],
                 mg[[0, 2]], mg[[1, 3]], dvar[[0, 2]], dvar[[1, 3]])
     return rate[[0, 2]], rate[[1, 3]], var[[0, 2]], var[[1, 3]]
+
+
+def forward_residual_bins(n_rays, zone, n_zone, n_mu=2, n_phi=4, n_E=8, n_out=1,
+                          cutoff=math.exp(-4.0), seed=1):
+    """The field's residual in a bin basis from forward rays: (diff, low),
+    each [2 source tags, n_bins], n_bins = 2 * n_zone * G * n_mu * n_phi with
+    bin = ((tag * n_zone + zone) * G + group) * D + direction. diff is the
+    CE deposit of the first-collision emission minus the multigroup deposit
+    on the same rays, low the multigroup deposit. Tag f deposits are
+    productions (without 1 / k)."""
+    zone = np.ascontiguousarray(zone, dtype=np.int32)
+    nb = 2 * int(n_zone) * (len(field_groups()) - 1) * n_mu * n_phi
+    diff, low = np.zeros(2 * nb), np.zeros(2 * nb)
+    _dll.openmc_rmc_forward_residual_bins(c_int64(int(n_rays)), c_int(int(n_E)),
+                                          c_int(int(n_out)), c_double(cutoff),
+                                          c_uint64(int(seed)),
+                                          zone.ctypes.data_as(POINTER(c_int32)),
+                                          c_int(int(n_zone)), c_int(n_mu), c_int(n_phi),
+                                          _dp(diff), _dp(low))
+    return diff.reshape(2, nb), low.reshape(2, nb)
 
 
 def grouped_fission_weights(x, nuclide, E_f, offset, member, records, d_max, k):

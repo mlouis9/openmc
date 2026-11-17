@@ -239,14 +239,18 @@ class BinnedNetting:
         if placement == 'empirical' and exact_low:
             raise ValueError('empirical placement has no particles for a closed-form low term')
 
-    def __call__(self, bank, b, seed):
+    def __call__(self, bank, b, seed, extra=None):
+        """extra: bin amplitudes added to the particles' bin sums (a residual
+        held in the bin basis); it needs the 'field' placement."""
         rep = self.rep
         rng = np.random.default_rng(seed)
-        key = rep.bins(bank)
+        key = rep.bins(bank) if len(bank['w']) else np.zeros(0, dtype=np.int64)
         m = np.bincount(key[key >= 0], weights=bank['w'][key >= 0],
                         minlength=rep.n_bins())
         if self.exact_low:
             m = m + rep.low_term(b)
+        if extra is not None:
+            m = m + extra
         a = np.abs(m)
         W = a.sum()
         if W == 0.0:

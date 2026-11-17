@@ -9,10 +9,12 @@
 #include "openmc/error.h"
 #include "openmc/geometry.h"
 #include "openmc/material.h"
+#include "openmc/physics.h"
 #include "openmc/nuclide.h"
 #include "openmc/random_lcg.h"
 #include "openmc/reaction.h"
 #include "openmc/rmc/channels.h"
+#include "openmc/rmc/tracer.h"
 #include "openmc/rmc/mg_control.h"
 #include "openmc/rmc/production.h"
 #include "openmc/rmc/residual.h"
@@ -316,8 +318,19 @@ void field_fission_production(const FrozenField& field, const MGTables& mg,
 void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
   int n_E, const TailOptions& tail, uint64_t seed, double du, double sigma_e,
   double rate[4], double var[4], const MGTables* mg, double mg_rate[4],
-  double diff_var[4])
+  double diff_var[4], const double* eta, double eta_f, int n_out,
+  double worth[4])
 {
+  // With eta (an importance by material and outgoing group, [materials x
+  // groups]) and eta_f (that of a fission neutron, per unit nu-fission), the
+  // rays also score the importance of their first-collision emission,
+  //   sum over segments of collided weight times
+  //     [scattering production / Sigma_t * mean eta of the outgoing group
+  //      + nu Sigma_f / Sigma_t * eta_f],
+  // with CE data (the outgoing group from n_out forced scatterings per
+  // material and energy) and with the multigroup data of the energy's
+  // group. worth = (CE mean, multigroup mean, variance of the CE mean,
+  // variance of the mean difference).
   // With mg, the same rays are also scored with the multigroup cross
   // sections of the energy's group (mg_rate), and diff_var is the variance
   // of the mean of the CE score minus the multigroup score. The multigroup
@@ -419,6 +432,8 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
         if (!other.empty())
           po /= other.size();
         double pj = pf + (fis.empty() ? 1.0 : sigma_e / (stf + sigma_e)) * po + 1e-9;
+        if (!(sigma_e > 0.0))
+          pj = 1.0; // energies from the emission itself
         c += pj * (e1 - e0);
         tab.e_lo.push_back(e0);
         tab.e_hi.push_back(e1);
@@ -453,12 +468,62 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
     int32_t mat {-2};
     double total, ratio[2];
     double mg_total, mg_ratio[2];
+    double w_ce, w_mg; //!< importance of the emission per collision
+  };
+  // Mean importance of the outgoing group of a scattering at the probe's
+  // state, per unit scattering production: forced scatterings off a nuclide
+  // drawn by its scattering cross section, with their yields
+  auto scatter_eta = [&](int32_t m, double Ein, Direction u, double sqrtkT,
+                       double dm, uint64_t* seed) {
+    const Material& mat = *model::materials[m];
+    double acc = 0.0, wsum = 0.0;
+    for (int o = 0; o < n_out; ++o) {
+      probe.total(m, Ein, sqrtkT, dm);
+      Particle& p = probe.scratch();
+      double tot = 0.0;
+      for (size_t i = 0; i < mat.nuclide_.size(); ++i) {
+        const auto& mx = p.neutron_xs(mat.nuclide_[i]);
+        tot += mat.atom_density(i, dm) * (mx.total - mx.absorption);
+      }
+      if (!(tot > 0.0))
+        return 0.0;
+      double x = prn(seed) * tot;
+      int i_nuc = mat.nuclide_.back();
+      for (size_t i = 0; i < mat.nuclide_.size(); ++i) {
+        const auto& mx = p.neutron_xs(mat.nuclide_[i]);
+        x -= mat.atom_density(i, dm) * (mx.total - mx.absorption);
+        if (x < 0.0) {
+          i_nuc = mat.nuclide_[i];
+          break;
+        }
+      }
+      p.u() = u;
+      p.E() = probe.E();
+      p.wgt() = 1.0;
+      p.stream() = STREAM_TRACKING;
+      p.seeds(STREAM_TRACKING) = *seed;
+      p.local_secondary_bank().clear();
+      p.n_secondaries() = 0;
+      size_t before = p.local_secondary_bank().size();
+      scatter(p, i_nuc);
+      double y = p.wgt() * (1.0 + static_cast<double>(p.local_secondary_bank().size() - before));
+      int go = field.group(p.E());
+      *seed = p.seeds(STREAM_TRACKING);
+      p.local_secondary_bank().clear();
+      p.n_secondaries() = 0;
+      if (go >= 0)
+        acc += y * eta[static_cast<size_t>(m) * field.n_groups() + go];
+      wsum += y;
+    }
+    return (wsum > 0.0) ? acc / wsum : 0.0;
   };
   const int G = field.n_groups();
-  vector<double> E(n_E), wE(n_E), T(n_E), acc(2 * n_E), Tm(n_E), accm(2 * n_E);
+  vector<double> E(n_E), wE(n_E), T(n_E), acc(2 * n_E), Tm(n_E), accm(2 * n_E),
+    accw(2 * n_E);
   vector<int> live(n_E);
   vector<Xs> xs(4 * n_E);
   // One ray: its region and its four scores
+  double ray_worth[2];
   auto ray = [&](const VoxelProposal& voxel, uint64_t s, int64_t& region,
                double sc[4], double scm[4]) {
     auto rd = voxel.sample(&s, region);
@@ -499,6 +564,7 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
       live[k] = 1;
       acc[2 * k] = acc[2 * k + 1] = 0.0;
       accm[2 * k] = accm[2 * k + 1] = 0.0;
+      accw[2 * k] = accw[2 * k + 1] = 0.0;
       for (int a = 0; a < 4; ++a)
         xs[4 * k + a].mat = -2;
     }
@@ -553,6 +619,17 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
                 cand.mg_ratio[0] =
                   (st > 0.0) ? mg->nu_sigma_f(m, cell.sqrtkT(inst), gi) / st : 0.0;
                 cand.mg_ratio[1] = (st > 0.0) ? (st - out) / st : 0.0;
+                if (eta) {
+                  double em = 0.0;
+                  for (int go = 0; go < G; ++go)
+                    em += mg->nu_sigma_s(m, cell.sqrtkT(inst), gi, go) *
+                          eta[static_cast<size_t>(m) * G + go];
+                  cand.w_mg = (st > 0.0) ? em / st + cand.mg_ratio[0] * eta_f : 0.0;
+                  double r_nf = cand.ratio[0], r_loss = cand.ratio[1];
+                  double ec = scatter_eta(m, E[k], g.u(), cell.sqrtkT(inst),
+                    cell.density_mult(inst), &s);
+                  cand.w_ce = (1.0 - r_loss) * ec + r_nf * eta_f;
+                }
               }
               e = &cand;
               break;
@@ -567,6 +644,10 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
             double tm = Tm[k] * std::exp(-e->mg_total * len);
             accm[2 * k] += e->mg_ratio[0] * (Tm[k] - tm);
             accm[2 * k + 1] += e->mg_ratio[1] * (Tm[k] - tm);
+            if (eta) {
+              accw[2 * k] += e->w_ce * d;
+              accw[2 * k + 1] += e->w_mg * (Tm[k] - tm);
+            }
             Tm[k] = tm;
           }
           // The roulette acts on both transmissions with one random number
@@ -598,6 +679,10 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
           sc[2 * t + x] += share[t][k] * acc[2 * k + x];
           scm[2 * t + x] += share[t][k] * accm[2 * k + x];
         }
+    ray_worth[0] = ray_worth[1] = 0.0;
+    for (int k = 0; k < n_E; ++k)
+      for (int x = 0; x < 2; ++x)
+        ray_worth[x] += (share[0][k] + share[1][k]) * accw[2 * k + x];
   };
   // Pilot, once per field: the root mean square of the total loss score by
   // region. Regions are then drawn in proportion to their emission-based
@@ -641,6 +726,7 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
   VoxelProposal voxel(field, vo);
   double sum[4] = {0.0, 0.0, 0.0, 0.0}, sq[4] = {0.0, 0.0, 0.0, 0.0};
   double summ[4] = {0.0, 0.0, 0.0, 0.0}, sqd[4] = {0.0, 0.0, 0.0, 0.0};
+  double ws[4] = {0.0, 0.0, 0.0, 0.0};
   for (int64_t i = 0; i < n_rays; ++i) {
     int64_t region;
     double sc[4], scm[4];
@@ -652,6 +738,17 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
       summ[a] += scm[a];
       sqd[a] += (sc[a] - scm[a]) * (sc[a] - scm[a]);
     }
+    ws[0] += ray_worth[0];
+    ws[1] += ray_worth[1];
+    ws[2] += ray_worth[0] * ray_worth[0];
+    ws[3] += (ray_worth[0] - ray_worth[1]) * (ray_worth[0] - ray_worth[1]);
+  }
+  if (worth && n_rays > 1) {
+    double mc = ws[0] / n_rays, mm = ws[1] / n_rays;
+    worth[0] = mc;
+    worth[1] = mm;
+    worth[2] = (ws[2] / n_rays - mc * mc) / (n_rays - 1);
+    worth[3] = (ws[3] / n_rays - (mc - mm) * (mc - mm)) / (n_rays - 1);
   }
   if (mg)
     for (int a = 0; a < 4; ++a) {
@@ -664,6 +761,286 @@ void field_first_flight_rates(const FrozenField& field, int64_t n_rays,
     var[a] = (n_rays > 1)
                ? (sq[a] / n_rays - rate[a] * rate[a]) / (n_rays - 1)
                : 0.0;
+  }
+}
+
+void forward_residual_bins(const FrozenField& field, const MGTables& mg,
+  int64_t n_rays, int n_E, int n_out, double cutoff, uint64_t seed,
+  const int32_t* zone, int n_zone, int n_mu, int n_phi, double* diff,
+  double* low)
+{
+  // The field's residual in a bin basis, from forward rays: a source neutron
+  // is drawn from the field's emission (n_E stratified energies per ray),
+  // its ray is integrated analytically, and the emission of its first
+  // collision is deposited by (outgoing tag, zone, group, direction bin),
+  // once with CE data and once with the multigroup data of the energy's
+  // group. diff[src][bin] is the mean CE deposit minus the multigroup one,
+  // low[src][bin] the mean multigroup deposit, per source tag src; bin =
+  // ((tag * n_zone + zone) * G + group) * D + direction, D = n_mu * n_phi
+  // (direction 0 for tag f). Tag f deposits are productions (no 1 / k), with
+  // the multigroup chi of the material in both. The CE outgoing group and
+  // direction of a scattering come from n_out forced scatterings per
+  // material and energy; the multigroup scattering is isotropic.
+  const int64_t R = field.n_regions();
+  const int G = field.n_groups();
+  const int D = n_mu * n_phi;
+  const int64_t NB = static_cast<int64_t>(2) * n_zone * G * D;
+  const auto& fe = field.fine_edges();
+  const int F = static_cast<int>(fe.size()) - 1;
+  std::fill(diff, diff + 2 * NB, 0.0);
+  std::fill(low, low + 2 * NB, 0.0);
+  XsProbe probe;
+  ChannelRegistry registry;
+  struct Tables {
+    const FrozenField* field {nullptr};
+    vector<double> wr;
+    vector<vector<double>> cdf;
+  };
+  static Tables tab;
+  if (tab.field != &field || tab.wr.size() != static_cast<size_t>(R)) {
+    tab = Tables();
+    tab.field = &field;
+    tab.wr.assign(R, 0.0);
+    tab.cdf.resize(R);
+    for (int64_t r = 0; r < R; ++r) {
+      if (field.region_material(r) == MATERIAL_VOID)
+        continue;
+      tab.cdf[r].resize(F);
+      double c = 0.0;
+      for (int i = 0; i < F; ++i) {
+        double Em = 0.5 * (fe[i] + fe[i + 1]);
+        double q = (field.group(Em) >= 0)
+                     ? field.evaluate(r, Tag::s, Em) + field.evaluate(r, Tag::f, Em)
+                     : 0.0;
+        c += std::max(0.0, q) * (fe[i + 1] - fe[i]);
+        tab.cdf[r][i] = c;
+      }
+      tab.wr[r] = c * field.volume(r);
+    }
+  }
+  VoxelOptions vo;
+  vo.mode = VoxelMode::tabulated;
+  vo.weights = tab.wr;
+  VoxelProposal voxel(field, vo);
+  CharacteristicTracer tracer(field);
+  SegmentList seg;
+  const double survive = 0.25;
+  struct Out {
+    int g, d;
+    double w;
+  };
+  struct Xs {
+    int32_t mat {-2};
+    double total, r_nf, r_scat;
+    double mg_total, mg_nf;
+    vector<Out> out; //!< CE outgoing states of a scattering (weights sum 1)
+  };
+  vector<double> E(n_E), T(n_E), Tm(n_E), share(2 * n_E);
+  vector<int> live(n_E), gin(n_E);
+  vector<Xs> xs(4 * n_E);
+  // Collided weight per (energy, zone), CE and multigroup
+  vector<double> cce(static_cast<size_t>(n_E) * n_zone), cmg(cce.size());
+  vector<int32_t> zone_mat(n_zone, MATERIAL_VOID);
+  for (int64_t r = 0; r < R; ++r)
+    zone_mat[zone[r]] = field.region_material(r);
+  const double sqrtkT0 = std::sqrt(K_BOLTZMANN * 293.6);
+  for (int64_t i = 0; i < n_rays; ++i) {
+    uint64_t s = future_seed(static_cast<uint64_t>(i) * 1000003ULL + 19, seed);
+    int64_t region;
+    auto rd = voxel.sample(&s, region);
+    int32_t mat0;
+    double kT0, dm0;
+    if (!locate_point(field, rd.value, region, mat0, kT0, dm0) || region < 0)
+      fatal_error("RMC forward residual: point outside the field.");
+    const auto& c = tab.cdf[region];
+    const double tot = c[F - 1];
+    double mu = 2.0 * prn(&s) - 1.0, ph = 2.0 * PI * prn(&s);
+    double st = std::sqrt(std::max(0.0, 1.0 - mu * mu));
+    Direction u {st * std::cos(ph), st * std::sin(ph), mu};
+    double shift = prn(&s);
+    for (int k = 0; k < n_E; ++k) {
+      double x = (k + shift) / n_E * tot;
+      int b = static_cast<int>(std::upper_bound(c.begin(), c.end(), x) - c.begin());
+      b = std::min(b, F - 1);
+      E[k] = fe[b] + (fe[b + 1] - fe[b]) * prn(&s);
+      double qs = std::max(0.0, field.evaluate(region, Tag::s, E[k]));
+      double qf = std::max(0.0, field.evaluate(region, Tag::f, E[k]));
+      double Em = 0.5 * (fe[b] + fe[b + 1]);
+      double qb = std::max(0.0, field.evaluate(region, Tag::s, Em) +
+                                  field.evaluate(region, Tag::f, Em));
+      double dens = qb / tot;
+      double w = (dens > 0.0) ? 4.0 * PI / (rd.density * dens * n_E) : 0.0;
+      share[2 * k] = w * qs;
+      share[2 * k + 1] = w * qf;
+      T[k] = Tm[k] = 1.0;
+      live[k] = 1;
+      gin[k] = field.group(E[k]);
+      for (int a = 0; a < 4; ++a)
+        xs[4 * k + a].mat = -2;
+    }
+    std::fill(cce.begin(), cce.end(), 0.0);
+    std::fill(cmg.begin(), cmg.end(), 0.0);
+    int n_live = n_E;
+    tracer.begin(rd.value, u);
+    while (n_live > 0) {
+      tracer.extend(32, seg);
+      if (seg.size() == 0)
+        break;
+      for (int q = 0; q < seg.size() && n_live > 0; ++q) {
+        int32_t m = seg.material[q];
+        if (m == MATERIAL_VOID)
+          continue;
+        double len = seg.length[q];
+        int z = (seg.region[q] >= 0) ? zone[seg.region[q]] : -1;
+        for (int k = 0; k < n_E; ++k) {
+          if (!live[k])
+            continue;
+          Xs* e = nullptr;
+          for (int a = 0; a < 4; ++a) {
+            Xs& cand = xs[4 * k + a];
+            if (cand.mat == m) {
+              e = &cand;
+              break;
+            }
+            if (cand.mat == -2 || a == 3) {
+              cand.mat = m;
+              probe.total(m, E[k], seg.sqrtkT[q], seg.density_mult[q]);
+              const auto& mx = probe.particle().macro_xs();
+              cand.total = mx.total;
+              cand.r_nf = (mx.total > 0.0) ? mx.nu_fission / mx.total : 0.0;
+              double prod = 0.0;
+              if (E[k] < 1.0e6)
+                prod = mx.total - mx.absorption;
+              else
+                for (const auto& ch : registry.channels(m))
+                  if (ch.kind != ChannelKind::fission)
+                    prod += ChannelRegistry::production(ch, seg.density_mult[q], probe);
+              cand.r_scat = (mx.total > 0.0) ? prod / mx.total : 0.0;
+              cand.mg_total = mg.sigma_t(m, seg.sqrtkT[q], gin[k]);
+              cand.mg_nf = (cand.mg_total > 0.0)
+                             ? mg.nu_sigma_f(m, seg.sqrtkT[q], gin[k]) / cand.mg_total
+                             : 0.0;
+              // Forced scatterings: outgoing group and direction bin
+              cand.out.clear();
+              const Material& mat = *model::materials[m];
+              double wsum = 0.0;
+              for (int o = 0; o < n_out; ++o) {
+                probe.total(m, E[k], seg.sqrtkT[q], seg.density_mult[q]);
+                Particle& p = probe.scratch();
+                double ts = 0.0;
+                for (size_t n = 0; n < mat.nuclide_.size(); ++n) {
+                  const auto& nx = p.neutron_xs(mat.nuclide_[n]);
+                  ts += mat.atom_density(n, seg.density_mult[q]) * (nx.total - nx.absorption);
+                }
+                if (!(ts > 0.0))
+                  break;
+                double x = prn(&s) * ts;
+                int i_nuc = mat.nuclide_.back();
+                for (size_t n = 0; n < mat.nuclide_.size(); ++n) {
+                  const auto& nx = p.neutron_xs(mat.nuclide_[n]);
+                  x -= mat.atom_density(n, seg.density_mult[q]) * (nx.total - nx.absorption);
+                  if (x < 0.0) {
+                    i_nuc = mat.nuclide_[n];
+                    break;
+                  }
+                }
+                p.u() = u;
+                p.E() = probe.E();
+                p.wgt() = 1.0;
+                p.stream() = STREAM_TRACKING;
+                p.seeds(STREAM_TRACKING) = s;
+                p.local_secondary_bank().clear();
+                p.n_secondaries() = 0;
+                scatter(p, i_nuc);
+                double y = p.wgt() * (1.0 + static_cast<double>(p.local_secondary_bank().size()));
+                s = p.seeds(STREAM_TRACKING);
+                p.local_secondary_bank().clear();
+                p.n_secondaries() = 0;
+                int go = field.group(p.E());
+                Direction uo = p.u();
+                int imu = std::min(n_mu - 1, std::max(0, static_cast<int>((uo.z + 1.0) * 0.5 * n_mu)));
+                double phi = std::atan2(uo.y, uo.x);
+                if (phi < 0.0)
+                  phi += 2.0 * PI;
+                int iph = std::min(n_phi - 1, std::max(0, static_cast<int>(phi / (2.0 * PI) * n_phi)));
+                if (go >= 0)
+                  cand.out.push_back({go, imu * n_phi + iph, y});
+                wsum += y;
+              }
+              for (auto& o : cand.out)
+                o.w /= wsum;
+              e = &cand;
+              break;
+            }
+          }
+          double t_out = T[k] * std::exp(-e->total * len);
+          double tm = Tm[k] * std::exp(-e->mg_total * len);
+          if (z >= 0) {
+            cce[static_cast<size_t>(k) * n_zone + z] += T[k] - t_out;
+            cmg[static_cast<size_t>(k) * n_zone + z] += Tm[k] - tm;
+          }
+          T[k] = t_out;
+          Tm[k] = tm;
+          if (T[k] < cutoff && Tm[k] < cutoff) {
+            if (prn(&s) < survive) {
+              T[k] /= survive;
+              Tm[k] /= survive;
+            } else {
+              live[k] = 0;
+              --n_live;
+            }
+          }
+        }
+      }
+    }
+    // Deposit the first-collision emission of every (energy, zone)
+    for (int k = 0; k < n_E; ++k) {
+      if (gin[k] < 0)
+        continue;
+      for (int z = 0; z < n_zone; ++z) {
+        double cc = cce[static_cast<size_t>(k) * n_zone + z];
+        double cm = cmg[static_cast<size_t>(k) * n_zone + z];
+        if (cc == 0.0 && cm == 0.0)
+          continue;
+        int32_t m = zone_mat[z];
+        const Xs* e = nullptr;
+        for (int a = 0; a < 4; ++a)
+          if (xs[4 * k + a].mat == m)
+            e = &xs[4 * k + a];
+        if (!e)
+          continue;
+        for (int src = 0; src < 2; ++src) {
+          double w = share[2 * k + src];
+          if (w == 0.0)
+            continue;
+          double* dd = diff + src * NB;
+          double* ll = low + src * NB;
+          int64_t base_s = (static_cast<int64_t>(z)) * G * D;
+          int64_t base_f = (static_cast<int64_t>(n_zone) + z) * G * D;
+          // CE scattering
+          for (const auto& o : e->out)
+            dd[base_s + static_cast<int64_t>(o.g) * D + o.d] += w * cc * e->r_scat * o.w;
+          // Multigroup scattering (isotropic) and both fissions
+          for (int go = 0; go < G; ++go) {
+            double ms = (e->mg_total > 0.0)
+                          ? w * cm * mg.nu_sigma_s(m, sqrtkT0, gin[k], go) / e->mg_total / D
+                          : 0.0;
+            for (int d = 0; d < D; ++d) {
+              dd[base_s + static_cast<int64_t>(go) * D + d] -= ms;
+              ll[base_s + static_cast<int64_t>(go) * D + d] += ms;
+            }
+            double chi = mg.chi(m, sqrtkT0, go);
+            double pf_ce = w * cc * e->r_nf * chi, pf_mg = w * cm * e->mg_nf * chi;
+            dd[base_f + static_cast<int64_t>(go) * D] += pf_ce - pf_mg;
+            ll[base_f + static_cast<int64_t>(go) * D] += pf_mg;
+          }
+        }
+      }
+    }
+  }
+  for (int64_t j = 0; j < 2 * NB; ++j) {
+    diff[j] /= n_rays;
+    low[j] /= n_rays;
   }
 }
 

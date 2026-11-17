@@ -294,9 +294,13 @@ int openmc_rmc_near_kernel(int64_t n, const double* x, const double* xp,
 int openmc_rmc_field_production(int64_t n_points, int n_E, int tail,
   double cutoff, uint64_t seed, double* X, double* var,
   int score, double du, double sigma_e, int classes);
+int openmc_rmc_forward_residual_bins(int64_t n_rays, int n_E, int n_out,
+  double cutoff, uint64_t seed, const int32_t* zone, int n_zone, int n_mu,
+  int n_phi, double* diff, double* low);
 int openmc_rmc_field_first_flight_rates(int64_t n_rays, int n_E, double cutoff,
   uint64_t seed, double du, double sigma_e, double* rate, double* var,
-  int control, double* mg_rate, double* diff_var);
+  int control, double* mg_rate, double* diff_var, const double* eta,
+  double eta_f, int n_out, double* worth);
 //! Flights as openmc_rmc_propagate, optionally recording each child's
 //! parent, path length, and nuclide (read with openmc_rmc_flight_children)
 //! and a collision estimate of the fission and nu-fission rates by field

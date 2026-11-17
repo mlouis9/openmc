@@ -1573,3 +1573,36 @@ Findings
       control on the backward paths does not lower it: a resonance-resolving
       low order (RESOLVE) is not expected to help this method here.
 
+A correlated forward residual in the netting bins
+-------------------------------------------------
+
+**Commits:** "rmc: multigroup scores on the forward rays" and "rmc: the
+field's residual in the netting bins from correlated forward rays". Report
+section "A correlated forward residual in the netting bins".
+
+Added
+    - ``field_first_flight_rates`` also scores the multigroup analogue and an
+      importance-weighted emission (CE and multigroup) on the same rays.
+    - ``forward_residual_bins`` (``openmc_rmc_forward_residual_bins``, binding
+      of the same name): CE minus multigroup deposits of the first-collision
+      emission by netting bin, and the multigroup deposits, per source tag.
+    - ``stage8.py --variant forward`` (``--forward-rays``,
+      ``--forward-energies``): the bin residual is accumulated over the
+      generations and netted with the bank's children; ``BinnedNetting``
+      takes extra bin amplitudes.
+    - Tests G8.13 and G8.14.
+
+Findings
+    - For the field's production and loss the multigroup score is no control
+      (the difference is as noisy as the CE score). For the first-collision
+      emission weighted by importance it is: per-ray spread 9.3 to 1.25 with
+      8 energies per ray.
+    - The residual in the bin basis is 1.2 in absolute value (emission 87).
+    - Six replicas: spread 0.00020 in 253 s, 3.7 (1.5-5.9) times analog's
+      figure of merit for k, with a bias of -27 +- 8 pcm.
+
+Not done
+    - More replicas; finer bins and their bias; CE fission spectrum in the
+      deposit; the fission-rate shape; the cost of the rays (75 microseconds
+      each).
+

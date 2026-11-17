@@ -1185,6 +1185,80 @@ lifetime (37 here), each of which needs its scattering production sampled. A pro
 collisions per lifetime (a water lattice, a fast system) is the test that would tell whether the
 method has a regime of its own.
 
+\subsection{A correlated forward residual in the netting bins}\label{sec:res:correlated}
+
+The residual had been sampled as $\hat C-U$: a noisy CE estimate of the production at a destination
+minus the field's exact emission there. Its mean is small, but its noise is the whole noise of
+$\hat C$, so the method never gained from the residual being small. This subsection replaces that
+estimator. The data are in \code{examples/rmc/results/speedup7}.
+
+\paragraph{The estimator.} A source neutron is drawn from the field's emission and its ray is
+integrated analytically, as for the net loss in Section~\ref{sec:res:forward}. The emission of its
+first collision is deposited by netting bin (tag, zone, group, direction), twice on the same ray
+and at the same energy: with CE data, and with the multigroup data of the energy's group. The
+expectation of the second deposit is the field's own emission, because the field is the fixed
+point of that operator, so the residual by bin is
+\begin{equation}
+r_b=\mathbb E\!\left[A^{CE}_b-A^{MG}_b\right],
+\end{equation}
+and the two deposits share the ray, the source energy and the roulette. The CE outgoing group and
+direction of a scattering come from a forced scattering per material and energy. The code is
+\code{rmc::forward\_residual\_bins}.
+
+\paragraph{Where the correlation is, and where it is not.} For the production and the net loss of
+the field, the difference is as noisy as the CE score alone ($0.003$--$0.006\cdot\sqrt{\text s}$
+either way): CE absorption sits in the resonance peaks and the multigroup score spreads the same
+total over the group, so the two agree only after integrating over energy. For the emission of the
+first collision, weighted with an importance by material and group, it is the opposite:
+\begin{center}\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+energies per ray & per-ray spread, CE & per-ray spread, CE $-$ MG & error $\times\sqrt{\text s}$, CE $-$ MG\\
+\midrule
+1 & 11.5 & 3.5 & 0.0100\\
+8 & 9.3 & 1.25 & 0.0066\\
+32 & 9.0 & 0.63 & 0.0061\\
+\bottomrule
+\end{tabular}
+\end{center}
+(total 22.8). Thirty-six of 37 collisions are scatterings, mostly off resonance in graphite, where
+the two transmissions nearly coincide; stratified energies average out the within-group
+kinematics. The present backward sampler has $0.058\cdot\sqrt{\text s}$ on the same scale.
+
+\paragraph{The residual is a constant of the field.} In the bin basis the residual per source tag is
+a fixed vector, like $X$ and $L$. It is accumulated over the generations and injected as
+$a_s\bar D_s+a_f\bar D_f$ plus the closed-form multigroup terms, so its noise falls with the whole
+run instead of entering afresh each generation. Its size is $1.2$ in absolute value against an
+emission of $87$ (the sampled residual had $\Wabs=5.5$), and $8\times10^5$ rays give it to $0.014$.
+Gates G8.13 and G8.14 check that the multigroup deposits reproduce the field's balance and its
+bins. No residual particles are sampled: the bank's children and the bin residual are netted
+together and placed with the field's shape.
+
+\paragraph{Result.} Variant \code{forward}, $4\times10^4$ rays of 8 energies per generation, the net
+loss from forward rays, the production from $5000$ backward points, the balance eigenvalue; six
+replicas of 40 inactive and 60 active generations:
+\begin{center}\footnotesize\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+residual & $\Delta k$ (pcm) & spread & per gen. & $\Wabs$ & $T$ (s) & FOM (spread; batch)\\
+\midrule
+backward samples, $N=8000$ & $-46\pm13$ & 0.00033--0.0006 & 0.00165 & 0.74 & 366 & 0.3--0.9; 0.28\\
+forward bins & $-27\pm8$ & 0.00020 & 0.00028 & 1.27 & 253 & 3.7 (1.5--5.9); 14\\
+\bottomrule
+\end{tabular}
+\end{center}
+The figure of merit for $k$ is above analog Monte Carlo's for the first time: $3.7$ on the spread
+of the replica estimates, with a 68\% interval of $1.5$--$5.9$ from six replicas. The
+per-generation spread fell six times. The spread between replicas ($0.00020$) is now twice the
+batch-means error ($0.00010$), so it is set by what is accumulated per replica: $X$, $L$ and the
+residual bins.
+
+\paragraph{What it gives up.} The residual and the net of each bin are placed with the field's shape,
+so the method is exact only at the scale of the bins ($3\times3$ zones per material, 8 groups, 8
+directions). The bias is $-27\pm8$~pcm against a reference known to $\pm25$. The fission emission
+uses the multigroup spectrum in both deposits. The result is six replicas on one problem; it needs
+the 22-replica confirmation, the bin refinement study, and the fission-rate shape.
+
 \subsection{What optimization could recover}\label{sec:s8:projection}
 
 \begin{table}[t]\centering\small
@@ -1269,10 +1343,10 @@ within the present precision:
 \item \textbf{The correction.} The scattering residual is about 15 times more efficient than in the
   first measurement (proposal, tracer, several energies per trace, lifts). The bank's absolute
   weight is below the fission production ($\Wabs\approx0.85$), from 4.4.
-\item \textbf{Figure of merit.} For $k$ it is about $0.3$ of analog Monte Carlo's, everything
-  counted: the balance eigenvalue of Section~\ref{sec:res:grouped}, with the field's net loss from
-  forward rays during the run (Section~\ref{sec:res:forward}). It was $0.05$ on the same measure
-  with the update $k_{n+1}=k_nf_n$, and $0.005$ in the first measurement. It is not a speedup.
+\item \textbf{Figure of merit.} With the correlated forward residual of
+  Section~\ref{sec:res:correlated} it is $3.7$ ($1.5$--$5.9$) times analog Monte Carlo's for $k$ on
+  six replicas, with a bias of $-27\pm8$~pcm from the bin representation. With residual samples
+  from backward points it was about $0.3$, everything counted.
 \end{itemize}
 
 What limits it has changed three times. It is no longer the scattering residual, no longer the
